@@ -1,98 +1,39 @@
 """Сервис GigaChat с поддержкой function calling через MCP-инструменты."""
 
 import asyncio
-import copy
 import json
 import logging
-import math
 from collections import OrderedDict
 
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
 
+from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
+from vkuswill_bot.services.prompts import (
+    ERROR_GIGACHAT,
+    ERROR_TOO_MANY_STEPS,
+    SYSTEM_PROMPT,
+)
+from vkuswill_bot.services.search_processor import SearchProcessor
 
 logger = logging.getLogger(__name__)
 
 # Лимит одновременно хранимых диалогов (LRU-вытеснение)
 MAX_CONVERSATIONS = 1000
 
-# Лимит кеша цен (кол-во товаров)
-MAX_PRICE_CACHE_SIZE = 5000
-
 # Лимит длины входящего сообщения пользователя (символы)
 MAX_USER_MESSAGE_LENGTH = 4096
 
-SYSTEM_PROMPT = """\
-Ты — продавец-консультант ВкусВилл в Telegram-боте. \
-Помогаешь пользователям подбирать продукты и собирать корзину.
+# Лимит длины результата инструмента для логирования
+MAX_RESULT_LOG_LENGTH = 1000
 
-## Понимание запроса
-Когда пользователь просит собрать что-то на ужин/обед/завтрак/перекус — \
-он хочет ПОЛНОЦЕННЫЙ НАБОР продуктов, а не одну категорию. \
-Например, "паста на ужин" = макароны + соус + сыр (пармезан или другой). \
-"Завтрак" = яйца + хлеб + масло + сыр/колбаса + напиток. \
-Раздели запрос на отдельные позиции и ищи каждую.
+# Лимит длины preview результата для логирования
+MAX_RESULT_PREVIEW_LENGTH = 500
 
-## Рабочий процесс (СТРОГО следуй)
-
-Шаг 1. Выясни потребность (не более 1-2 коротких вопросов). \
-Если запрос достаточно понятен — не задавай вопросов, сразу ищи.
-
-Шаг 2. Разбей запрос на 2-5 конкретных продуктов. \
-Для каждого продукта ищи ОТДЕЛЬНЫМ запросом — коротким ключевым словом. \
-Примеры хороших поисковых запросов: "спагетти", "соус песто", "пармезан", \
-"сливки", "куриное филе". \
-Плохие запросы: "макароны твердых сортов пшеницы" (слишком длинный).
-
-Шаг 3. Из результатов поиска выбери ОДИН лучший товар на позицию. \
-Создай ОДНУ ссылку на корзину с оптимальным набором (цена/рейтинг). \
-Если пользователь явно просит варианты/сравнение — тогда создай 2-3 \
-корзины (например: "Выгодно" с sort=price_asc, "Лучшее" с sort=rating).
-
-Итого в корзине 2-5 товаров (по числу позиций), НЕ 20.
-
-## Как вызывать vkusvill_cart_link_create
-Параметр products — массив объектов {xml_id, q}. \
-НЕ ДУБЛИРУЙ xml_id — используй q для количества!
-
-q — дробное число (0.01–40) в ЕДИНИЦАХ товара (поле "unit" из поиска). \
-Примеры: unit="кг" + "1,5 кг" → q=1.5; unit="кг" + "500 г" → q=0.5; \
-unit="шт" + "4 штуки" → q=4; unit="л" + "пол-литра" → q=0.5.
-
-Пример: {"products": [{"xml_id": 41728, "q": 1.5}, {"xml_id": 103297, "q": 4}]}
-
-## Правила подбора
-- В каждой корзине 2-5 товаров — по одному на каждую позицию.
-- Из первых результатов поиска выбирай ОДИН самый подходящий товар.
-- Не сваливай все результаты поиска в одну корзину!
-- Максимум 20 позиций в одной ссылке.
-
-## Предпочтения пользователя
-Перед ПЕРВЫМ поиском товаров — вызови user_preferences_get. \
-Если пользователь просит запомнить предпочтение ("запомни", "я люблю", \
-"я предпочитаю") — вызови user_preferences_set с категорией и описанием. \
-При поиске учитывай предпочтения: используй их как поисковый запрос. \
-Для удаления предпочтения — user_preferences_delete.
-
-## Парсинг ответов
-Все инструменты возвращают ТЕКСТ с JSON — парси его.
-
-## Формат ответа (СТРОГО следуй)
-- Русский язык. Дружелюбный тон.
-- Ответ с корзиной ОБЯЗАТЕЛЬНО содержит:
-  1. Название (что собрали)
-  2. Пронумерованный список КАЖДОГО товара — название, цена × количество = сумма \
-(бери строки из price_summary.items результата vkusvill_cart_link_create)
-  3. Итог — бери total_text из price_summary. НЕ считай сам!
-  4. Ссылка <a href="URL">Открыть корзину</a>
-- НИКОГДА не пропускай список товаров! Покупатель должен видеть что именно в корзине.
-- Дисклеймер: после каждого ответа с корзиной добавляй: \
-"Наличие и точное количество товаров будет проверено при открытии \
-ссылки на корзину. ВкусВилл может скорректировать заказ в зависимости \
-от наличия. Цены и состав уточняйте на сайте."
-"""
+# Макс. повторных вызовов одного инструмента с одинаковыми аргументами
+MAX_IDENTICAL_TOOL_CALLS = 2
 
 
 class GigaChatService:
@@ -186,41 +127,12 @@ class GigaChatService:
         self._max_history = max_history
         self._conversations: OrderedDict[int, list[Messages]] = OrderedDict()
         self._functions: list[dict] | None = None
-        # Кеш цен: xml_id -> {name, price, unit}
-        self._price_cache: dict[int, dict] = {}
 
-    @staticmethod
-    def _enhance_cart_schema(params: dict) -> dict:
-        """Дополнить схему vkusvill_cart_link_create описаниями параметров.
+        # Процессоры: поиск и корзина
+        self._search_processor = SearchProcessor()
+        self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
-        GigaChat плохо работает с дробными значениями, если у параметра
-        нет текстового description. Добавляем description к xml_id и q,
-        чтобы GigaChat корректно генерировал аргументы.
-        """
-        params = copy.deepcopy(params)
-        items_schema = (
-            params.get("properties", {})
-            .get("products", {})
-            .get("items", {})
-        )
-        if not items_schema:
-            return params
-
-        props = items_schema.get("properties", {})
-        if "xml_id" in props:
-            props["xml_id"]["description"] = "ID товара из результата поиска"
-        if "q" in props:
-            props["q"]["description"] = (
-                "Количество в единицах товара (поле unit). "
-                "ДРОБНОЕ число, например 1.5 для полутора кг. "
-                "Всегда указывай явно!"
-            )
-        # Сделать q обязательным
-        required = items_schema.get("required", [])
-        if "q" not in required:
-            items_schema["required"] = list(required) + ["q"]
-
-        return params
+    # ---- Загрузка описаний функций для GigaChat ----
 
     async def _get_functions(self) -> list[dict]:
         """Получить описания функций для GigaChat из MCP- и локальных инструментов."""
@@ -233,7 +145,7 @@ class GigaChatService:
             params = tool["parameters"]
             # Дополняем схему корзины описаниями для GigaChat
             if tool["name"] == "vkusvill_cart_link_create":
-                params = self._enhance_cart_schema(params)
+                params = CartProcessor.enhance_cart_schema(params)
             self._functions.append(
                 {
                     "name": tool["name"],
@@ -248,6 +160,8 @@ class GigaChatService:
 
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
+
+    # ---- Управление историей диалогов ----
 
     def _get_history(self, user_id: int) -> list[Messages]:
         """Получить или создать историю диалога пользователя.
@@ -356,268 +270,7 @@ class GigaChatService:
         # Иначе: "вареники" + "с картофелем и шкварками"
         return f"{query} {pref}"
 
-    # Поля товара, которые передаём в GigaChat (остальные срезаем)
-    _SEARCH_ITEM_FIELDS = ("xml_id", "name", "price", "unit", "weight", "rating")
-
-    def _trim_search_result(self, result_text: str) -> str:
-        """Обрезать результат поиска, оставив только нужные поля.
-
-        Убирает description, images, slug и другие тяжёлые поля,
-        чтобы не раздувать контекстное окно GigaChat.
-        Кеширование цен делается ДО обрезки (в _cache_prices_from_search).
-        """
-        try:
-            data = json.loads(result_text)
-        except (json.JSONDecodeError, TypeError):
-            return result_text
-
-        data_field = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(data_field, dict):
-            return result_text
-
-        items = data_field.get("items")
-        if not items or not isinstance(items, list):
-            return result_text
-
-        # Обрезаем количество товаров до SEARCH_LIMIT
-        # (MCP API игнорирует параметр limit и всегда возвращает 10)
-        max_items = VkusvillMCPClient.SEARCH_LIMIT
-
-        trimmed_items = []
-        for item in items[:max_items]:
-            if not isinstance(item, dict):
-                continue
-            trimmed = {k: item[k] for k in self._SEARCH_ITEM_FIELDS if k in item}
-            # Упрощаем price — оставляем только current
-            price = trimmed.get("price")
-            if isinstance(price, dict):
-                trimmed["price"] = price.get("current")
-            trimmed_items.append(trimmed)
-
-        data_field["items"] = trimmed_items
-        return json.dumps(data, ensure_ascii=False)
-
-    def _cache_prices_from_search(self, result_text: str) -> None:
-        """Извлечь цены из результата vkusvill_products_search и закешировать."""
-        try:
-            data = json.loads(result_text)
-        except (json.JSONDecodeError, TypeError):
-            return
-        data_field = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(data_field, dict):
-            return
-        items = data_field.get("items", [])
-        for item in items:
-            xml_id = item.get("xml_id")
-            price_info = item.get("price", {})
-            price = price_info.get("current")
-            if xml_id is not None and price is not None:
-                self._price_cache[xml_id] = {
-                    "name": item.get("name", ""),
-                    "price": price,
-                    "unit": item.get("unit", "шт"),
-                }
-
-        # Ограничиваем рост кеша — удаляем старые записи (FIFO)
-        if len(self._price_cache) > MAX_PRICE_CACHE_SIZE:
-            keys_to_remove = list(self._price_cache.keys())[
-                : MAX_PRICE_CACHE_SIZE // 2
-            ]
-            for k in keys_to_remove:
-                del self._price_cache[k]
-            logger.info(
-                "Очищен кеш цен: удалено %d записей, осталось %d",
-                len(keys_to_remove),
-                len(self._price_cache),
-            )
-
-    # Единицы измерения, для которых q должно быть целым числом
-    _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
-
-    def _fix_unit_quantities(self, args: dict) -> dict:
-        """Округлить q до целого для штучных товаров.
-
-        GigaChat иногда ставит дробное q для товаров в штуках
-        (например, 0.68 для банки огурцов). Для товаров с unit='шт'
-        округляем q вверх до ближайшего целого.
-        """
-        products = args.get("products")
-        if not products or not isinstance(products, list):
-            return args
-
-        changed = False
-        for item in products:
-            if not isinstance(item, dict):
-                continue
-            xml_id = item.get("xml_id")
-            q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
-            if cached and cached.get("unit", "шт") in self._DISCRETE_UNITS:
-                rounded = math.ceil(q)
-                if rounded != q:
-                    logger.info(
-                        "Округление q: xml_id=%s, unit=%s, %s → %s",
-                        xml_id, cached["unit"], q, rounded,
-                    )
-                    item["q"] = rounded
-                    changed = True
-
-        if changed:
-            logger.info("Исправленные аргументы корзины: %s", args)
-
-        return args
-
-    def _calc_cart_total(self, args: dict, result_text: str) -> str:
-        """Рассчитать стоимость корзины и дополнить результат.
-
-        Берёт xml_id и q из аргументов, цены из кеша.
-        Добавляет к результату текстовую разбивку по позициям и итог.
-        """
-        try:
-            result_data = json.loads(result_text)
-        except (json.JSONDecodeError, TypeError):
-            return result_text
-
-        if not result_data.get("ok"):
-            return result_text
-
-        products = args.get("products", [])
-        if not products:
-            return result_text
-
-        lines = []
-        total = 0.0
-        all_found = True
-
-        for item in products:
-            xml_id = item.get("xml_id")
-            q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
-            if cached:
-                subtotal = cached["price"] * q
-                total += subtotal
-                lines.append(
-                    f"  - {cached['name']}: {cached['price']} руб/{cached['unit']}"
-                    f" × {q} = {subtotal:.2f} руб"
-                )
-            else:
-                all_found = False
-                lines.append(f"  - xml_id={xml_id}: цена неизвестна")
-
-        # Добавляем расчёт в JSON-результат
-        summary: dict = {"items": lines}
-        if all_found:
-            summary["total"] = round(total, 2)
-            summary["total_text"] = f"Итого: {total:.2f} руб"
-        else:
-            summary["total_text"] = (
-                "Итого: не удалось рассчитать (не все цены известны)"
-            )
-
-        data = result_data.get("data")
-        if not isinstance(data, dict):
-            logger.warning(
-                "Результат корзины без поля 'data': %s", result_text[:200],
-            )
-            return result_text
-        data["price_summary"] = summary
-        return json.dumps(result_data, ensure_ascii=False, indent=4)
-
-    @staticmethod
-    def _extract_xml_ids_from_search(result_text: str) -> set[int]:
-        """Извлечь xml_id из результата поиска."""
-        try:
-            data = json.loads(result_text)
-        except (json.JSONDecodeError, TypeError):
-            return set()
-        data_field = data.get("data") if isinstance(data, dict) else None
-        if not isinstance(data_field, dict):
-            return set()
-        items = data_field.get("items", [])
-        return {
-            item["xml_id"]
-            for item in items
-            if isinstance(item, dict) and "xml_id" in item
-        }
-
-    def _verify_cart(
-        self,
-        cart_args: dict,
-        search_log: dict[str, set[int]],
-    ) -> dict:
-        """Сопоставить содержимое корзины с поисковыми запросами.
-
-        Возвращает отчёт:
-        - matched: [{query, name, xml_id}] — товар найден по этому запросу
-        - missing_queries: [query] — запрос был, но товара в корзине нет
-        - unmatched_items: [{name, xml_id}] — товар не из поиска
-
-        Это позволяет GigaChat увидеть ошибки и скорректировать корзину.
-        """
-        cart_xml_ids: set[int] = set()
-        for item in cart_args.get("products", []):
-            xml_id = item.get("xml_id")
-            if xml_id is not None:
-                cart_xml_ids.add(xml_id)
-
-        # Обратный индекс: xml_id → список запросов, которые его нашли
-        xml_to_queries: dict[int, list[str]] = {}
-        for query, xml_ids in search_log.items():
-            for xml_id in xml_ids:
-                xml_to_queries.setdefault(xml_id, []).append(query)
-
-        matched: list[dict] = []
-        unmatched_items: list[dict] = []
-        queries_with_match: set[str] = set()
-
-        for xml_id in cart_xml_ids:
-            cached = self._price_cache.get(xml_id)
-            name = cached["name"] if cached else f"xml_id={xml_id}"
-            queries = xml_to_queries.get(xml_id, [])
-            if queries:
-                matched.append({
-                    "query": queries[0],
-                    "name": name,
-                    "xml_id": xml_id,
-                })
-                queries_with_match.update(queries)
-            else:
-                unmatched_items.append({"name": name, "xml_id": xml_id})
-
-        # Запросы, по которым ничего не попало в корзину
-        missing_queries = [
-            q for q in search_log if q not in queries_with_match
-        ]
-
-        report: dict = {
-            "matched": matched,
-            "missing_queries": missing_queries,
-            "unmatched_items": unmatched_items,
-        }
-
-        if missing_queries or unmatched_items:
-            issues = []
-            for q in missing_queries:
-                issues.append(
-                    f'Поиск "{q}" не имеет соответствия в корзине — '
-                    "товар пропущен!"
-                )
-            for item in unmatched_items:
-                issues.append(
-                    f'Товар "{item["name"]}" в корзине не соответствует '
-                    "ни одному поисковому запросу."
-                )
-            report["issues"] = issues
-            report["action_required"] = (
-                "ВНИМАНИЕ: корзина не соответствует запросу. "
-                "Пропущенные товары нужно найти и добавить. "
-                "Пересобери корзину, включив ВСЕ запрошенные позиции."
-            )
-            logger.warning("Верификация корзины: %s", issues)
-        else:
-            report["ok"] = True
-
-        return report
+    # ---- Маршрутизация локальных инструментов ----
 
     # Имена локальных инструментов (для маршрутизации)
     _LOCAL_TOOL_NAMES = frozenset({
@@ -672,6 +325,178 @@ class GigaChatService:
         except Exception as e:
             logger.debug("Ошибка при закрытии GigaChat клиента: %s", e)
 
+    # ---- Вспомогательные методы для process_message ----
+
+    @staticmethod
+    def _parse_tool_arguments(raw_args: str | dict | None) -> dict:
+        """Распарсить аргументы вызова инструмента от GigaChat.
+
+        Args:
+            raw_args: Аргументы — JSON-строка, dict или None.
+
+        Returns:
+            Словарь аргументов (пустой при ошибке парсинга).
+        """
+        if isinstance(raw_args, str):
+            try:
+                return json.loads(raw_args)
+            except json.JSONDecodeError:
+                return {}
+        if isinstance(raw_args, dict):
+            return raw_args
+        return {}
+
+    @staticmethod
+    def _append_assistant_message(
+        history: list[Messages], msg: object,
+    ) -> None:
+        """Создать сообщение ассистента и добавить в историю."""
+        assistant_msg = Messages(
+            role=MessagesRole.ASSISTANT,
+            content=msg.content or "",
+        )
+        if msg.function_call:
+            assistant_msg.function_call = msg.function_call
+        if hasattr(msg, "functions_state_id") and msg.functions_state_id:
+            assistant_msg.functions_state_id = msg.functions_state_id
+        history.append(assistant_msg)
+
+    def _preprocess_tool_args(
+        self,
+        tool_name: str,
+        args: dict,
+        user_prefs: dict[str, str],
+    ) -> dict:
+        """Предобработать аргументы инструмента перед вызовом.
+
+        - Округляет дробные q для штучных товаров в корзине.
+        - Подставляет предпочтения пользователя в поисковый запрос.
+        """
+        if tool_name == "vkusvill_cart_link_create":
+            args = self._cart_processor.fix_unit_quantities(args)
+
+        if tool_name == "vkusvill_products_search" and user_prefs:
+            q = args.get("q", "")
+            enhanced_q = self._apply_preferences_to_query(q, user_prefs)
+            if enhanced_q != q:
+                logger.info(
+                    "Подстановка предпочтения: %r → %r", q, enhanced_q,
+                )
+                args = {**args, "q": enhanced_q}
+
+        return args
+
+    def _is_duplicate_call(
+        self,
+        tool_name: str,
+        args: dict,
+        call_counts: dict[str, int],
+        history: list[Messages],
+    ) -> bool:
+        """Проверить, не является ли вызов дублем, и обработать зацикливание.
+
+        Отслеживает повторные вызовы с идентичными аргументами.
+        При дубле добавляет подсказку в историю и возвращает True.
+
+        Returns:
+            True если вызов дублирован и его нужно пропустить.
+        """
+        call_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+        call_counts[call_key] = call_counts.get(call_key, 0) + 1
+
+        if call_counts[call_key] >= MAX_IDENTICAL_TOOL_CALLS:
+            logger.warning(
+                "Зацикливание: %s вызван %d раз с одинаковыми "
+                "аргументами, пропускаю вызов",
+                tool_name,
+                call_counts[call_key],
+            )
+            history.append(Messages(
+                role=MessagesRole.FUNCTION,
+                content=(
+                    "Ты уже вызывал этот инструмент с теми же аргументами. "
+                    "Результат тот же. Используй уже полученные данные "
+                    "и продолжай — не повторяй этот вызов."
+                ),
+                name=tool_name,
+            ))
+            return True
+        return False
+
+    async def _execute_tool(
+        self,
+        tool_name: str,
+        args: dict,
+        user_id: int,
+    ) -> str:
+        """Выполнить вызов инструмента (локальный или MCP) с обработкой ошибок.
+
+        Returns:
+            Строковый результат вызова (JSON).
+        """
+        try:
+            if tool_name in self._LOCAL_TOOL_NAMES:
+                return await self._call_local_tool(tool_name, args, user_id)
+            return await self._mcp_client.call_tool(tool_name, args)
+        except Exception as e:
+            logger.error("Ошибка %s: %s", tool_name, e, exc_info=True)
+            return json.dumps(
+                {"error": f"Ошибка вызова {tool_name}: {e}"},
+                ensure_ascii=False,
+            )
+
+    def _postprocess_tool_result(
+        self,
+        tool_name: str,
+        args: dict,
+        result: str,
+        user_prefs: dict[str, str],
+        search_log: dict[str, set[int]],
+    ) -> str:
+        """Постобработать результат вызова инструмента.
+
+        - Парсит предпочтения из user_preferences_get.
+        - Кеширует цены и обрезает результат поиска.
+        - Рассчитывает стоимость корзины и верифицирует.
+
+        Мутирует user_prefs и search_log in-place.
+
+        Returns:
+            Обработанный результат (строка).
+        """
+        if tool_name == "user_preferences_get":
+            parsed = self._parse_preferences(result)
+            if parsed:
+                user_prefs.clear()
+                user_prefs.update(parsed)
+                logger.info(
+                    "Загружены предпочтения: %s",
+                    {k: v for k, v in user_prefs.items()},
+                )
+
+        elif tool_name == "vkusvill_products_search":
+            self._search_processor.cache_prices(result)
+            query = args.get("q", "")
+            found_ids = self._search_processor.extract_xml_ids(result)
+            if query and found_ids:
+                search_log[query] = found_ids
+            result = self._search_processor.trim_search_result(result)
+
+        elif tool_name == "vkusvill_cart_link_create":
+            result = self._cart_processor.calc_total(args, result)
+            if search_log:
+                result = self._cart_processor.add_verification(
+                    args, result, search_log,
+                )
+            logger.info(
+                "Расчёт корзины: %s",
+                result[:MAX_RESULT_PREVIEW_LENGTH],
+            )
+
+        return result
+
+    # ---- Основной метод обработки сообщений ----
+
     async def process_message(self, user_id: int, text: str) -> str:
         """Обработать сообщение пользователя.
 
@@ -702,9 +527,9 @@ class GigaChatService:
         history.append(Messages(role=MessagesRole.USER, content=text))
 
         functions = await self._get_functions()
-        call_counts: dict[str, int] = {}  # "name:args" -> кол-во вызовов
-        search_log: dict[str, set[int]] = {}  # query -> {xml_ids}
-        user_prefs: dict[str, str] = {}  # категория -> предпочтение
+        call_counts: dict[str, int] = {}
+        search_log: dict[str, set[int]] = {}
+        user_prefs: dict[str, str] = {}
 
         for step in range(self._max_tool_calls):
             logger.info("Шаг %d для пользователя %d", step + 1, user_id)
@@ -720,159 +545,55 @@ class GigaChatService:
                 )
             except Exception as e:
                 logger.error("Ошибка GigaChat: %s", e, exc_info=True)
-                return (
-                    "Произошла ошибка при обращении к GigaChat. "
-                    "Попробуйте позже или начните новый диалог: /reset"
-                )
+                return ERROR_GIGACHAT
 
-            choice = response.choices[0]
-            msg = choice.message
+            msg = response.choices[0].message
+            self._append_assistant_message(history, msg)
 
-            # Создаём сообщение ассистента для истории
-            assistant_msg = Messages(
-                role=MessagesRole.ASSISTANT,
-                content=msg.content or "",
-            )
-            if msg.function_call:
-                assistant_msg.function_call = msg.function_call
-            if hasattr(msg, "functions_state_id") and msg.functions_state_id:
-                assistant_msg.functions_state_id = msg.functions_state_id
-            history.append(assistant_msg)
-
-            # Если GigaChat хочет вызвать инструмент
-            if msg.function_call:
-                tool_name = msg.function_call.name
-                raw_args = msg.function_call.arguments
-
-                # Парсим аргументы (могут быть строкой или dict)
-                if isinstance(raw_args, str):
-                    try:
-                        args = json.loads(raw_args)
-                    except json.JSONDecodeError:
-                        args = {}
-                elif isinstance(raw_args, dict):
-                    args = raw_args
-                else:
-                    args = {}
-
-                logger.info(
-                    "Вызов инструмента: %s(%s)",
-                    tool_name,
-                    json.dumps(args, ensure_ascii=False),
-                )
-
-                # Округляем дробные q для штучных товаров в корзине
-                if tool_name == "vkusvill_cart_link_create":
-                    args = self._fix_unit_quantities(args)
-
-                # Подстановка предпочтений в поисковый запрос
-                if tool_name == "vkusvill_products_search" and user_prefs:
-                    q = args.get("q", "")
-                    enhanced_q = self._apply_preferences_to_query(q, user_prefs)
-                    if enhanced_q != q:
-                        logger.info(
-                            "Подстановка предпочтения: %r → %r", q, enhanced_q,
-                        )
-                        args = {**args, "q": enhanced_q}
-
-                # Проверяем, не зацикливается ли вызов
-                # Отслеживаем ВСЕ повторные вызовы ДО выполнения
-                call_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-                call_counts[call_key] = call_counts.get(call_key, 0) + 1
-
-                if call_counts[call_key] >= 2:
-                    logger.warning(
-                        "Зацикливание: %s вызван %d раз с одинаковыми "
-                        "аргументами, пропускаю вызов",
-                        tool_name,
-                        call_counts[call_key],
-                    )
-                    # Подсказываем GigaChat не повторять вызов
-                    hint = Messages(
-                        role=MessagesRole.FUNCTION,
-                        content=(
-                            "Ты уже вызывал этот инструмент с теми же аргументами. "
-                            "Результат тот же. Используй уже полученные данные "
-                            "и продолжай — не повторяй этот вызов."
-                        ),
-                        name=tool_name,
-                    )
-                    history.append(hint)
-                    continue
-
-                # Выполняем вызов: локальный или через MCP
-                try:
-                    if tool_name in self._LOCAL_TOOL_NAMES:
-                        result = await self._call_local_tool(
-                            tool_name, args, user_id,
-                        )
-                    else:
-                        result = await self._mcp_client.call_tool(tool_name, args)
-                except Exception as e:
-                    logger.error("Ошибка %s: %s", tool_name, e, exc_info=True)
-                    result = json.dumps(
-                        {"error": f"Ошибка вызова {tool_name}: {e}"},
-                        ensure_ascii=False,
-                    )
-
-                logger.info(
-                    "Результат %s: %s",
-                    tool_name,
-                    result[:1000] if len(result) > 1000 else result,
-                )
-
-                # Парсим предпочтения для программной подстановки
-                if tool_name == "user_preferences_get":
-                    parsed = self._parse_preferences(result)
-                    if parsed:
-                        user_prefs = parsed
-                        logger.info(
-                            "Загружены предпочтения: %s",
-                            {k: v for k, v in user_prefs.items()},
-                        )
-
-                # Кешируем цены из поиска, трекаем xml_ids, обрезаем результат
-                if tool_name == "vkusvill_products_search":
-                    self._cache_prices_from_search(result)
-                    query = args.get("q", "")
-                    found_ids = self._extract_xml_ids_from_search(result)
-                    if query and found_ids:
-                        search_log[query] = found_ids
-                    result = self._trim_search_result(result)
-
-                # Рассчитываем стоимость корзины и верифицируем
-                if tool_name == "vkusvill_cart_link_create":
-                    result = self._calc_cart_total(args, result)
-                    # Верификация: сопоставляем корзину с поисковыми запросами
-                    if search_log:
-                        verification = self._verify_cart(args, search_log)
-                        try:
-                            result_data = json.loads(result)
-                            data = result_data.get("data")
-                            if isinstance(data, dict):
-                                data["verification"] = verification
-                                result = json.dumps(
-                                    result_data, ensure_ascii=False, indent=4,
-                                )
-                        except (json.JSONDecodeError, TypeError):
-                            pass
-                    logger.info("Расчёт корзины: %s", result[:500])
-
-                # Добавляем результат функции в историю
-                func_msg = Messages(
-                    role=MessagesRole.FUNCTION,
-                    content=result,
-                    name=tool_name,
-                )
-                history.append(func_msg)
-            else:
-                # GigaChat вернул текстовый ответ — конец цикла
+            # GigaChat вернул текстовый ответ — конец цикла
+            if not msg.function_call:
                 self._trim_history(user_id)
                 return msg.content or "Не удалось получить ответ."
 
+            tool_name = msg.function_call.name
+            args = self._parse_tool_arguments(msg.function_call.arguments)
+
+            logger.info(
+                "Вызов инструмента: %s(%s)",
+                tool_name,
+                json.dumps(args, ensure_ascii=False),
+            )
+
+            # Предобработка аргументов
+            args = self._preprocess_tool_args(tool_name, args, user_prefs)
+
+            # Проверка зацикливания
+            if self._is_duplicate_call(tool_name, args, call_counts, history):
+                continue
+
+            # Выполнение инструмента
+            result = await self._execute_tool(tool_name, args, user_id)
+
+            logger.info(
+                "Результат %s: %s",
+                tool_name,
+                result[:MAX_RESULT_LOG_LENGTH]
+                if len(result) > MAX_RESULT_LOG_LENGTH
+                else result,
+            )
+
+            # Постобработка результата
+            result = self._postprocess_tool_result(
+                tool_name, args, result, user_prefs, search_log,
+            )
+
+            # Добавляем результат функции в историю
+            history.append(Messages(
+                role=MessagesRole.FUNCTION,
+                content=result,
+                name=tool_name,
+            ))
+
         # Достигнут лимит вызовов инструментов
         self._trim_history(user_id)
-        return (
-            "Обработка заняла слишком много шагов. "
-            "Попробуйте упростить запрос или начните заново: /reset"
-        )
+        return ERROR_TOO_MANY_STEPS
