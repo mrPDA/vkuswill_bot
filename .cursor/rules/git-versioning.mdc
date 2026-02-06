@@ -1,0 +1,197 @@
+---
+description: Правила версионирования проекта
+alwaysApply: true
+---
+
+# Правила версионирования
+
+Используем **Semantic Versioning (SemVer)**: `MAJOR.MINOR.PATCH`
+
+## Формат версии
+
+```
+v1.2.3
+ │ │ │
+ │ │ └─ PATCH: исправления багов
+ │ └─── MINOR: новая функциональность (обратно совместимая)
+ └───── MAJOR: breaking changes (нарушающие обратную совместимость)
+```
+
+## Когда увеличивать версию
+
+### MAJOR (1.0.0 → 2.0.0)
+
+Увеличивайте при **breaking changes**:
+
+```python
+# ❌ Breaking change
+# Было: def send_message(text: str)
+# Стало: def send_message(text: str, user_id: int)  # новый обязательный параметр
+
+# ❌ Breaking change
+# Удалили публичный метод или изменили его сигнатуру
+```
+
+### MINOR (1.0.0 → 1.1.0)
+
+Увеличивайте при **новой функциональности** (обратно совместимой):
+
+```python
+# ✅ Новая функция
+def new_feature():
+    pass
+
+# ✅ Новый необязательный параметр
+def send_message(text: str, parse_mode: str = "HTML"):
+    pass
+
+# ✅ Новая команда бота
+@router.command("новая_команда")
+async def new_command(message: Message):
+    pass
+```
+
+### PATCH (1.0.0 → 1.0.1)
+
+Увеличивайте при **исправлениях багов**:
+
+```python
+# ✅ Исправление бага
+def calculate(x: int) -> int:
+    return x * 2  # Было: x + 2 (неверно)
+
+# ✅ Улучшение производительности
+# ✅ Исправление опечаток в логах
+# ✅ Обновление документации
+```
+
+## Примеры версий
+
+```
+v0.1.0  - Начальная разработка
+v0.2.0  - Добавлена интеграция с GigaChat
+v0.3.0  - Добавлен MCP клиент
+v0.3.1  - Исправлен баг с таймаутами
+v1.0.0  - Первый стабильный релиз
+v1.1.0  - Добавлена команда /help
+v1.1.1  - Исправлен memory leak
+v2.0.0  - Переход на aiogram 3.x (breaking change)
+```
+
+## Версия 0.x.x
+
+Для **начальной разработки**:
+- Версии `0.x.x` считаются нестабильными
+- Breaking changes разрешены без изменения MAJOR
+- После стабилизации переходим на `1.0.0`
+
+## Создание релиза
+
+### 1. Обновите версию в pyproject.toml
+
+```toml
+[project]
+name = "vkuswill-bot"
+version = "1.2.0"  # Обновите здесь
+```
+
+### 2. Создайте git tag
+
+```bash
+# Создание тега
+git tag -a v1.2.0 -m "Release v1.2.0: Добавлена команда /help"
+
+# Просмотр тега
+git show v1.2.0
+
+# Отправка тега в remote
+git push origin v1.2.0
+```
+
+### 3. Создайте CHANGELOG
+
+Создайте файл `CHANGELOG.md` или обновите существующий:
+
+```markdown
+# Changelog
+
+## [1.2.0] - 2024-02-06
+
+### Added
+- Команда `/help` для отображения справки
+- Логирование всех запросов к GigaChat
+
+### Fixed
+- Исправлен timeout при длительных запросах
+- Исправлена обработка ошибок MCP клиента
+
+### Changed
+- Улучшена обработка исключений в хендлерах
+
+## [1.1.0] - 2024-02-01
+
+### Added
+- Интеграция с MCP сервером
+- Новые тесты для handlers
+
+### Fixed
+- Memory leak в gigachat_service
+```
+
+## Workflow релиза
+
+```bash
+# 1. Убедитесь, что на main ветке
+git checkout main
+git pull origin main
+
+# 2. Обновите версию в pyproject.toml
+# (вручную или через инструмент)
+
+# 3. Обновите CHANGELOG.md
+# (вручную или через инструмент)
+
+# 4. Создайте коммит с версией
+git add pyproject.toml CHANGELOG.md
+git commit -m "chore: bump version to 1.2.0"
+
+# 5. Создайте тег
+git tag -a v1.2.0 -m "Release v1.2.0"
+
+# 6. Отправьте в remote
+git push origin main
+git push origin v1.2.0
+```
+
+## Pre-release версии
+
+Для тестовых релизов используйте суффиксы:
+
+```
+v1.2.0-alpha.1   # Альфа-версия
+v1.2.0-beta.1    # Бета-версия
+v1.2.0-rc.1      # Release candidate
+```
+
+## Метаданные версии
+
+Можно добавлять метаданные (не влияют на приоритет версии):
+
+```
+v1.2.0+build.123      # Build метаданные
+v1.2.0-beta.1+dev     # Pre-release с метаданными
+```
+
+## Инструменты
+
+Рекомендуемые инструменты для управления версиями:
+
+```bash
+# bump2version / bump-my-version
+uv pip install bump-my-version
+
+# Использование
+bump-my-version bump patch  # 1.0.0 → 1.0.1
+bump-my-version bump minor  # 1.0.0 → 1.1.0
+bump-my-version bump major  # 1.0.0 → 2.0.0
+```
