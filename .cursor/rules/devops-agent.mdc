@@ -1,0 +1,300 @@
+---
+description: "DevOps-агент: управление Git-репозиторием. Подключается при любых git-операциях: коммит, push, pull, merge, ветка, branch, PR, pull request, релиз, release, tag, version, CHANGELOG, deploy, CI/CD, синхронизация с main, rebase."
+alwaysApply: false
+---
+
+# DevOps-агент: управление репозиторием
+
+Ты отвечаешь за корректное ведение Git-репозитория. Все операции с git выполняй САМОСТОЯТЕЛЬНО через shell-команды, следуя этому воркфлоу.
+
+## Общие принципы
+
+1. **Никогда не коммить в main напрямую** — всегда через feature-ветку + PR (исключение: `chore:` коммиты вроде bump version, обновление CHANGELOG, обновление зависимостей)
+2. **Перед каждым коммитом — запусти тесты**: `uv run pytest -q`
+3. **Перед push — проверь статус**: `git status` и `git diff --cached --stat`
+4. **Не коммить секреты** — проверяй, что `.env`, ключи, токены не попадают в коммит
+5. **Не коммить мусор** — `__pycache__`, `.pyc`, `.log`, `.coverage`, `htmlcov/` в `.gitignore`
+6. **Экранируй кавычки** в shell-командах
+
+## Workflow: после выполнения задачи пользователя
+
+Когда пользователь просит закоммитить, создать PR или ты завершил задачу по коду:
+
+### Шаг 1. Проверить состояние
+
+```bash
+git status
+git diff --stat
+```
+
+### Шаг 2. Запустить тесты
+
+```bash
+uv run pytest -q --tb=short
+```
+
+Если тесты падают — СНАЧАЛА исправь ошибки, потом коммить.
+
+### Шаг 3. Добавить файлы
+
+```bash
+# Только релевантные файлы (не добавляй всё подряд)
+git add <конкретные файлы>
+```
+
+НИКОГДА не делай `git add .` без предварительной проверки `git status`. Убедись, что:
+- Нет файлов с секретами (`.env`, `credentials`, токены)
+- Нет временных файлов (`*.log`, `*.pyc`, `__pycache__/`)
+- Нет файлов, не относящихся к задаче
+
+### Шаг 4. Создать коммит
+
+Формат — **Conventional Commits**:
+
+```bash
+git commit -m "$(cat <<'EOF'
+<тип>(<область>): <описание до 50 символов>
+
+<тело: что и зачем, если нужно>
+
+Closes #<номер issue>
+EOF
+)"
+```
+
+**Типы:** feat, fix, docs, style, refactor, perf, test, chore, ci
+**Области:** bot, mcp, gigachat, config, tests, devops
+
+**Правила описания:**
+- Повелительное наклонение: "добавить", не "добавил"
+- Первая буква строчная
+- Без точки в конце
+- До 50 символов
+
+**Примеры:**
+```bash
+git commit -m "feat(bot): добавить команду /help"
+git commit -m "fix(gigachat): исправить timeout при запросах к API"
+git commit -m "test(mcp): добавить тесты для MCP клиента"
+git commit -m "chore: обновить зависимости в pyproject.toml"
+```
+
+## Workflow: создание ветки
+
+Когда начинаешь новую задачу:
+
+```bash
+# 1. Убедиться, что main актуален
+git checkout main
+git pull origin main
+
+# 2. Создать ветку
+git checkout -b <тип>/<описание>
+```
+
+**Типы веток:** feature/, feat/, fix/, bugfix/, hotfix/, refactor/, docs/, test/, chore/
+
+**Правила:**
+- Только строчные буквы и дефисы
+- С номером issue: `fix/42-timeout-error`
+- Без номера: `feature/add-help-command`
+
+## Workflow: Push
+
+```bash
+# 1. Проверить, что всё чисто
+git status
+
+# 2. Проверить, что отправляешь правильное
+git log --oneline main..HEAD
+
+# 3. Push
+# Первый push ветки:
+git push -u origin HEAD
+
+# Повторный push:
+git push origin HEAD
+```
+
+## Workflow: создание Pull Request
+
+Когда пользователь просит создать PR или задача завершена:
+
+```bash
+# 1. Push ветку
+git push -u origin HEAD
+
+# 2. Создать PR через gh CLI
+gh pr create --title "<тип>(<область>): <описание>" --body "$(cat <<'EOF'
+## Что изменено
+
+<краткое описание 2-3 предложения>
+
+## Зачем
+
+<почему это необходимо>
+
+## Как проверить
+
+1. `uv sync`
+2. `uv run pytest`
+3. <дополнительные шаги>
+
+## Чеклист
+
+- [x] Код протестирован локально
+- [x] Тесты проходят
+- [ ] Документация обновлена (если нужно)
+- [x] Нет конфликтов с main
+EOF
+)" --base main
+```
+
+**Правила PR:**
+- Один PR = одна задача
+- Размер до 400 строк изменений
+- Синхронизирован с main перед созданием
+- Содержательное описание (НЕ "Update" или "Fix")
+
+## Workflow: релиз
+
+Когда пользователь просит создать релиз:
+
+### 1. Определить тип версии
+
+- **patch** (0.1.0 → 0.1.1): исправления багов
+- **minor** (0.1.0 → 0.2.0): новая функциональность (обратно совместимая)
+- **major** (0.1.0 → 1.0.0): breaking changes
+
+### 2. Подготовить релиз
+
+```bash
+# Убедиться, что на main
+git checkout main
+git pull origin main
+
+# Обновить версию в pyproject.toml (изменить version = "X.Y.Z")
+# Обновить или создать CHANGELOG.md
+```
+
+### 3. CHANGELOG.md
+
+Формат — [Keep a Changelog](https://keepachangelog.com/):
+
+```markdown
+# Changelog
+
+## [X.Y.Z] - YYYY-MM-DD
+
+### Added
+- Новая функциональность
+
+### Fixed
+- Исправления
+
+### Changed
+- Изменения в существующем поведении
+
+### Removed
+- Удалённая функциональность
+```
+
+Заполняй на основе `git log --oneline <предыдущий_тег>..HEAD`. Категоризируй коммиты:
+- feat → Added
+- fix → Fixed
+- refactor, style, perf → Changed
+- Удаления → Removed
+
+### 4. Создать релиз
+
+```bash
+git add pyproject.toml CHANGELOG.md
+git commit -m "chore: bump version to X.Y.Z"
+git tag -a vX.Y.Z -m "Release vX.Y.Z"
+git push origin main
+git push origin vX.Y.Z
+```
+
+### 5. GitHub Release (если есть gh CLI)
+
+```bash
+gh release create vX.Y.Z --title "Release vX.Y.Z" --notes-file CHANGELOG.md
+```
+
+## Workflow: синхронизация с main
+
+Когда ветка отстала от main:
+
+```bash
+git fetch origin
+git rebase origin/main
+# При конфликтах — разрешить и:
+git rebase --continue
+# После успешного rebase:
+git push origin HEAD --force-with-lease
+```
+
+**ВАЖНО:** Используй `--force-with-lease`, НЕ `--force`.
+
+## Pre-flight проверки
+
+Перед КАЖДЫМ коммитом мысленно пройди чеклист:
+
+1. **Тесты проходят?** → `uv run pytest -q`
+2. **Нет секретов в коде?** → Проверь `git diff --cached` на наличие токенов/паролей
+3. **Нет debug-кода?** → Убери `print()`, `breakpoint()`, закомментированный код
+4. **Файлы релевантны задаче?** → Не коммить лишнее
+5. **Коммит-сообщение корректно?** → Conventional Commits формат
+6. **Ветка правильная?** → Не коммить в main (кроме chore)
+
+## Структура репозитория (для контекста)
+
+```
+vkuswill_bot/
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml              # CI: тесты, линтер, безопасность
+│   │   └── release.yml         # Автоматический релиз по тегу
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── ISSUE_TEMPLATE/
+│       ├── bug_report.md
+│       └── feature_request.md
+├── .githooks/
+│   ├── commit-msg              # Валидация формата коммитов
+│   └── pre-push               # Тесты перед push
+├── .cursor/rules/              # Правила для агентов
+├── src/vkuswill_bot/           # Исходный код
+├── tests/                      # Тесты
+├── pyproject.toml              # Зависимости и версия
+├── Makefile                    # Утилиты для разработки
+└── CHANGELOG.md                # История изменений
+```
+
+## Git hooks (установлены в .githooks/)
+
+Hooks активируются автоматически через `git config core.hooksPath .githooks`.
+
+- **commit-msg**: Отклоняет коммиты, не соответствующие Conventional Commits
+- **pre-push**: Запускает тесты перед push, отклоняет push если тесты падают
+
+Если hooks не работают, настрой:
+```bash
+git config core.hooksPath .githooks
+```
+
+## CI/CD (GitHub Actions)
+
+- **ci.yml**: запускается на push в main и PR → тесты (Python 3.11-3.13), ruff, безопасность, валидация коммитов
+- **release.yml**: запускается по тегу `v*.*.*` → проверка версии, создание GitHub Release, сборка Docker
+
+## Быстрые команды (Makefile)
+
+```bash
+make test           # Запустить тесты
+make test-cov       # Тесты с покрытием
+make test-security  # Тесты безопасности
+make lint           # Проверка ruff
+make format         # Форматирование ruff
+make clean          # Очистить кэши
+make run            # Запустить бота
+```

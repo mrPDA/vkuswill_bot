@@ -1,5 +1,8 @@
 """Общие фикстуры для тестов."""
 
+import os
+from unittest.mock import patch
+
 import pytest
 
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
@@ -12,6 +15,17 @@ MCP_URL = "https://mcp-test.example.com/mcp"
 def mcp_client() -> VkusvillMCPClient:
     """MCP-клиент с тестовым URL."""
     return VkusvillMCPClient(MCP_URL)
+
+
+@pytest.fixture
+def mock_env_minimal():
+    """Минимальный набор переменных окружения для Config."""
+    env = {
+        "BOT_TOKEN": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
+        "GIGACHAT_CREDENTIALS": "test-credentials-value",
+    }
+    with patch.dict(os.environ, env, clear=True):
+        yield env
 
 
 # -- Типичные ответы MCP-сервера для моков -----------------------------------

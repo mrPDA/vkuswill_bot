@@ -2,11 +2,26 @@
 # Быстрый запуск бота без пересборки через uv
 cd "$(dirname "$0")"
 
-# Убить предыдущий экземпляр, если есть
+# Остановить предыдущий экземпляр корректно, если есть
 if [ -f .bot.pid ]; then
-    kill -9 "$(cat .bot.pid)" 2>/dev/null
+    OLD_PID=$(cat .bot.pid)
+    if kill -0 "$OLD_PID" 2>/dev/null; then
+        echo "Останавливаю предыдущий экземпляр (PID: $OLD_PID)..."
+        kill "$OLD_PID" 2>/dev/null
+        # Ожидаем завершения до 10 секунд
+        for i in $(seq 1 10); do
+            if ! kill -0 "$OLD_PID" 2>/dev/null; then
+                break
+            fi
+            sleep 1
+        done
+        # Принудительно, если не завершился
+        if kill -0 "$OLD_PID" 2>/dev/null; then
+            echo "Принудительная остановка (SIGKILL)..."
+            kill -9 "$OLD_PID" 2>/dev/null
+        fi
+    fi
     rm -f .bot.pid
-    sleep 2
 fi
 
 # Запуск напрямую через venv

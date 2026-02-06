@@ -1,6 +1,6 @@
 ---
-description: Правила создания Pull Request
-alwaysApply: true
+description: "Структура и правила создания Pull Request. Подключается при: создать PR, pull request, gh pr create, merge request, отправить на ревью."
+alwaysApply: false
 ---
 
 # Правила создания Pull Request

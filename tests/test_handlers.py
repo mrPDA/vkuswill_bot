@@ -19,6 +19,8 @@ from vkuswill_bot.bot.handlers import (
     handle_text,
 )
 
+from helpers import make_message
+
 
 # ============================================================================
 # _split_message
@@ -83,25 +85,6 @@ class TestSplitMessage:
 
 
 # ============================================================================
-# Хелперы для моков aiogram
-# ============================================================================
-
-
-def _make_message(text: str = "", user_id: int = 1) -> MagicMock:
-    """Создать мок aiogram.types.Message."""
-    msg = MagicMock()
-    msg.text = text
-    msg.from_user = MagicMock()
-    msg.from_user.id = user_id
-    msg.chat = MagicMock()
-    msg.chat.id = 100
-    msg.answer = AsyncMock()
-    msg.bot = MagicMock()
-    msg.bot.send_chat_action = AsyncMock()
-    return msg
-
-
-# ============================================================================
 # Команды
 # ============================================================================
 
@@ -111,7 +94,7 @@ class TestCommands:
 
     async def test_cmd_start(self):
         """Команда /start отвечает приветствием."""
-        msg = _make_message()
+        msg = make_message()
         await cmd_start(msg)
 
         msg.answer.assert_called_once()
@@ -121,7 +104,7 @@ class TestCommands:
 
     async def test_cmd_help(self):
         """Команда /help отвечает инструкцией."""
-        msg = _make_message()
+        msg = make_message()
         await cmd_help(msg)
 
         msg.answer.assert_called_once()
@@ -132,7 +115,7 @@ class TestCommands:
 
     async def test_cmd_reset(self):
         """Команда /reset вызывает reset_conversation."""
-        msg = _make_message(user_id=42)
+        msg = make_message(user_id=42)
         mock_service = MagicMock()
         mock_service.reset_conversation = MagicMock()
 
@@ -144,7 +127,7 @@ class TestCommands:
 
     async def test_cmd_reset_no_user(self):
         """Команда /reset без from_user — не падает."""
-        msg = _make_message()
+        msg = make_message()
         msg.from_user = None
         mock_service = MagicMock()
 
@@ -164,7 +147,7 @@ class TestHandleText:
 
     async def test_normal_response(self):
         """Обычный запрос → ответ GigaChat."""
-        msg = _make_message("Хочу молоко", user_id=1)
+        msg = make_message("Хочу молоко", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Вот молоко за 79 руб!"
 
@@ -175,7 +158,7 @@ class TestHandleText:
 
     async def test_long_response_split(self):
         """Длинный ответ разбивается на части."""
-        msg = _make_message("Запрос", user_id=1)
+        msg = make_message("Запрос", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "A" * 5000  # > 4096
 
@@ -185,7 +168,7 @@ class TestHandleText:
 
     async def test_error_handling(self):
         """Ошибка в process_message → сообщение об ошибке."""
-        msg = _make_message("Тест", user_id=1)
+        msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.side_effect = RuntimeError("Boom!")
 
@@ -197,7 +180,7 @@ class TestHandleText:
 
     async def test_no_user(self):
         """Без from_user — ничего не делаем."""
-        msg = _make_message("text")
+        msg = make_message("text")
         msg.from_user = None
         mock_service = AsyncMock()
 
@@ -207,7 +190,7 @@ class TestHandleText:
 
     async def test_no_text(self):
         """Без текста — ничего не делаем."""
-        msg = _make_message("")
+        msg = make_message("")
         msg.text = None
         mock_service = AsyncMock()
 
@@ -217,7 +200,7 @@ class TestHandleText:
 
     async def test_typing_indicator_sent(self):
         """Индикатор набора отправляется во время обработки."""
-        msg = _make_message("Тест", user_id=1)
+        msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
 
         # process_message с задержкой, чтобы typing-таск успел сработать

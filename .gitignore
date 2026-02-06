@@ -1,12 +1,40 @@
+# Окружение
 .env
 .venv/
+
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
+dist/
+build/
+
+# Кэши инструментов
 .mypy_cache/
 .ruff_cache/
 .pytest_cache/
-dist/
-*.egg-info/
-bot.log
+.coverage
+htmlcov/
+coverage.xml
+
+# IDE
+.idea/
+.vscode/
+
+# Логи и PID
+*.log
 .bot.pid
+
+# Данные (SQLite)
+data/
+*.db
+*.db-journal
+*.db-wal
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Архив (не трекаем)
+Archive/

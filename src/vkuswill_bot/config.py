@@ -26,6 +26,9 @@ class Config(BaseSettings):
     max_tool_calls: int = 15
     max_history_messages: int = 50
 
+    # Хранилище
+    database_path: str = "data/preferences.db"
+
     # Отладка
     debug: bool = False
 

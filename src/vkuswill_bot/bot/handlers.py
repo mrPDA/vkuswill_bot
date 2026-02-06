@@ -112,8 +112,8 @@ async def _send_typing_periodically(
             await message.bot.send_chat_action(
                 message.chat.id, ChatAction.TYPING
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Ошибка отправки typing indicator: %s", e)
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=4.0)
         except asyncio.TimeoutError:
