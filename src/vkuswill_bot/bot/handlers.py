@@ -12,6 +12,9 @@ from vkuswill_bot.services.gigachat_service import GigaChatService
 
 logger = logging.getLogger(__name__)
 
+# Максимальная длина одного сообщения в Telegram
+MAX_TELEGRAM_MESSAGE_LENGTH = 4096
+
 router = Router()
 
 
@@ -96,8 +99,8 @@ async def handle_text(
         except asyncio.CancelledError:
             pass
 
-    # Разбиваем длинные сообщения (лимит Telegram — 4096 символов)
-    chunks = _split_message(response, 4096)
+    # Разбиваем длинные сообщения по лимиту Telegram
+    chunks = _split_message(response, MAX_TELEGRAM_MESSAGE_LENGTH)
     for chunk in chunks:
         await message.answer(chunk)
 
