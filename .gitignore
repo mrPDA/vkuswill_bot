@@ -38,3 +38,6 @@ Thumbs.db
 
 # Архив (не трекаем)
 Archive/
+
+# Cursor IDE
+.cursor/
