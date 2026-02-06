@@ -1,6 +1,6 @@
 ---
-description: Правила Code Review
-alwaysApply: true
+description: "Правила проведения Code Review. Подключается при: code review, ревью кода, проверить PR, review, провести ревью, оценить код."
+alwaysApply: false
 ---
 
 # Правила Code Review

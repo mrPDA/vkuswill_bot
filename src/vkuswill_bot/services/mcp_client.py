@@ -6,14 +6,24 @@
 """
 
 import asyncio
+import importlib.metadata
 import json
 import logging
+import re
 import traceback
 from typing import Any
 
 import httpx
 
 logger = logging.getLogger(__name__)
+
+def _get_package_version() -> str:
+    """Получить версию пакета из метаданных."""
+    try:
+        return importlib.metadata.version("vkuswill-bot")
+    except importlib.metadata.PackageNotFoundError:
+        return "0.0.0-dev"
+
 
 # Таймауты (секунды)
 CONNECT_TIMEOUT = 15
@@ -193,7 +203,10 @@ class VkusvillMCPClient:
             {
                 "protocolVersion": MCP_PROTOCOL_VERSION,
                 "capabilities": {},
-                "clientInfo": {"name": "vkuswill-bot", "version": "0.1.0"},
+                "clientInfo": {
+                    "name": "vkuswill-bot",
+                    "version": _get_package_version(),
+                },
             },
         )
         logger.debug("MCP initialize result: %s", result)
@@ -262,13 +275,82 @@ class VkusvillMCPClient:
 
     @staticmethod
     def _fix_cart_args(arguments: dict) -> dict:
-        """Добавить q=1 к товарам, если GigaChat забыл указать количество."""
+        """Исправить аргументы корзины.
+
+        1. Добавить q=1, если GigaChat забыл указать количество.
+        2. Объединить дубли xml_id (суммировать q).
+
+        GigaChat иногда дублирует xml_id вместо использования q,
+        например [{xml_id:1},{xml_id:1},{xml_id:1}] вместо [{xml_id:1,q:3}].
+        VkusVill API дедуплицирует по xml_id и берёт q=1,
+        поэтому объединяем на нашей стороне.
+        """
         products = arguments.get("products")
-        if products and isinstance(products, list):
-            for item in products:
-                if isinstance(item, dict) and "q" not in item:
-                    item["q"] = 1
+        if not products or not isinstance(products, list):
+            return arguments
+
+        # Шаг 1: добавить q=1 где отсутствует
+        for item in products:
+            if isinstance(item, dict) and "q" not in item:
+                item["q"] = 1
+
+        # Шаг 2: объединить дубли xml_id
+        merged: dict[int, float] = {}
+        order: list[int] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            if xml_id is None:
+                continue
+            q = item.get("q", 1)
+            if xml_id in merged:
+                merged[xml_id] += q
+            else:
+                merged[xml_id] = q
+                order.append(xml_id)
+
+        if merged:
+            arguments["products"] = [
+                {"xml_id": xid, "q": merged[xid]} for xid in order
+            ]
+
         return arguments
+
+    # Максимум товаров в результатах поиска (экономия токенов)
+    SEARCH_LIMIT = 5
+
+    # Паттерн для очистки поисковых запросов:
+    # удаляем числа с единицами ("400 гр", "5%", "2 банки", "450 мл")
+    _UNIT_PATTERN = re.compile(
+        r"\b\d+[,.]?\d*\s*"
+        r"(%|шт\w*|гр\w*|г\b|кг\w*|мл\w*|л\b|литр\w*|"
+        r"бутыл\w*|банк\w*|пач\w*|уп\w*|порц\w*)",
+        re.IGNORECASE,
+    )
+    # Отдельные числа ("молоко 4", "мороженое 2")
+    _STANDALONE_NUM = re.compile(r"\b\d+\b")
+
+    @classmethod
+    def _clean_search_query(cls, query: str) -> str:
+        """Очистить поисковый запрос от количеств и единиц измерения.
+
+        GigaChat часто передаёт в поиск полный текст пользователя
+        вместо ключевых слов, например "Творог 5% 400 гр" или "молоко 4".
+        Числа и единицы мусорят поисковую выдачу MCP API.
+
+        Примеры:
+            "Творог 5% 400 гр" → "Творог"
+            "тунец 2 банки" → "тунец"
+            "молоко 4" → "молоко"
+            "мороженое 2" → "мороженое"
+            "темный хлеб" → "темный хлеб" (без изменений)
+        """
+        cleaned = cls._UNIT_PATTERN.sub("", query)
+        cleaned = cls._STANDALONE_NUM.sub("", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        # Если после очистки пусто — вернуть оригинал
+        return cleaned or query
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Вызвать инструмент на MCP-сервере.
@@ -278,6 +360,16 @@ class VkusvillMCPClient:
         """
         if name == "vkusvill_cart_link_create":
             arguments = self._fix_cart_args(arguments)
+
+        # Очищаем поисковый запрос и ограничиваем результаты
+        if name == "vkusvill_products_search":
+            q = arguments.get("q", "")
+            cleaned_q = self._clean_search_query(q)
+            if cleaned_q != q:
+                logger.info("Очистка запроса: %r → %r", q, cleaned_q)
+                arguments = {**arguments, "q": cleaned_q}
+            if "limit" not in arguments:
+                arguments = {**arguments, "limit": self.SEARCH_LIMIT}
 
         logger.info("MCP вызов: %s(%s)", name, arguments)
 

@@ -1,6 +1,6 @@
 ---
-description: Правила версионирования проекта
-alwaysApply: true
+description: "Semantic Versioning и процесс релиза. Подключается при: релиз, release, версия, version, tag, тег, bump version, CHANGELOG, обновить версию, создать релиз."
+alwaysApply: false
 ---
 
 # Правила версионирования

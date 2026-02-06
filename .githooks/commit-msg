@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Валидация формата коммитов (Conventional Commits)
+# Устанавливается: git config core.hooksPath .githooks
+
+COMMIT_MSG_FILE="$1"
+COMMIT_MSG=$(head -1 "$COMMIT_MSG_FILE")
+
+# Паттерн Conventional Commits
+PATTERN="^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z0-9\-]+\))?: .{1,50}"
+
+if ! echo "$COMMIT_MSG" | grep -qE "$PATTERN"; then
+    echo ""
+    echo "❌ Некорректный формат коммита!"
+    echo ""
+    echo "Ваш коммит: $COMMIT_MSG"
+    echo ""
+    echo "Ожидаемый формат: <тип>(<область>): <описание>"
+    echo ""
+    echo "Типы: feat, fix, docs, style, refactor, perf, test, chore, ci"
+    echo "Области: bot, mcp, gigachat, config, tests, devops"
+    echo ""
+    echo "Примеры:"
+    echo "  feat(bot): добавить команду /help"
+    echo "  fix(gigachat): исправить обработку ошибок API"
+    echo "  chore: обновить зависимости"
+    echo ""
+    exit 1
+fi
+
+echo "✅ Коммит соответствует Conventional Commits."

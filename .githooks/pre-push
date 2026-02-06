@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Проверки перед push: тесты должны проходить
+# Устанавливается: git config core.hooksPath .githooks
+
+echo "🔍 Запуск тестов перед push..."
+
+if command -v uv &> /dev/null; then
+    uv run pytest -q --tb=short
+    EXIT_CODE=$?
+else
+    python -m pytest -q --tb=short
+    EXIT_CODE=$?
+fi
+
+if [ $EXIT_CODE -ne 0 ]; then
+    echo ""
+    echo "❌ Тесты не пройдены! Push отменён."
+    echo "Исправьте ошибки и попробуйте снова."
+    exit 1
+fi
+
+echo "✅ Все тесты пройдены. Push разрешён."

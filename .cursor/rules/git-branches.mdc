@@ -1,6 +1,6 @@
 ---
-description: Правила именования веток
-alwaysApply: true
+description: "Правила именования веток. Подключается при: создать ветку, git checkout -b, git branch, новая ветка, feature branch, переключить ветку."
+alwaysApply: false
 ---
 
 # Правила именования веток

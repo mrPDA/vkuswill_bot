@@ -1,6 +1,6 @@
 ---
-description: Правила оформления коммитов (Conventional Commits)
-alwaysApply: true
+description: "Формат коммитов Conventional Commits. Подключается при: git commit, коммит, закоммитить, сохранить изменения, зафиксировать изменения."
+alwaysApply: false
 ---
 
 # Правила оформления коммитов
