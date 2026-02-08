@@ -19,7 +19,6 @@ test = [
     "pytest-cov>=6.0",
     "bandit>=1.7",
     "pip-audit>=2.7",
-    "safety>=3.0",
 ]
 dev = [
     "ruff>=0.8",
