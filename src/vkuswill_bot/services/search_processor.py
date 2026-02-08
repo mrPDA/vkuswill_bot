@@ -2,28 +2,60 @@
 
 import json
 import logging
+import re
 
-from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+from vkuswill_bot.services.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
 
-# Лимит кеша цен (кол-во товаров)
-MAX_PRICE_CACHE_SIZE = 5000
+# Максимум товаров в результатах поиска (экономия токенов)
+SEARCH_LIMIT = 5
 
 
 class SearchProcessor:
     """Обработка результатов поиска ВкусВилл и кеширование цен.
 
     Владеет кешем цен (xml_id → {name, price, unit}),
-    обрезает тяжёлые поля из результатов поиска,
-    извлекает xml_id для верификации корзины.
+    очисткой поисковых запросов, ограничением результатов,
+    обрезкой тяжёлых полей и извлечением xml_id.
     """
 
     # Поля товара, которые передаём в GigaChat (остальные срезаем)
     _SEARCH_ITEM_FIELDS = ("xml_id", "name", "price", "unit", "weight", "rating")
 
-    def __init__(self) -> None:
-        self.price_cache: dict[int, dict] = {}
+    # Паттерн для очистки поисковых запросов:
+    # удаляем числа с единицами ("400 гр", "5%", "2 банки", "450 мл")
+    _UNIT_PATTERN = re.compile(
+        r"\b\d+[,.]?\d*\s*"
+        r"(%|шт\w*|гр\w*|г\b|кг\w*|мл\w*|л\b|литр\w*|"
+        r"бутыл\w*|банк\w*|пач\w*|уп\w*|порц\w*)",
+        re.IGNORECASE,
+    )
+    # Отдельные числа ("молоко 4", "мороженое 2")
+    _STANDALONE_NUM = re.compile(r"\b\d+\b")
+
+    def __init__(self, price_cache: PriceCache | None = None) -> None:
+        self.price_cache: PriceCache = price_cache or PriceCache()
+
+    @classmethod
+    def clean_search_query(cls, query: str) -> str:
+        """Очистить поисковый запрос от количеств и единиц измерения.
+
+        GigaChat часто передаёт в поиск полный текст пользователя
+        вместо ключевых слов, например "Творог 5% 400 гр" или "молоко 4".
+        Числа и единицы мусорят поисковую выдачу MCP API.
+
+        Примеры:
+            "Творог 5% 400 гр" → "Творог"
+            "тунец 2 банки" → "тунец"
+            "молоко 4" → "молоко"
+            "мороженое 2" → "мороженое"
+            "темный хлеб" → "темный хлеб" (без изменений)
+        """
+        cleaned = cls._UNIT_PATTERN.sub("", query)
+        cleaned = cls._STANDALONE_NUM.sub("", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return cleaned or query
 
     @staticmethod
     def parse_search_items(result_text: str) -> tuple[dict, list[dict]] | None:
@@ -61,7 +93,7 @@ class SearchProcessor:
 
         # Обрезаем количество товаров до SEARCH_LIMIT
         # (MCP API игнорирует параметр limit и всегда возвращает 10)
-        max_items = VkusvillMCPClient.SEARCH_LIMIT
+        max_items = SEARCH_LIMIT
 
         trimmed_items = []
         for item in items[:max_items]:
@@ -90,24 +122,12 @@ class SearchProcessor:
                 continue
             price = price_info.get("current")
             if xml_id is not None and price is not None:
-                self.price_cache[xml_id] = {
-                    "name": item.get("name", ""),
-                    "price": price,
-                    "unit": item.get("unit", "шт"),
-                }
-
-        # Ограничиваем рост кеша — удаляем старые записи (FIFO)
-        if len(self.price_cache) > MAX_PRICE_CACHE_SIZE:
-            keys_to_remove = list(self.price_cache.keys())[
-                : MAX_PRICE_CACHE_SIZE // 2
-            ]
-            for k in keys_to_remove:
-                del self.price_cache[k]
-            logger.info(
-                "Очищен кеш цен: удалено %d записей, осталось %d",
-                len(keys_to_remove),
-                len(self.price_cache),
-            )
+                self.price_cache.set(
+                    xml_id,
+                    name=item.get("name", ""),
+                    price=price,
+                    unit=item.get("unit", "шт"),
+                )
 
     def extract_xml_ids(self, result_text: str) -> set[int]:
         """Извлечь xml_id из результата поиска."""

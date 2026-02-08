@@ -78,7 +78,7 @@ class GigaChatService:
         self._conversations = self._dialog_manager.conversations  # обратная совместимость
 
         self._functions: list[dict] | None = None
-        self._search_processor = SearchProcessor()
+        self._search_processor = SearchProcessor()  # создаёт PriceCache внутри
         self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
         self._tool_executor = tool_executor or ToolExecutor(
