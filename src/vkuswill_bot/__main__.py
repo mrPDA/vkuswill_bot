@@ -12,10 +12,14 @@ from aiogram.enums import ParseMode
 from vkuswill_bot.bot.handlers import router
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware
 from vkuswill_bot.config import config
+from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.gigachat_service import GigaChatService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.recipe_store import RecipeStore
+from vkuswill_bot.services.search_processor import SearchProcessor
+from vkuswill_bot.services.tool_executor import ToolExecutor
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_FILE = "bot.log"
@@ -60,7 +64,22 @@ async def main() -> None:
     # Кеш рецептов (SQLite, отдельная БД — исключает конфликты блокировок)
     recipe_store = RecipeStore(config.recipe_database_path)
 
-    # GigaChat-сервис
+    # Процессоры: поиск и корзина
+    search_processor = SearchProcessor()
+    cart_processor = CartProcessor(search_processor.price_cache)
+
+    # Менеджер диалогов (LRU-кеш историй + per-user lock)
+    dialog_manager = DialogManager(max_history=config.max_history_messages)
+
+    # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
+    tool_executor = ToolExecutor(
+        mcp_client=mcp_client,
+        search_processor=search_processor,
+        cart_processor=cart_processor,
+        preferences_store=prefs_store,
+    )
+
+    # GigaChat-сервис — все зависимости инжектируются явно
     gigachat_service = GigaChatService(
         credentials=config.gigachat_credentials,
         model=config.gigachat_model,
@@ -70,6 +89,8 @@ async def main() -> None:
         recipe_store=recipe_store,
         max_tool_calls=config.max_tool_calls,
         max_history=config.max_history_messages,
+        dialog_manager=dialog_manager,
+        tool_executor=tool_executor,
     )
 
     # Предзагрузка MCP-инструментов
