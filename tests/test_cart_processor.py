@@ -12,6 +12,7 @@ import json
 import pytest
 
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.price_cache import PriceCache
 
 
 # ============================================================================
@@ -20,9 +21,9 @@ from vkuswill_bot.services.cart_processor import CartProcessor
 
 
 @pytest.fixture
-def price_cache() -> dict[int, dict]:
+def price_cache() -> PriceCache:
     """Общий кеш цен."""
-    return {}
+    return PriceCache()
 
 
 @pytest.fixture

@@ -345,7 +345,7 @@ class TestProcessMessage:
 
         assert "79" in result
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"q": "молоко"}
+            "vkusvill_products_search", {"q": "молоко", "limit": 5}
         )
 
     async def test_function_call_with_string_args(self, service, mock_mcp_client):
@@ -368,7 +368,7 @@ class TestProcessMessage:
             result = await service.process_message(user_id=1, text="Сыр")
 
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"q": "сыр"}
+            "vkusvill_products_search", {"q": "сыр", "limit": 5}
         )
 
     async def test_mcp_error_handled(self, service, mock_mcp_client):
@@ -514,20 +514,21 @@ class TestProcessMessage:
     async def test_total_steps_safety_limit(self, service, mock_mcp_client):
         """total_steps safety limit (max_total_steps) прерывает цикл."""
         # Каждый вызов — РАЗНЫЕ аргументы, чтобы duplicate detection не срабатывал.
+        # Используем текстовые запросы без цифр (clean_search_query удаляет числа).
         # Но max_tool_calls=5, max_total_steps=10, так что 10 шагов — предел.
         mock_mcp_client.call_tool.return_value = json.dumps(
             {"ok": True, "data": {"items": []}},
         )
 
+        products = ["молоко", "хлеб", "сыр", "масло", "яйца", "кефир", "сметана"]
         step = 0
 
         def mock_chat(chat: Chat):
             nonlocal step
             step += 1
-            # Генерируем разные запросы каждый шаг, чтобы не сработал
-            # duplicate detection
+            q = products[step % len(products)]
             return make_function_call_response(
-                "vkusvill_products_search", {"q": f"запрос-{step}"}
+                "vkusvill_products_search", {"q": q}
             )
 
         with patch.object(service._client, "chat", side_effect=mock_chat):
@@ -1433,9 +1434,9 @@ class TestSearchTrimCacheCartFlow:
             result = await service.process_message(user_id=1, text="Тест")
 
         assert isinstance(result, str)
-        # Вызов MCP произошёл с пустым dict (fallback при невалидном JSON)
+        # Вызов MCP произошёл с пустым dict + limit (fallback при невалидном JSON)
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {},
+            "vkusvill_products_search", {"limit": 5},
         )
 
     async def test_function_call_with_non_str_non_dict_args(self, service, mock_mcp_client):
@@ -1462,7 +1463,7 @@ class TestSearchTrimCacheCartFlow:
 
         assert isinstance(result, str)
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {},
+            "vkusvill_products_search", {"limit": 5},
         )
 
     async def test_functions_state_id_preserved(self, service, mock_mcp_client):
@@ -1576,7 +1577,7 @@ class TestProcessMessageWithPrefs:
             )
 
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"q": "молоко"},
+            "vkusvill_products_search", {"q": "молоко", "limit": 5},
         )
 
     async def test_preferences_enhance_search_query(
