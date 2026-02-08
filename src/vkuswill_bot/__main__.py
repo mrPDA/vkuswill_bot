@@ -15,6 +15,7 @@ from vkuswill_bot.config import config
 from vkuswill_bot.services.gigachat_service import GigaChatService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
+from vkuswill_bot.services.recipe_store import RecipeStore
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_FILE = "bot.log"
@@ -56,6 +57,9 @@ async def main() -> None:
     # Хранилище предпочтений (SQLite)
     prefs_store = PreferencesStore(config.database_path)
 
+    # Кеш рецептов (SQLite, та же директория)
+    recipe_store = RecipeStore(config.database_path)
+
     # GigaChat-сервис
     gigachat_service = GigaChatService(
         credentials=config.gigachat_credentials,
@@ -63,6 +67,7 @@ async def main() -> None:
         scope=config.gigachat_scope,
         mcp_client=mcp_client,
         preferences_store=prefs_store,
+        recipe_store=recipe_store,
         max_tool_calls=config.max_tool_calls,
         max_history=config.max_history_messages,
     )
@@ -112,6 +117,7 @@ async def main() -> None:
     finally:
         logger.info("Закрытие ресурсов...")
         await gigachat_service.close()
+        await recipe_store.close()
         await prefs_store.close()
         await mcp_client.close()
         await bot.session.close()

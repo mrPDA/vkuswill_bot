@@ -4,6 +4,10 @@ SYSTEM_PROMPT = """
 ***REDACTED***
 """
 
+RECIPE_EXTRACTION_PROMPT = """
+***REDACTED***
+"""
+
 # Сообщения об ошибках для пользователя
 ERROR_GIGACHAT = (
     "Произошла ошибка при обращении к GigaChat. "

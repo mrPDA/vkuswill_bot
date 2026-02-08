@@ -14,8 +14,10 @@ from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.prompts import (
     ERROR_GIGACHAT,
     ERROR_TOO_MANY_STEPS,
+    RECIPE_EXTRACTION_PROMPT,
     SYSTEM_PROMPT,
 )
+from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 
 logger = logging.getLogger(__name__)
@@ -43,6 +45,36 @@ class GigaChatService:
     function calling: GigaChat решает, какой инструмент вызвать,
     бот выполняет вызов через MCP, результат возвращается в GigaChat.
     """
+
+    # Описание инструмента для извлечения ингредиентов рецепта
+    _RECIPE_TOOL: dict = {
+        "name": "recipe_ingredients",
+        "description": (
+            "Получить полный список ингредиентов для блюда/рецепта. "
+            "ОБЯЗАТЕЛЬНО вызывай когда пользователь просит собрать "
+            "продукты для конкретного блюда (борщ, паста, азу и т.д.). "
+            "Возвращает ингредиенты с количествами и поисковыми запросами."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "dish": {
+                    "type": "string",
+                    "description": (
+                        "Название блюда, например: "
+                        "азу из говядины, борщ, паста карбонара"
+                    ),
+                },
+                "servings": {
+                    "type": "integer",
+                    "description": (
+                        "Количество порций (человек). По умолчанию 4."
+                    ),
+                },
+            },
+            "required": ["dish"],
+        },
+    }
 
     # Описания локальных tool-функций для предпочтений
     _LOCAL_TOOLS: list[dict] = [
@@ -107,7 +139,8 @@ class GigaChatService:
         scope: str,
         mcp_client: VkusvillMCPClient,
         preferences_store: PreferencesStore | None = None,
-        max_tool_calls: int = 15,
+        recipe_store: RecipeStore | None = None,
+        max_tool_calls: int = 20,
         max_history: int = 50,
     ) -> None:
         # TODO: включить SSL-верификацию когда GigaChat SDK
@@ -123,6 +156,7 @@ class GigaChatService:
         )
         self._mcp_client = mcp_client
         self._prefs_store = preferences_store
+        self._recipe_store = recipe_store
         self._max_tool_calls = max_tool_calls
         self._max_history = max_history
         self._conversations: OrderedDict[int, list[Messages]] = OrderedDict()
@@ -157,6 +191,10 @@ class GigaChatService:
         # Добавляем локальные инструменты (предпочтения)
         if self._prefs_store is not None:
             self._functions.extend(self._LOCAL_TOOLS)
+
+        # Добавляем инструмент рецептов
+        if self._recipe_store is not None:
+            self._functions.append(self._RECIPE_TOOL)
 
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
@@ -277,16 +315,22 @@ class GigaChatService:
         "user_preferences_get",
         "user_preferences_set",
         "user_preferences_delete",
+        "recipe_ingredients",
     })
 
     async def _call_local_tool(
         self, tool_name: str, args: dict, user_id: int,
     ) -> str:
-        """Выполнить локальный инструмент (предпочтения).
+        """Выполнить локальный инструмент (предпочтения, рецепты).
 
         Raises:
             ValueError: если инструмент не найден или store не настроен.
         """
+        # --- Рецепты ---
+        if tool_name == "recipe_ingredients":
+            return await self._handle_recipe_ingredients(args)
+
+        # --- Предпочтения ---
         if self._prefs_store is None:
             return json.dumps(
                 {"ok": False, "error": "Хранилище предпочтений не настроено"},
@@ -317,6 +361,218 @@ class GigaChatService:
                 {"ok": False, "error": f"Неизвестный локальный инструмент: {tool_name}"},
                 ensure_ascii=False,
             )
+
+    # ---- Извлечение рецептов ----
+
+    async def _handle_recipe_ingredients(self, args: dict) -> str:
+        """Обработать вызов recipe_ingredients: кеш → LLM-fallback → кеш.
+
+        Returns:
+            JSON-строка с ингредиентами рецепта.
+        """
+        # Приблизительный вес 1 штуки в кг для овощей/фруктов
+        PIECE_WEIGHT_KG: dict[str, float] = {
+            "картофель": 0.15, "картошка": 0.15,
+            "морковь": 0.15, "морковка": 0.15,
+            "свекла": 0.3, "буряк": 0.3,
+            "лук": 0.1, "луковица": 0.1,
+            "яблоко": 0.2, "помидор": 0.15, "томат": 0.15,
+            "огурец": 0.12, "перец": 0.15, "перец болгарский": 0.15,
+            "баклажан": 0.3, "кабачок": 0.3,
+        }
+
+        if self._recipe_store is None:
+            return json.dumps(
+                {"ok": False, "error": "Кеш рецептов не настроен"},
+                ensure_ascii=False,
+            )
+
+        dish = args.get("dish", "").strip()
+        if not dish:
+            return json.dumps(
+                {"ok": False, "error": "Не указано название блюда"},
+                ensure_ascii=False,
+            )
+
+        servings = args.get("servings", 4)
+        if not isinstance(servings, int) or servings <= 0:
+            servings = 4
+
+        # 1. Проверяем кеш
+        cached = await self._recipe_store.get(dish)
+        if cached is not None:
+            ingredients = cached["ingredients"]
+            # Масштабируем если другое количество порций
+            if cached["servings"] != servings:
+                ingredients = RecipeStore.scale_ingredients(
+                    ingredients, cached["servings"], servings,
+                )
+            logger.info(
+                "Рецепт из кеша: %s на %d порций (%d ингредиентов)",
+                dish, servings, len(ingredients),
+            )
+            # Обогащаем ингредиенты эквивалентом в кг
+            ingredients = self._enrich_with_kg(ingredients, PIECE_WEIGHT_KG)
+            return self._format_recipe_result(
+                dish, servings, ingredients, cached=True,
+            )
+
+        # 2. Извлекаем через GigaChat
+        try:
+            ingredients = await self._extract_recipe_from_llm(dish, servings)
+        except Exception as e:
+            logger.error(
+                "Ошибка извлечения рецепта '%s': %s", dish, e, exc_info=True,
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": (
+                        f"Не удалось получить рецепт для «{dish}». "
+                        "Составь список ингредиентов самостоятельно."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        # 3. Сохраняем в кеш
+        try:
+            await self._recipe_store.save(dish, servings, ingredients)
+        except Exception as e:
+            logger.warning("Не удалось закешировать рецепт '%s': %s", dish, e)
+
+        # Обогащаем ингредиенты эквивалентом в кг
+        ingredients = self._enrich_with_kg(ingredients, PIECE_WEIGHT_KG)
+        return self._format_recipe_result(
+            dish, servings, ingredients, cached=False,
+        )
+
+    @staticmethod
+    def _enrich_with_kg(
+        ingredients: list[dict],
+        piece_weights: dict[str, float],
+    ) -> list[dict]:
+        """Добавить поле kg_equivalent для ингредиентов в штуках.
+
+        Если рецепт указывает quantity=3, unit="шт" для картофеля,
+        а картофель продаётся в кг, GigaChat должен поставить q≈0.45.
+        Добавляем готовое число, чтобы модель не считала сама.
+
+        Args:
+            ingredients: список ингредиентов рецепта.
+            piece_weights: словарь {название: кг_за_штуку}.
+
+        Returns:
+            Обогащённый список (мутирует in-place, но возвращает для удобства).
+        """
+        for item in ingredients:
+            if not isinstance(item, dict):
+                continue
+            unit = item.get("unit", "")
+            quantity = item.get("quantity", 0)
+            name = item.get("name", "").lower()
+
+            # Пропускаем если уже в весовых единицах
+            if unit in ("кг", "г", "мл", "л"):
+                continue
+
+            # Ищем совпадение в таблице весов
+            weight_per_piece = None
+            for key, w in piece_weights.items():
+                if key in name:
+                    weight_per_piece = w
+                    break
+
+            if weight_per_piece is not None and quantity > 0:
+                kg_eq = round(quantity * weight_per_piece, 2)
+                item["kg_equivalent"] = kg_eq
+
+        return ingredients
+
+    @staticmethod
+    def _format_recipe_result(
+        dish: str,
+        servings: int,
+        ingredients: list[dict],
+        cached: bool,
+    ) -> str:
+        """Сформировать JSON-результат recipe_ingredients."""
+        return json.dumps(
+            {
+                "ok": True,
+                "dish": dish,
+                "servings": servings,
+                "ingredients": ingredients,
+                "cached": cached,
+                "hint": (
+                    "Ищи каждый ингредиент через "
+                    "vkusvill_products_search(q=search_query). "
+                    "Соль, перец и воду искать не нужно. "
+                    "ВАЖНО: если товар продаётся в кг (unit='кг'), "
+                    "а у ингредиента есть поле kg_equivalent — "
+                    "используй его как q! "
+                    "Например: kg_equivalent=0.45 → q=0.45."
+                ),
+            },
+            ensure_ascii=False,
+        )
+
+    async def _extract_recipe_from_llm(
+        self, dish: str, servings: int,
+    ) -> list[dict]:
+        """Извлечь ингредиенты рецепта через отдельный вызов GigaChat.
+
+        Делает один точечный запрос без function calling.
+
+        Returns:
+            Список ингредиентов [{name, quantity, unit, search_query}].
+
+        Raises:
+            ValueError: если ответ не является валидным JSON-массивом.
+        """
+        prompt = RECIPE_EXTRACTION_PROMPT.format(dish=dish, servings=servings)
+        logger.info("Извлечение рецепта: %s на %d порций", dish, servings)
+
+        response = await asyncio.to_thread(
+            self._client.chat,
+            Chat(
+                messages=[Messages(role=MessagesRole.USER, content=prompt)],
+            ),
+        )
+
+        content = response.choices[0].message.content or ""
+        ingredients = self._parse_json_from_llm(content)
+
+        if not isinstance(ingredients, list) or not ingredients:
+            raise ValueError(
+                f"Ожидался непустой JSON-массив, получено: {content[:200]}"
+            )
+
+        logger.info(
+            "Извлечено %d ингредиентов для '%s'", len(ingredients), dish,
+        )
+        return ingredients
+
+    @staticmethod
+    def _parse_json_from_llm(content: str) -> list | dict:
+        """Распарсить JSON из ответа GigaChat, убирая markdown-обёртку.
+
+        GigaChat иногда оборачивает JSON в ```json...```.
+        """
+        text = content.strip()
+
+        # Убираем markdown code block
+        if text.startswith("```"):
+            lines = text.split("\n")
+            # Убираем первую строку (```json или ```)
+            if lines[0].startswith("```"):
+                lines = lines[1:]
+            # Убираем последнюю строку (```)
+            if lines and lines[-1].strip() == "```":
+                lines = lines[:-1]
+            text = "\n".join(lines).strip()
+
+        return json.loads(text)
 
     async def close(self) -> None:
         """Закрыть клиент GigaChat."""
@@ -391,12 +647,15 @@ class GigaChatService:
         tool_name: str,
         args: dict,
         call_counts: dict[str, int],
+        call_results: dict[str, str],
         history: list[Messages],
     ) -> bool:
         """Проверить, не является ли вызов дублем, и обработать зацикливание.
 
         Отслеживает повторные вызовы с идентичными аргументами.
-        При дубле добавляет подсказку в историю и возвращает True.
+        При дубле возвращает закешированный результат предыдущего вызова
+        (GigaChat API требует валидный JSON в content функции, а ошибку
+        модель может не понять и зациклиться повторяя вызовы).
 
         Returns:
             True если вызов дублирован и его нужно пропустить.
@@ -407,17 +666,18 @@ class GigaChatService:
         if call_counts[call_key] >= MAX_IDENTICAL_TOOL_CALLS:
             logger.warning(
                 "Зацикливание: %s вызван %d раз с одинаковыми "
-                "аргументами, пропускаю вызов",
+                "аргументами, возвращаю закешированный результат",
                 tool_name,
                 call_counts[call_key],
             )
+            # Возвращаем реальный результат предыдущего вызова,
+            # чтобы GigaChat мог продолжить работу
+            cached = call_results.get(call_key, json.dumps(
+                {"ok": True, "data": {}}, ensure_ascii=False,
+            ))
             history.append(Messages(
                 role=MessagesRole.FUNCTION,
-                content=(
-                    "Ты уже вызывал этот инструмент с теми же аргументами. "
-                    "Результат тот же. Используй уже полученные данные "
-                    "и продолжай — не повторяй этот вызов."
-                ),
+                content=cached,
                 name=tool_name,
             ))
             return True
@@ -528,11 +788,20 @@ class GigaChatService:
 
         functions = await self._get_functions()
         call_counts: dict[str, int] = {}
+        call_results: dict[str, str] = {}  # call_key -> результат
         search_log: dict[str, set[int]] = {}
         user_prefs: dict[str, str] = {}
 
-        for step in range(self._max_tool_calls):
-            logger.info("Шаг %d для пользователя %d", step + 1, user_id)
+        real_calls = 0  # Только реальные вызовы (без дублей)
+        total_steps = 0  # Все шаги (включая дубли) — защита от бесконечного цикла
+        max_total_steps = self._max_tool_calls * 2  # Абсолютный лимит шагов
+
+        while real_calls < self._max_tool_calls and total_steps < max_total_steps:
+            total_steps += 1
+            logger.info(
+                "Шаг %d для пользователя %d (реальных вызовов: %d)",
+                total_steps, user_id, real_calls,
+            )
 
             try:
                 response = await asyncio.to_thread(
@@ -567,9 +836,13 @@ class GigaChatService:
             # Предобработка аргументов
             args = self._preprocess_tool_args(tool_name, args, user_prefs)
 
-            # Проверка зацикливания
-            if self._is_duplicate_call(tool_name, args, call_counts, history):
+            # Проверка зацикливания — дубли не считаются реальными вызовами
+            if self._is_duplicate_call(
+                tool_name, args, call_counts, call_results, history,
+            ):
                 continue
+
+            real_calls += 1
 
             # Выполнение инструмента
             result = await self._execute_tool(tool_name, args, user_id)
@@ -586,6 +859,10 @@ class GigaChatService:
             result = self._postprocess_tool_result(
                 tool_name, args, result, user_prefs, search_log,
             )
+
+            # Кешируем результат для защиты от зацикливания
+            call_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+            call_results[call_key] = result
 
             # Добавляем результат функции в историю
             history.append(Messages(
