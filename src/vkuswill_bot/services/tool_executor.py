@@ -129,20 +129,33 @@ class ToolExecutor:
     ) -> dict:
         """Предобработать аргументы инструмента перед вызовом.
 
-        - Округляет дробные q для штучных товаров в корзине.
-        - Подставляет предпочтения пользователя в поисковый запрос.
+        - Корзина: исправляет дубли xml_id, добавляет q=1, округляет q для шт.
+        - Поиск: очищает запрос от цифр/единиц, подставляет предпочтения, добавляет limit.
         """
         if tool_name == "vkusvill_cart_link_create":
+            args = self._cart_processor.fix_cart_args(args)
             args = self._cart_processor.fix_unit_quantities(args)
 
-        if tool_name == "vkusvill_products_search" and user_prefs:
+        if tool_name == "vkusvill_products_search":
+            # Очистка запроса от чисел и единиц измерения
             q = args.get("q", "")
-            enhanced_q = self._apply_preferences_to_query(q, user_prefs)
-            if enhanced_q != q:
-                logger.info(
-                    "Подстановка предпочтения: %r → %r", q, enhanced_q,
-                )
-                args = {**args, "q": enhanced_q}
+            cleaned_q = self._search_processor.clean_search_query(q)
+            if cleaned_q != q:
+                logger.info("Очистка запроса: %r → %r", q, cleaned_q)
+                args = {**args, "q": cleaned_q}
+
+            # Подстановка предпочтений
+            if user_prefs:
+                q = args.get("q", "")
+                enhanced_q = self._apply_preferences_to_query(q, user_prefs)
+                if enhanced_q != q:
+                    logger.info("Подстановка предпочтения: %r → %r", q, enhanced_q)
+                    args = {**args, "q": enhanced_q}
+
+            # Ограничение результатов поиска
+            from vkuswill_bot.services.search_processor import SEARCH_LIMIT
+            if "limit" not in args:
+                args = {**args, "limit": SEARCH_LIMIT}
 
         return args
 

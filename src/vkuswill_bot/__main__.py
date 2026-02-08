@@ -17,6 +17,7 @@ from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.gigachat_service import GigaChatService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
+from vkuswill_bot.services.price_cache import PriceCache
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import ToolExecutor
@@ -64,9 +65,12 @@ async def main() -> None:
     # Кеш рецептов (SQLite, отдельная БД — исключает конфликты блокировок)
     recipe_store = RecipeStore(config.recipe_database_path)
 
-    # Процессоры: поиск и корзина
-    search_processor = SearchProcessor()
-    cart_processor = CartProcessor(search_processor.price_cache)
+    # Кэш цен (единственный владелец данных о ценах)
+    price_cache = PriceCache()
+
+    # Процессоры: поиск и корзина (получают PriceCache через DI)
+    search_processor = SearchProcessor(price_cache)
+    cart_processor = CartProcessor(price_cache)
 
     # Менеджер диалогов (LRU-кеш историй + per-user lock)
     dialog_manager = DialogManager(max_history=config.max_history_messages)

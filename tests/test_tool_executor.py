@@ -615,3 +615,52 @@ class TestCallTracker:
         tracker.record_result("tool", {"q": "test"}, '{"ok": true}')
         key = tracker.make_key("tool", {"q": "test"})
         assert tracker.call_results[key] == '{"ok": true}'
+
+
+# ============================================================================
+# Тесты preprocess_args: очистка запроса + fix_cart_args + limit
+# ============================================================================
+
+class TestPreprocessArgsSearchCleaning:
+    """Тесты предобработки аргументов поиска в preprocess_args."""
+
+    @pytest.fixture
+    def executor(self):
+        mcp = AsyncMock()
+        sp = MagicMock()
+        sp.clean_search_query = MagicMock(side_effect=lambda q: q.split()[0] if " " in q else q)
+        cp = MagicMock()
+        return ToolExecutor(mcp_client=mcp, search_processor=sp, cart_processor=cp)
+
+    def test_search_query_cleaned(self, executor):
+        """Поисковый запрос очищается через SearchProcessor."""
+        args = executor.preprocess_args(
+            "vkusvill_products_search", {"q": "Творог 5%"}, {},
+        )
+        executor._search_processor.clean_search_query.assert_called_once_with("Творог 5%")
+        assert args["q"] == "Творог"
+
+    def test_search_limit_added(self, executor):
+        """limit автоматически добавляется к поиску."""
+        args = executor.preprocess_args(
+            "vkusvill_products_search", {"q": "молоко"}, {},
+        )
+        assert "limit" in args
+        assert args["limit"] == 5
+
+    def test_search_limit_not_overwritten(self, executor):
+        """Если limit уже есть — не перезаписывается."""
+        args = executor.preprocess_args(
+            "vkusvill_products_search", {"q": "молоко", "limit": 20}, {},
+        )
+        assert args["limit"] == 20
+
+    def test_cart_fix_cart_args_called(self, executor):
+        """fix_cart_args вызывается для корзины."""
+        executor._cart_processor.fix_cart_args = MagicMock(side_effect=lambda x: x)
+        executor._cart_processor.fix_unit_quantities = MagicMock(side_effect=lambda x: x)
+        executor.preprocess_args(
+            "vkusvill_cart_link_create", {"products": [{"xml_id": 1}]}, {},
+        )
+        executor._cart_processor.fix_cart_args.assert_called_once()
+        executor._cart_processor.fix_unit_quantities.assert_called_once()
