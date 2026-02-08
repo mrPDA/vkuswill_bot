@@ -37,6 +37,7 @@ class RecipeStore:
                 os.makedirs(db_dir, exist_ok=True)
             self._db = await aiosqlite.connect(self._db_path)
             self._db.row_factory = aiosqlite.Row
+            await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
             await self._db.commit()
             logger.info("SQLite кеш рецептов открыт: %s", self._db_path)
