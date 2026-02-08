@@ -23,7 +23,7 @@ class Config(BaseSettings):
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
 
     # Лимиты
-    max_tool_calls: int = 15
+    max_tool_calls: int = 20
     max_history_messages: int = 50
 
     # Хранилище
