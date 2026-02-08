@@ -4,6 +4,7 @@
 - _split_message: разбивка длинных сообщений
 - Команды /start, /help, /reset
 - handle_text: основной обработчик с моком GigaChatService
+- _send_typing_periodically: периодический typing indicator
 """
 
 import asyncio
@@ -12,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from vkuswill_bot.bot.handlers import (
+    _send_typing_periodically,
     _split_message,
     cmd_help,
     cmd_reset,
@@ -214,3 +216,94 @@ class TestHandleText:
 
         # Typing indicator должен был вызваться хотя бы раз
         msg.bot.send_chat_action.assert_called()
+
+    async def test_typing_indicator_exception_handled(self):
+        """Ошибка send_chat_action не крашит бота (lines 118-119)."""
+        msg = make_message("Тест", user_id=1)
+        mock_service = AsyncMock()
+
+        # send_chat_action выбрасывает исключение
+        msg.bot.send_chat_action.side_effect = RuntimeError("Network error")
+
+        # process_message с задержкой, чтобы typing-таск успел сработать
+        async def slow_process(*args, **kwargs):
+            await asyncio.sleep(0.15)
+            return "Ответ"
+
+        mock_service.process_message.side_effect = slow_process
+
+        # Не должно бросить исключение
+        await handle_text(msg, gigachat_service=mock_service)
+
+        msg.answer.assert_called_once_with("Ответ")
+
+    async def test_html_in_response(self):
+        """HTML-теги в ответе передаются как есть (Telegram HTML parse mode)."""
+        msg = make_message("Запрос", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = (
+            '<a href="https://vkusvill.ru">Корзина</a>'
+        )
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        response = msg.answer.call_args[0][0]
+        assert '<a href="https://vkusvill.ru">Корзина</a>' in response
+
+
+# ============================================================================
+# _send_typing_periodically
+# ============================================================================
+
+
+class TestSendTypingPeriodically:
+    """Тесты _send_typing_periodically: периодический typing indicator."""
+
+    async def test_timeout_loop_continues(self):
+        """TimeoutError в wait_for не прерывает цикл (lines 122-123).
+
+        Мокаем asyncio.wait_for чтобы сначала бросить TimeoutError,
+        а затем вернуть нормальный результат (событие установлено).
+        """
+        msg = make_message("Тест", user_id=1)
+        stop_event = asyncio.Event()
+
+        call_count = 0
+
+        async def fake_wait_for(coro, timeout):
+            nonlocal call_count
+            call_count += 1
+            # Первый вызов — TimeoutError (цикл продолжается)
+            if call_count == 1:
+                raise asyncio.TimeoutError()
+            # Второй вызов — устанавливаем событие и "завершаемся"
+            stop_event.set()
+            return
+
+        with patch("vkuswill_bot.bot.handlers.asyncio.wait_for", side_effect=fake_wait_for):
+            await _send_typing_periodically(msg, stop_event)
+
+        # send_chat_action вызвано минимум 2 раза
+        # (до первого wait_for и до второго)
+        assert msg.bot.send_chat_action.call_count >= 2
+        assert call_count == 2
+
+    async def test_stops_on_event(self):
+        """Цикл останавливается когда stop_event установлен заранее."""
+        msg = make_message("Тест", user_id=1)
+        stop_event = asyncio.Event()
+
+        # Устанавливаем событие через мок wait_for
+        async def immediate_return(coro, timeout):
+            stop_event.set()
+            return
+
+        # Разрешаем одну итерацию цикла, затем останавливаемся
+        with patch(
+            "vkuswill_bot.bot.handlers.asyncio.wait_for",
+            side_effect=immediate_return,
+        ):
+            await _send_typing_periodically(msg, stop_event)
+
+        # send_chat_action вызван 1 раз (до wait_for)
+        msg.bot.send_chat_action.assert_called_once()

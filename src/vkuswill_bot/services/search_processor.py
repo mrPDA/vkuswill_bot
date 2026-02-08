@@ -86,6 +86,8 @@ class SearchProcessor:
         for item in items:
             xml_id = item.get("xml_id")
             price_info = item.get("price", {})
+            if not isinstance(price_info, dict):
+                continue
             price = price_info.get("current")
             if xml_id is not None and price is not None:
                 self.price_cache[xml_id] = {

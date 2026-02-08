@@ -678,6 +678,68 @@ class TestFixCartArgsEdgeCases:
         assert result["products"] == [{"xml_id": 2, "q": 1}]
 
 
+class TestSearchQueryCleaningInCallTool:
+    """Тесты очистки поисковых запросов при вызове call_tool (lines 369-370)."""
+
+    @respx.mock
+    async def test_cleaned_query_is_sent(self, mcp_client):
+        """Если запрос содержит числа с единицами, очищенный запрос отправляется."""
+        mcp_client._session_id = "sid-existing"
+        mcp_client._client = httpx.AsyncClient()
+
+        respx.post(MCP_URL).mock(
+            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        )
+
+        await mcp_client.call_tool(
+            "vkusvill_products_search", {"q": "Творог 5% 400 гр"}
+        )
+
+        request_body = json.loads(respx.calls.last.request.content)
+        args = request_body["params"]["arguments"]
+        # Запрос должен быть очищен: "Творог 5% 400 гр" → "Творог"
+        assert args["q"] == "Творог"
+        await mcp_client.close()
+
+    @respx.mock
+    async def test_query_without_numbers_unchanged(self, mcp_client):
+        """Запрос без цифр отправляется без изменений."""
+        mcp_client._session_id = "sid-existing"
+        mcp_client._client = httpx.AsyncClient()
+
+        respx.post(MCP_URL).mock(
+            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        )
+
+        await mcp_client.call_tool(
+            "vkusvill_products_search", {"q": "молоко"}
+        )
+
+        request_body = json.loads(respx.calls.last.request.content)
+        args = request_body["params"]["arguments"]
+        assert args["q"] == "молоко"
+        await mcp_client.close()
+
+    @respx.mock
+    async def test_cleaned_query_with_units_ml(self, mcp_client):
+        """Запрос с единицами мл очищается."""
+        mcp_client._session_id = "sid-existing"
+        mcp_client._client = httpx.AsyncClient()
+
+        respx.post(MCP_URL).mock(
+            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        )
+
+        await mcp_client.call_tool(
+            "vkusvill_products_search", {"q": "молоко 3,2% 450 мл"}
+        )
+
+        request_body = json.loads(respx.calls.last.request.content)
+        args = request_body["params"]["arguments"]
+        assert args["q"] == "молоко"
+        await mcp_client.close()
+
+
 class TestSessionManagement:
     """Тесты управления MCP-сессией."""
 
