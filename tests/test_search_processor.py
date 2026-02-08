@@ -10,8 +10,9 @@ import json
 
 import pytest
 
+from vkuswill_bot.services.price_cache import MAX_PRICE_CACHE_SIZE
 from vkuswill_bot.services.search_processor import (
-    MAX_PRICE_CACHE_SIZE,
+    SEARCH_LIMIT,
     SearchProcessor,
 )
 
@@ -71,14 +72,14 @@ class TestCachePrices:
     def test_handles_invalid_json(self, processor):
         """Не падает на невалидном JSON."""
         processor.cache_prices("not json")
-        assert processor.price_cache == {}
+        assert len(processor.price_cache) == 0
 
     def test_handles_empty_items(self, processor):
         """Не падает на пустом списке товаров."""
         processor.cache_prices(json.dumps({
             "ok": True, "data": {"items": []}
         }))
-        assert processor.price_cache == {}
+        assert len(processor.price_cache) == 0
 
     def test_handles_missing_price(self, processor):
         """Пропускает товары без цены."""
@@ -495,3 +496,38 @@ class TestCachePricesEdgeCases:
         """None на входе не крашит."""
         processor.cache_prices(None)
         assert len(processor.price_cache) == 0
+
+
+# ============================================================================
+# Очистка поисковых запросов (clean_search_query)
+# ============================================================================
+
+class TestCleanSearchQuery:
+    """Тесты SearchProcessor.clean_search_query."""
+
+    @pytest.mark.parametrize(
+        "raw, expected",
+        [
+            ("Творог 5% 400 гр", "Творог"),
+            ("молоко 3,2% 450 мл", "молоко"),
+            ("тунец 2 банки", "тунец"),
+            ("молоко 4", "молоко"),
+            ("мороженое 2", "мороженое"),
+            ("темный хлеб", "темный хлеб"),
+            ("сок 1 литр", "сок"),
+            ("яйца 10 шт", "яйца"),
+            ("масло 200 гр сливочное", "масло сливочное"),
+        ],
+    )
+    def test_clean_search_query(self, raw, expected):
+        assert SearchProcessor.clean_search_query(raw) == expected
+
+    def test_empty_query_returns_original(self):
+        assert SearchProcessor.clean_search_query("") == ""
+
+    def test_query_without_numbers_unchanged(self):
+        assert SearchProcessor.clean_search_query("пармезан") == "пармезан"
+
+    def test_search_limit_constant(self):
+        """SEARCH_LIMIT экспортируется и равен 5."""
+        assert SEARCH_LIMIT == 5
