@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from vkuswill_bot.bot.handlers import (
+    _sanitize_telegram_html,
     _send_typing_periodically,
     _split_message,
     cmd_help,
@@ -237,18 +238,170 @@ class TestHandleText:
 
         msg.answer.assert_called_once_with("Ответ")
 
-    async def test_html_in_response(self):
-        """HTML-теги в ответе передаются как есть (Telegram HTML parse mode)."""
+    async def test_html_safe_link_preserved(self):
+        """F-02: Безопасная ссылка <a href="https://..."> сохраняется."""
         msg = make_message("Запрос", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.return_value = (
-            '<a href="https://vkusvill.ru">Корзина</a>'
+            '<a href="https://vkusvill.ru/?share_basket=123">Корзина</a>'
         )
 
         await handle_text(msg, gigachat_service=mock_service)
 
         response = msg.answer.call_args[0][0]
-        assert '<a href="https://vkusvill.ru">Корзина</a>' in response
+        assert '<a href="https://vkusvill.ru/?share_basket=123">' in response
+        assert "</a>" in response
+
+    async def test_html_script_injection_blocked(self):
+        """F-02: XSS через <script> экранируется."""
+        msg = make_message("Запрос", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = (
+            '<script>alert("xss")</script>Текст'
+        )
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        response = msg.answer.call_args[0][0]
+        assert "<script>" not in response
+        assert "&lt;script&gt;" in response
+
+    async def test_nbsp_entity_preserved(self):
+        """F-02: HTML-сущность &nbsp; в названиях товаров сохраняется."""
+        msg = make_message("Запрос", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = (
+            "Томатная паста Помидорка 70&nbsp;г: 90 руб"
+        )
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        response = msg.answer.call_args[0][0]
+        # &nbsp; не должен быть экранирован в &amp;nbsp;
+        assert "&nbsp;" in response
+        assert "&amp;nbsp;" not in response
+
+    async def test_plain_text_unchanged(self):
+        """F-02: Обычный текст без спецсимволов не изменяется."""
+        msg = make_message("Запрос", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Молоко 3,2% за 79 руб"
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        response = msg.answer.call_args[0][0]
+        assert response == "Молоко 3,2% за 79 руб"
+
+
+# ============================================================================
+# _sanitize_telegram_html
+# ============================================================================
+
+
+class TestSanitizeTelegramHtml:
+    """F-02: Тесты whitelist-санитайзера HTML для Telegram."""
+
+    # -- Разрешённые теги проходят --
+
+    def test_bold_preserved(self):
+        assert _sanitize_telegram_html("<b>жирный</b>") == "<b>жирный</b>"
+
+    def test_italic_preserved(self):
+        assert _sanitize_telegram_html("<i>курсив</i>") == "<i>курсив</i>"
+
+    def test_code_preserved(self):
+        assert _sanitize_telegram_html("<code>код</code>") == "<code>код</code>"
+
+    def test_pre_preserved(self):
+        assert _sanitize_telegram_html("<pre>блок</pre>") == "<pre>блок</pre>"
+
+    def test_safe_link_preserved(self):
+        html = '<a href="https://vkusvill.ru/?basket=1">Ссылка</a>'
+        assert _sanitize_telegram_html(html) == html
+
+    def test_http_link_preserved(self):
+        html = '<a href="http://example.com">Ссылка</a>'
+        assert _sanitize_telegram_html(html) == html
+
+    # -- Опасные теги блокируются --
+
+    def test_script_blocked(self):
+        result = _sanitize_telegram_html('<script>alert(1)</script>')
+        assert "<script>" not in result
+        assert "&lt;script&gt;" in result
+
+    def test_img_blocked(self):
+        result = _sanitize_telegram_html('<img src=x onerror=alert(1)>')
+        assert "<img" not in result
+        assert "&lt;img" in result
+
+    def test_iframe_blocked(self):
+        result = _sanitize_telegram_html('<iframe src="evil.com"></iframe>')
+        assert "<iframe" not in result
+        assert "&lt;iframe" in result
+
+    def test_div_blocked(self):
+        result = _sanitize_telegram_html("<div>текст</div>")
+        assert "<div>" not in result
+        assert "&lt;div&gt;" in result
+
+    # -- Опасные атрибуты на ссылках блокируются --
+
+    def test_javascript_href_blocked(self):
+        html = '<a href="javascript:alert(1)">click</a>'
+        result = _sanitize_telegram_html(html)
+        # Тег экранирован — Telegram не отрендерит как ссылку
+        assert "&lt;a" in result
+        assert '<a href=' not in result
+
+    def test_onclick_on_link_blocked(self):
+        html = '<a onclick="alert(1)" href="https://ok.com">click</a>'
+        result = _sanitize_telegram_html(html)
+        assert "onclick" not in result or "&lt;a" in result
+
+    def test_data_href_blocked(self):
+        html = '<a href="data:text/html,<script>alert(1)</script>">x</a>'
+        result = _sanitize_telegram_html(html)
+        assert "data:" not in result or "&lt;a" in result
+
+    # -- Атрибуты на обычных тегах удаляются --
+
+    def test_bold_onclick_stripped(self):
+        result = _sanitize_telegram_html('<b onclick="evil()">текст</b>')
+        assert result == "<b>текст</b>"
+
+    # -- HTML-сущности сохраняются --
+
+    def test_nbsp_preserved(self):
+        assert _sanitize_telegram_html("70&nbsp;г") == "70&nbsp;г"
+
+    def test_amp_preserved(self):
+        assert _sanitize_telegram_html("A &amp; B") == "A &amp; B"
+
+    # -- Обычный текст не затрагивается --
+
+    def test_plain_text(self):
+        text = "Молоко 3,2% за 79 руб"
+        assert _sanitize_telegram_html(text) == text
+
+    def test_plain_text_with_numbers(self):
+        text = "Итого: 984.25 руб"
+        assert _sanitize_telegram_html(text) == text
+
+    # -- Комплексный кейс: реальный ответ бота --
+
+    def test_real_bot_response(self):
+        """Реальный ответ бота с &nbsp; и ссылкой — всё сохраняется."""
+        response = (
+            "Томатная паста 70&nbsp;г: 90 руб\n"
+            'Итого: 984 руб\n'
+            '<a href="https://vkusvill.ru/?share_basket=123">Открыть корзину</a>'
+        )
+        result = _sanitize_telegram_html(response)
+        assert "&nbsp;" in result
+        assert "&amp;nbsp;" not in result
+        assert '<a href="https://vkusvill.ru/?share_basket=123">' in result
+        assert "</a>" in result
 
 
 # ============================================================================

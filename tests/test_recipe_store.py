@@ -6,6 +6,7 @@
 - Нормализация названий блюд
 - Кеш-промах (возврат None)
 - Upsert (перезапись рецепта)
+- WAL mode (F-03)
 - Закрытие соединения
 - Автосоздание директории
 """
@@ -263,4 +264,29 @@ class TestCorruptedData:
 
         result = await store.get("борщ")
         assert result is None
+        await store.close()
+
+
+# ============================================================================
+# F-03: WAL mode
+# ============================================================================
+
+
+class TestWALMode:
+    """F-03: Тесты включения WAL mode для RecipeStore."""
+
+    async def test_wal_mode_enabled(self, tmp_path):
+        """БД рецептов открывается с journal_mode=WAL."""
+        import aiosqlite
+
+        db_path = str(tmp_path / "wal_recipes.db")
+        store = RecipeStore(db_path)
+        # Инициализируем БД
+        await store.save("борщ", 4, [{"name": "свёкла"}])
+
+        # Проверяем через отдельное соединение
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA journal_mode")
+            row = await cursor.fetchone()
+            assert row[0] == "wal"
         await store.close()

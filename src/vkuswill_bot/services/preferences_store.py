@@ -22,6 +22,11 @@ CREATE TABLE IF NOT EXISTS preferences (
 )
 """
 
+# Лимиты длины строк для защиты от раздувания БД
+MAX_CATEGORY_LENGTH = 100
+MAX_PREFERENCE_LENGTH = 500
+MAX_PREFERENCES_PER_USER = 50
+
 
 class PreferencesStore:
     """Async-хранилище предпочтений на базе SQLite."""
@@ -39,6 +44,7 @@ class PreferencesStore:
                 os.makedirs(db_dir, exist_ok=True)
             self._db = await aiosqlite.connect(self._db_path)
             self._db.row_factory = aiosqlite.Row
+            await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
             await self._db.commit()
             logger.info("SQLite база предпочтений открыта: %s", self._db_path)
@@ -78,14 +84,57 @@ class PreferencesStore:
     async def set(self, user_id: int, category: str, preference: str) -> str:
         """Сохранить предпочтение (upsert по user_id + category).
 
+        Валидирует длину строк и лимит количества предпочтений
+        для защиты от раздувания БД.
+
         Returns:
             Подтверждение в формате JSON-строки для GigaChat.
         """
+        category = category.strip().lower()[:MAX_CATEGORY_LENGTH]
+        preference = preference.strip()[:MAX_PREFERENCE_LENGTH]
+
+        if not category or not preference:
+            return json.dumps(
+                {"ok": False, "message": "Категория и предпочтение не могут быть пустыми."},
+                ensure_ascii=False,
+            )
+
         db = await self._ensure_db()
+
+        # Проверяем лимит количества предпочтений на пользователя
+        # (только если это новая категория, а не обновление существующей)
+        cursor = await db.execute(
+            "SELECT COUNT(*) as cnt FROM preferences WHERE user_id = ?",
+            (user_id,),
+        )
+        row = await cursor.fetchone()
+        count = row["cnt"] if row else 0
+
+        # Проверяем, существует ли уже эта категория
+        cursor = await db.execute(
+            "SELECT 1 FROM preferences WHERE user_id = ? AND category = ?",
+            (user_id, category),
+        )
+        existing = await cursor.fetchone()
+
+        if not existing and count >= MAX_PREFERENCES_PER_USER:
+            logger.warning(
+                "Лимит предпочтений: user=%d, count=%d, max=%d",
+                user_id, count, MAX_PREFERENCES_PER_USER,
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "message": f"Достигнут лимит предпочтений ({MAX_PREFERENCES_PER_USER}). "
+                    "Удалите ненужные, чтобы добавить новые.",
+                },
+                ensure_ascii=False,
+            )
+
         await db.execute(
             "INSERT OR REPLACE INTO preferences (user_id, category, preference) "
             "VALUES (?, ?, ?)",
-            (user_id, category.strip().lower(), preference.strip()),
+            (user_id, category, preference),
         )
         await db.commit()
         logger.info(

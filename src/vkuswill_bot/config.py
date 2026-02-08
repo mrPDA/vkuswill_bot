@@ -28,6 +28,7 @@ class Config(BaseSettings):
 
     # Хранилище
     database_path: str = "data/preferences.db"
+    recipe_database_path: str = "data/recipes.db"
 
     # Отладка
     debug: bool = False
