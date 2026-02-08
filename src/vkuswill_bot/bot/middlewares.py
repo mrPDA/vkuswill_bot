@@ -2,7 +2,6 @@
 
 import logging
 import time
-from collections import defaultdict
 from typing import Any, Awaitable, Callable
 
 from aiogram import BaseMiddleware
@@ -14,6 +13,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_RATE_LIMIT = 5  # сообщений
 DEFAULT_RATE_PERIOD = 60.0  # секунд
 
+# Защита от DDoS: максимальное число отслеживаемых пользователей
+DEFAULT_MAX_TRACKED_USERS = 10_000
+# Интервал полной очистки устаревших записей (секунды)
+_FULL_CLEANUP_INTERVAL = 300.0
+
 
 class ThrottlingMiddleware(BaseMiddleware):
     """Мидлварь для ограничения частоты сообщений от пользователей.
@@ -21,33 +25,89 @@ class ThrottlingMiddleware(BaseMiddleware):
     Лимитирует количество сообщений от одного пользователя
     за указанный период. При превышении — отправляет предупреждение.
 
+    Содержит защиту от неограниченного роста памяти:
+    - периодическая полная очистка устаревших записей;
+    - жёсткий лимит на число отслеживаемых пользователей.
+
     Args:
         rate_limit: Максимальное количество сообщений за период.
         period: Период в секундах.
+        max_tracked_users: Максимум отслеживаемых пользователей.
     """
 
     def __init__(
         self,
         rate_limit: int = DEFAULT_RATE_LIMIT,
         period: float = DEFAULT_RATE_PERIOD,
+        max_tracked_users: int = DEFAULT_MAX_TRACKED_USERS,
     ) -> None:
         self.rate_limit = rate_limit
         self.period = period
+        self._max_tracked_users = max_tracked_users
         # user_id -> список timestamp-ов сообщений
-        self._user_timestamps: dict[int, list[float]] = defaultdict(list)
+        self._user_timestamps: dict[int, list[float]] = {}
+        self._last_full_cleanup: float = time.monotonic()
+
+    def _full_cleanup(self, now: float) -> None:
+        """Полная очистка: удалить всех пользователей с устаревшими записями."""
+        cutoff = now - self.period
+        stale_users = [
+            uid
+            for uid, timestamps in self._user_timestamps.items()
+            if not timestamps or timestamps[-1] <= cutoff
+        ]
+        for uid in stale_users:
+            del self._user_timestamps[uid]
+        self._last_full_cleanup = now
+        if stale_users:
+            logger.debug(
+                "Throttle full cleanup: удалено %d устаревших записей, "
+                "осталось %d",
+                len(stale_users),
+                len(self._user_timestamps),
+            )
 
     def _cleanup_timestamps(self, user_id: int, now: float) -> None:
         """Удалить устаревшие записи для пользователя."""
+        timestamps = self._user_timestamps.get(user_id)
+        if not timestamps:
+            return
         cutoff = now - self.period
         self._user_timestamps[user_id] = [
-            ts for ts in self._user_timestamps[user_id] if ts > cutoff
+            ts for ts in timestamps if ts > cutoff
         ]
+        # Удаляем ключ если список пуст — не держим мусор
+        if not self._user_timestamps[user_id]:
+            del self._user_timestamps[user_id]
 
     def _is_rate_limited(self, user_id: int) -> bool:
         """Проверить, превышен ли лимит для пользователя."""
         now = time.monotonic()
+
+        # Периодическая полная очистка для защиты от роста памяти
+        if now - self._last_full_cleanup >= _FULL_CLEANUP_INTERVAL:
+            self._full_cleanup(now)
+
+        # Жёсткий лимит: если словарь переполнен — форсируем очистку
+        if len(self._user_timestamps) >= self._max_tracked_users:
+            self._full_cleanup(now)
+            # Если после очистки всё ещё слишком много — пропускаем
+            # tracking для нового пользователя (rate limit не применяется,
+            # но память не растёт)
+            if (
+                len(self._user_timestamps) >= self._max_tracked_users
+                and user_id not in self._user_timestamps
+            ):
+                logger.warning(
+                    "Throttle overflow: %d tracked users, "
+                    "пропускаем tracking для user %d",
+                    len(self._user_timestamps),
+                    user_id,
+                )
+                return False
+
         self._cleanup_timestamps(user_id, now)
-        timestamps = self._user_timestamps[user_id]
+        timestamps = self._user_timestamps.get(user_id, [])
 
         if len(timestamps) >= self.rate_limit:
             logger.warning(
@@ -59,7 +119,9 @@ class ThrottlingMiddleware(BaseMiddleware):
             )
             return True
 
-        timestamps.append(now)
+        if user_id not in self._user_timestamps:
+            self._user_timestamps[user_id] = []
+        self._user_timestamps[user_id].append(now)
         return False
 
     async def __call__(

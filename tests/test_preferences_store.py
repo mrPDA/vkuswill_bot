@@ -6,15 +6,23 @@
 - Пустой результат для нового пользователя
 - Форматирование для GigaChat
 - Нормализация категорий (lowercase, strip)
+- Лимиты длины строк и количества предпочтений (F-04)
+- WAL mode (F-03)
 - Закрытие соединения
 """
 
 import json
 import os
 
+import aiosqlite
 import pytest
 
-from vkuswill_bot.services.preferences_store import PreferencesStore
+from vkuswill_bot.services.preferences_store import (
+    MAX_CATEGORY_LENGTH,
+    MAX_PREFERENCE_LENGTH,
+    MAX_PREFERENCES_PER_USER,
+    PreferencesStore,
+)
 
 
 @pytest.fixture
@@ -320,3 +328,114 @@ class TestSQLInjection:
         prefs_2 = await store.get_all(2)
         assert len(prefs_2) == 1
         assert prefs_2[0]["preference"] == "пломбир"
+
+
+# ============================================================================
+# F-03: WAL mode
+# ============================================================================
+
+
+class TestWALMode:
+    """F-03: Тесты включения WAL mode для предотвращения конфликтов блокировок."""
+
+    async def test_wal_mode_enabled(self, tmp_path):
+        """БД открывается с journal_mode=WAL."""
+        db_path = str(tmp_path / "wal_test.db")
+        store = PreferencesStore(db_path)
+        # Инициализируем БД
+        await store.set(1, "тест", "значение")
+
+        # Проверяем через отдельное соединение
+        async with aiosqlite.connect(db_path) as db:
+            cursor = await db.execute("PRAGMA journal_mode")
+            row = await cursor.fetchone()
+            assert row[0] == "wal"
+        await store.close()
+
+
+# ============================================================================
+# F-04: Лимиты длины строк
+# ============================================================================
+
+
+class TestLengthLimits:
+    """F-04: Тесты лимитов длины строк для защиты от раздувания БД."""
+
+    async def test_long_category_truncated(self, store):
+        """Слишком длинная категория обрезается до MAX_CATEGORY_LENGTH."""
+        long_category = "к" * 500
+        result = await store.set(1, long_category, "пломбир")
+        parsed = json.loads(result)
+        assert parsed["ok"] is True
+
+        prefs = await store.get_all(1)
+        assert len(prefs) == 1
+        assert len(prefs[0]["category"]) <= MAX_CATEGORY_LENGTH
+
+    async def test_long_preference_truncated(self, store):
+        """Слишком длинное предпочтение обрезается до MAX_PREFERENCE_LENGTH."""
+        long_pref = "п" * 1000
+        result = await store.set(1, "мороженое", long_pref)
+        parsed = json.loads(result)
+        assert parsed["ok"] is True
+
+        prefs = await store.get_all(1)
+        assert len(prefs) == 1
+        assert len(prefs[0]["preference"]) <= MAX_PREFERENCE_LENGTH
+
+    async def test_empty_category_rejected(self, store):
+        """Пустая категория отклоняется."""
+        result = await store.set(1, "", "пломбир")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "пустыми" in parsed["message"]
+
+    async def test_empty_preference_rejected(self, store):
+        """Пустое предпочтение отклоняется."""
+        result = await store.set(1, "мороженое", "")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "пустыми" in parsed["message"]
+
+    async def test_whitespace_only_rejected(self, store):
+        """Категория из одних пробелов отклоняется (strip → пусто)."""
+        result = await store.set(1, "   ", "пломбир")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+
+    async def test_max_preferences_per_user_limit(self, store):
+        """Нельзя добавить больше MAX_PREFERENCES_PER_USER предпочтений."""
+        # Заполняем до лимита
+        for i in range(MAX_PREFERENCES_PER_USER):
+            result = await store.set(1, f"категория_{i}", f"значение_{i}")
+            parsed = json.loads(result)
+            assert parsed["ok"] is True
+
+        # Следующее должно быть отклонено
+        result = await store.set(1, "лишняя_категория", "значение")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "лимит" in parsed["message"].lower()
+
+    async def test_upsert_within_limit(self, store):
+        """Обновление существующей категории не блокируется лимитом."""
+        # Заполняем до лимита
+        for i in range(MAX_PREFERENCES_PER_USER):
+            await store.set(1, f"категория_{i}", f"значение_{i}")
+
+        # Обновление существующей — должно пройти
+        result = await store.set(1, "категория_0", "новое_значение")
+        parsed = json.loads(result)
+        assert parsed["ok"] is True
+        assert "Запомнил" in parsed["message"]
+
+    async def test_different_users_separate_limits(self, store):
+        """Лимит предпочтений для каждого пользователя свой."""
+        # User 1 заполняем до лимита
+        for i in range(MAX_PREFERENCES_PER_USER):
+            await store.set(1, f"кат_{i}", f"зн_{i}")
+
+        # User 2 может добавлять свои
+        result = await store.set(2, "мороженое", "пломбир")
+        parsed = json.loads(result)
+        assert parsed["ok"] is True

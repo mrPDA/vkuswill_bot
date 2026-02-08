@@ -54,11 +54,11 @@ async def main() -> None:
     # MCP-клиент для ВкусВилл
     mcp_client = VkusvillMCPClient(config.mcp_server_url)
 
-    # Хранилище предпочтений (SQLite)
+    # Хранилище предпочтений (SQLite, отдельная БД)
     prefs_store = PreferencesStore(config.database_path)
 
-    # Кеш рецептов (SQLite, та же директория)
-    recipe_store = RecipeStore(config.database_path)
+    # Кеш рецептов (SQLite, отдельная БД — исключает конфликты блокировок)
+    recipe_store = RecipeStore(config.recipe_database_path)
 
     # GigaChat-сервис
     gigachat_service = GigaChatService(
