@@ -399,3 +399,140 @@ class TestVerifyCart:
 
         assert "молоко" in report["missing_queries"]
         assert "хлеб" in report["missing_queries"]
+
+    def test_item_not_in_cache(self, processor):
+        """xml_id без записи в кеше — показывает xml_id в имени."""
+        search_log: dict[str, set[int]] = {}
+        args = {"products": [{"xml_id": 777, "q": 1}]}
+
+        report = processor.verify_cart(args, search_log)
+
+        assert len(report["unmatched_items"]) == 1
+        assert "xml_id=777" in report["unmatched_items"][0]["name"]
+
+    def test_none_xml_id_skipped(self, processor):
+        """xml_id=None пропускается при сборе id корзины."""
+        args = {"products": [{"xml_id": None, "q": 1}]}
+        report = processor.verify_cart(args, {})
+        assert len(report["matched"]) == 0
+        assert len(report["unmatched_items"]) == 0
+
+
+# ============================================================================
+# fix_unit_quantities: дополнительные edge-cases
+# ============================================================================
+
+
+class TestFixUnitQuantitiesEdgeCases:
+    """Дополнительные тесты fix_unit_quantities."""
+
+    def test_non_dict_items_skipped(self, processor, price_cache):
+        """Не-dict элементы в products пропускаются (не крашат)."""
+        price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
+        args = {
+            "products": [
+                "not-a-dict",
+                42,
+                None,
+                {"xml_id": 100, "q": 0.5},
+            ]
+        }
+        result = processor.fix_unit_quantities(args)
+        # Последний элемент округлён
+        assert result["products"][3]["q"] == 1
+
+    def test_no_products_key(self, processor):
+        """Без ключа 'products' — возвращаем args как есть."""
+        args = {"something": "else"}
+        result = processor.fix_unit_quantities(args)
+        assert result == args
+
+    def test_products_not_list(self, processor):
+        """products — не список → возвращаем без изменений."""
+        args = {"products": "not-a-list"}
+        result = processor.fix_unit_quantities(args)
+        assert result["products"] == "not-a-list"
+
+    @pytest.mark.parametrize("unit", ["шт", "уп", "пач", "бут", "бан", "пак"])
+    def test_all_discrete_units(self, processor, price_cache, unit):
+        """Все дискретные единицы округляются вверх."""
+        price_cache[100] = {"name": "Товар", "price": 50, "unit": unit}
+        args = {"products": [{"xml_id": 100, "q": 0.3}]}
+        result = processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+
+    def test_default_unit_sht_rounds(self, processor, price_cache):
+        """Если unit не указан в кеше — по умолчанию 'шт', округляется."""
+        price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
+        args = {"products": [{"xml_id": 100, "q": 1.1}]}
+        result = processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 2
+
+    def test_missing_q_defaults_to_one(self, processor, price_cache):
+        """Если q отсутствует — по умолчанию 1, целое, не округляется."""
+        price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
+        args = {"products": [{"xml_id": 100}]}
+        result = processor.fix_unit_quantities(args)
+        assert result["products"][0].get("q", 1) == 1
+
+
+# ============================================================================
+# add_verification
+# ============================================================================
+
+
+class TestAddVerification:
+    """Тесты add_verification: добавление отчёта верификации в результат."""
+
+    def test_adds_verification_to_result(self, processor, price_cache):
+        """Добавляет verification в data результата."""
+        price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
+        args = {"products": [{"xml_id": 100, "q": 1}]}
+        search_log = {"молоко": {100}}
+        result_text = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+
+        result = processor.add_verification(args, result_text, search_log)
+        parsed = json.loads(result)
+
+        assert "verification" in parsed["data"]
+        assert parsed["data"]["verification"]["ok"] is True
+
+    def test_verification_with_missing_query(self, processor, price_cache):
+        """Verification показывает missing_queries при пропущенном товаре."""
+        price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
+        args = {"products": [{"xml_id": 100, "q": 1}]}
+        search_log = {"молоко": {100}, "хлеб": {200}}
+        result_text = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+
+        result = processor.add_verification(args, result_text, search_log)
+        parsed = json.loads(result)
+
+        assert "хлеб" in parsed["data"]["verification"]["missing_queries"]
+
+    def test_invalid_json_passthrough(self, processor):
+        """Невалидный JSON — возвращаем как есть."""
+        result = processor.add_verification(
+            {"products": []}, "not json", {}
+        )
+        assert result == "not json"
+
+    def test_data_not_dict_passthrough(self, processor):
+        """data — не dict → возвращаем оригинал."""
+        result_text = json.dumps({"ok": True, "data": "string"})
+        result = processor.add_verification(
+            {"products": []}, result_text, {}
+        )
+        assert result == result_text
+
+    def test_none_result_text(self, processor):
+        """None вместо текста — не крашит."""
+        result = processor.add_verification(
+            {"products": []}, None, {}
+        )
+        assert result is None

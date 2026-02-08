@@ -305,3 +305,193 @@ class TestExtractXmlIds:
         """Возвращает пустой set при пустом списке."""
         result = json.dumps({"ok": True, "data": {"items": []}})
         assert processor.extract_xml_ids(result) == set()
+
+    def test_skips_non_dict_items(self, processor):
+        """Пропускает не-dict элементы."""
+        result = json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    "string_item",
+                    42,
+                    None,
+                    {"xml_id": 100, "name": "Товар"},
+                ]
+            },
+        })
+        assert processor.extract_xml_ids(result) == {100}
+
+    def test_skips_items_without_xml_id(self, processor):
+        """Пропускает dict-элементы без xml_id."""
+        result = json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"name": "Без ID"},
+                    {"xml_id": 200, "name": "С ID"},
+                ]
+            },
+        })
+        assert processor.extract_xml_ids(result) == {200}
+
+
+# ============================================================================
+# parse_search_items (прямые юнит-тесты)
+# ============================================================================
+
+
+class TestParseSearchItems:
+    """Тесты parse_search_items: парсинг JSON-ответа поиска."""
+
+    def test_valid_result(self, processor):
+        """Корректный результат парсится в (data, items)."""
+        raw = json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"xml_id": 1, "name": "Товар 1"},
+                    {"xml_id": 2, "name": "Товар 2"},
+                ]
+            },
+        })
+        parsed = processor.parse_search_items(raw)
+        assert parsed is not None
+        data, items = parsed
+        assert isinstance(data, dict)
+        assert len(items) == 2
+        assert items[0]["xml_id"] == 1
+
+    def test_invalid_json_returns_none(self, processor):
+        """Невалидный JSON → None."""
+        assert processor.parse_search_items("not json") is None
+
+    def test_none_input_returns_none(self, processor):
+        """None на входе → None."""
+        assert processor.parse_search_items(None) is None
+
+    def test_no_data_key_returns_none(self, processor):
+        """Нет ключа 'data' → None."""
+        raw = json.dumps({"ok": True})
+        assert processor.parse_search_items(raw) is None
+
+    def test_data_not_dict_returns_none(self, processor):
+        """data — не словарь → None."""
+        raw = json.dumps({"ok": True, "data": "string"})
+        assert processor.parse_search_items(raw) is None
+
+    def test_data_is_list_returns_none(self, processor):
+        """data — список → None."""
+        raw = json.dumps({"ok": True, "data": [1, 2, 3]})
+        assert processor.parse_search_items(raw) is None
+
+    def test_no_items_key_returns_none(self, processor):
+        """Нет ключа 'items' в data → None."""
+        raw = json.dumps({"ok": True, "data": {"total": 0}})
+        assert processor.parse_search_items(raw) is None
+
+    def test_empty_items_returns_none(self, processor):
+        """Пустой список items → None."""
+        raw = json.dumps({"ok": True, "data": {"items": []}})
+        assert processor.parse_search_items(raw) is None
+
+    def test_items_not_list_returns_none(self, processor):
+        """items — не список → None."""
+        raw = json.dumps({"ok": True, "data": {"items": "not-list"}})
+        assert processor.parse_search_items(raw) is None
+
+
+# ============================================================================
+# Обрезка до SEARCH_LIMIT
+# ============================================================================
+
+
+class TestTrimSearchLimit:
+    """Тесты обрезки результатов поиска до SEARCH_LIMIT."""
+
+    def test_truncates_to_search_limit(self, processor):
+        """Если товаров больше SEARCH_LIMIT — обрезаем."""
+        from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+
+        items = [
+            {
+                "xml_id": i,
+                "name": f"Товар {i}",
+                "price": {"current": 10 * i},
+                "unit": "шт",
+            }
+            for i in range(20)  # 20 >> SEARCH_LIMIT (5)
+        ]
+        raw = json.dumps({"ok": True, "data": {"items": items}})
+        result = json.loads(processor.trim_search_result(raw))
+        assert len(result["data"]["items"]) == VkusvillMCPClient.SEARCH_LIMIT
+
+    def test_fewer_items_than_limit(self, processor):
+        """Если товаров меньше SEARCH_LIMIT — все остаются."""
+        items = [
+            {
+                "xml_id": i,
+                "name": f"Товар {i}",
+                "price": {"current": 10},
+                "unit": "шт",
+            }
+            for i in range(3)
+        ]
+        raw = json.dumps({"ok": True, "data": {"items": items}})
+        result = json.loads(processor.trim_search_result(raw))
+        assert len(result["data"]["items"]) == 3
+
+
+# ============================================================================
+# cache_prices: дополнительные edge-cases
+# ============================================================================
+
+
+class TestCachePricesEdgeCases:
+    """Дополнительные тесты cache_prices."""
+
+    def test_missing_xml_id(self, processor):
+        """Товар без xml_id не кешируется."""
+        processor.cache_prices(json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"name": "Без ID", "price": {"current": 100}, "unit": "шт"},
+                ]
+            },
+        }))
+        assert len(processor.price_cache) == 0
+
+    def test_default_unit_sht(self, processor):
+        """Если unit не указан — по умолчанию 'шт'."""
+        processor.cache_prices(json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"xml_id": 1, "name": "Товар", "price": {"current": 50}},
+                ]
+            },
+        }))
+        assert processor.price_cache[1]["unit"] == "шт"
+
+    def test_price_not_dict_skipped(self, processor):
+        """Если price — не dict, товар пропускается."""
+        processor.cache_prices(json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"xml_id": 1, "name": "Товар", "price": 100, "unit": "шт"},
+                ]
+            },
+        }))
+        # price не dict → get("current") вернёт AttributeError → пропуск
+        assert len(processor.price_cache) == 0
+
+    def test_data_not_dict_ignored(self, processor):
+        """JSON без dict-data не крашит cache_prices."""
+        processor.cache_prices(json.dumps({"ok": True, "data": "string"}))
+        assert len(processor.price_cache) == 0
+
+    def test_none_input(self, processor):
+        """None на входе не крашит."""
+        processor.cache_prices(None)
+        assert len(processor.price_cache) == 0
