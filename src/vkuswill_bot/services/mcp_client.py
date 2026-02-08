@@ -9,7 +9,6 @@ import asyncio
 import importlib.metadata
 import json
 import logging
-import re
 import traceback
 from typing import Any
 
@@ -273,104 +272,36 @@ class VkusvillMCPClient:
 
         raise last_error or RuntimeError("MCP get_tools failed")
 
+    # ---- Обратная совместимость: делегаты в SearchProcessor/CartProcessor ----
+
     @staticmethod
     def _fix_cart_args(arguments: dict) -> dict:
-        """Исправить аргументы корзины.
+        """Делегирует в CartProcessor.fix_cart_args (обратная совместимость)."""
+        from vkuswill_bot.services.cart_processor import CartProcessor
+        return CartProcessor.fix_cart_args(arguments)
 
-        1. Добавить q=1, если GigaChat забыл указать количество.
-        2. Объединить дубли xml_id (суммировать q).
+    # Алиасы для тестов
+    from vkuswill_bot.services.search_processor import SEARCH_LIMIT  # noqa: E305
+    from vkuswill_bot.services.search_processor import SearchProcessor as _SP
 
-        GigaChat иногда дублирует xml_id вместо использования q,
-        например [{xml_id:1},{xml_id:1},{xml_id:1}] вместо [{xml_id:1,q:3}].
-        VkusVill API дедуплицирует по xml_id и берёт q=1,
-        поэтому объединяем на нашей стороне.
-        """
-        products = arguments.get("products")
-        if not products or not isinstance(products, list):
-            return arguments
-
-        # Шаг 1: добавить q=1 где отсутствует
-        for item in products:
-            if isinstance(item, dict) and "q" not in item:
-                item["q"] = 1
-
-        # Шаг 2: объединить дубли xml_id
-        merged: dict[int, float] = {}
-        order: list[int] = []
-        for item in products:
-            if not isinstance(item, dict):
-                continue
-            xml_id = item.get("xml_id")
-            if xml_id is None:
-                continue
-            q = item.get("q", 1)
-            if xml_id in merged:
-                merged[xml_id] += q
-            else:
-                merged[xml_id] = q
-                order.append(xml_id)
-
-        if merged:
-            arguments["products"] = [
-                {"xml_id": xid, "q": merged[xid]} for xid in order
-            ]
-
-        return arguments
-
-    # Максимум товаров в результатах поиска (экономия токенов)
-    SEARCH_LIMIT = 5
-
-    # Паттерн для очистки поисковых запросов:
-    # удаляем числа с единицами ("400 гр", "5%", "2 банки", "450 мл")
-    _UNIT_PATTERN = re.compile(
-        r"\b\d+[,.]?\d*\s*"
-        r"(%|шт\w*|гр\w*|г\b|кг\w*|мл\w*|л\b|литр\w*|"
-        r"бутыл\w*|банк\w*|пач\w*|уп\w*|порц\w*)",
-        re.IGNORECASE,
-    )
-    # Отдельные числа ("молоко 4", "мороженое 2")
-    _STANDALONE_NUM = re.compile(r"\b\d+\b")
+    _UNIT_PATTERN = _SP._UNIT_PATTERN
+    _STANDALONE_NUM = _SP._STANDALONE_NUM
 
     @classmethod
     def _clean_search_query(cls, query: str) -> str:
-        """Очистить поисковый запрос от количеств и единиц измерения.
-
-        GigaChat часто передаёт в поиск полный текст пользователя
-        вместо ключевых слов, например "Творог 5% 400 гр" или "молоко 4".
-        Числа и единицы мусорят поисковую выдачу MCP API.
-
-        Примеры:
-            "Творог 5% 400 гр" → "Творог"
-            "тунец 2 банки" → "тунец"
-            "молоко 4" → "молоко"
-            "мороженое 2" → "мороженое"
-            "темный хлеб" → "темный хлеб" (без изменений)
-        """
-        cleaned = cls._UNIT_PATTERN.sub("", query)
-        cleaned = cls._STANDALONE_NUM.sub("", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        # Если после очистки пусто — вернуть оригинал
-        return cleaned or query
+        """Делегирует в SearchProcessor.clean_search_query (обратная совместимость)."""
+        from vkuswill_bot.services.search_processor import SearchProcessor
+        return SearchProcessor.clean_search_query(query)
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Вызвать инструмент на MCP-сервере.
 
         Использует постоянное соединение и переинициализирует
         сессию при ошибке.
+
+        Примечание: предобработка аргументов (очистка запроса, fix_cart_args)
+        теперь выполняется в ToolExecutor.preprocess_args() перед вызовом.
         """
-        if name == "vkusvill_cart_link_create":
-            arguments = self._fix_cart_args(arguments)
-
-        # Очищаем поисковый запрос и ограничиваем результаты
-        if name == "vkusvill_products_search":
-            q = arguments.get("q", "")
-            cleaned_q = self._clean_search_query(q)
-            if cleaned_q != q:
-                logger.info("Очистка запроса: %r → %r", q, cleaned_q)
-                arguments = {**arguments, "q": cleaned_q}
-            if "limit" not in arguments:
-                arguments = {**arguments, "limit": self.SEARCH_LIMIT}
-
         logger.info("MCP вызов: %s(%s)", name, arguments)
 
         last_error: Exception | None = None

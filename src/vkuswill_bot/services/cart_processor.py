@@ -5,20 +5,21 @@ import json
 import logging
 import math
 
+from vkuswill_bot.services.price_cache import PriceCache
+
 logger = logging.getLogger(__name__)
 
 
 class CartProcessor:
     """Расчёт стоимости, округление количеств и верификация корзины.
 
-    Использует общий кеш цен (ссылка из SearchProcessor)
-    для расчёта стоимости и валидации товаров.
+    Использует PriceCache для расчёта стоимости и валидации товаров.
     """
 
     # Единицы измерения, для которых q должно быть целым числом
     _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
 
-    def __init__(self, price_cache: dict[int, dict]) -> None:
+    def __init__(self, price_cache: PriceCache) -> None:
         self._price_cache = price_cache
 
     @staticmethod
@@ -54,6 +55,50 @@ class CartProcessor:
 
         return params
 
+    @staticmethod
+    def fix_cart_args(arguments: dict) -> dict:
+        """Исправить аргументы корзины.
+
+        1. Добавить q=1, если GigaChat забыл указать количество.
+        2. Объединить дубли xml_id (суммировать q).
+
+        GigaChat иногда дублирует xml_id вместо использования q,
+        например [{xml_id:1},{xml_id:1},{xml_id:1}] вместо [{xml_id:1,q:3}].
+        VkusVill API дедуплицирует по xml_id и берёт q=1,
+        поэтому объединяем на нашей стороне.
+        """
+        products = arguments.get("products")
+        if not products or not isinstance(products, list):
+            return arguments
+
+        # Шаг 1: добавить q=1 где отсутствует
+        for item in products:
+            if isinstance(item, dict) and "q" not in item:
+                item["q"] = 1
+
+        # Шаг 2: объединить дубли xml_id
+        merged: dict[int, float] = {}
+        order: list[int] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            if xml_id is None:
+                continue
+            q = item.get("q", 1)
+            if xml_id in merged:
+                merged[xml_id] += q
+            else:
+                merged[xml_id] = q
+                order.append(xml_id)
+
+        if merged:
+            arguments["products"] = [
+                {"xml_id": xid, "q": merged[xid]} for xid in order
+            ]
+
+        return arguments
+
     def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров.
 
@@ -72,12 +117,12 @@ class CartProcessor:
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
             cached = self._price_cache.get(xml_id)
-            if cached and cached.get("unit", "шт") in self._DISCRETE_UNITS:
+            if cached and cached.unit in self._DISCRETE_UNITS:
                 rounded = math.ceil(q)
                 if rounded != q:
                     logger.info(
                         "Округление q: xml_id=%s, unit=%s, %s → %s",
-                        xml_id, cached["unit"], q, rounded,
+                        xml_id, cached.unit, q, rounded,
                     )
                     item["q"] = rounded
                     changed = True
@@ -114,10 +159,10 @@ class CartProcessor:
             q = item.get("q", 1)
             cached = self._price_cache.get(xml_id)
             if cached:
-                subtotal = cached["price"] * q
+                subtotal = cached.price * q
                 total += subtotal
                 lines.append(
-                    f"  - {cached['name']}: {cached['price']} руб/{cached['unit']}"
+                    f"  - {cached.name}: {cached.price} руб/{cached.unit}"
                     f" × {q} = {subtotal:.2f} руб"
                 )
             else:
@@ -175,7 +220,7 @@ class CartProcessor:
 
         for xml_id in cart_xml_ids:
             cached = self._price_cache.get(xml_id)
-            name = cached["name"] if cached else f"xml_id={xml_id}"
+            name = cached.name if cached else f"xml_id={xml_id}"
             queries = xml_to_queries.get(xml_id, [])
             if queries:
                 matched.append({

@@ -365,8 +365,8 @@ class TestCallTool:
         await mcp_client.close()
 
     @respx.mock
-    async def test_cart_fix_applied(self, mcp_client):
-        """_fix_cart_args вызывается для vkusvill_cart_link_create."""
+    async def test_cart_args_passthrough(self, mcp_client):
+        """call_tool передаёт аргументы корзины без предобработки (она в ToolExecutor)."""
         mcp_client._session_id = "sid-existing"
         mcp_client._client = httpx.AsyncClient()
 
@@ -383,18 +383,18 @@ class TestCallTool:
 
         await mcp_client.call_tool(
             "vkusvill_cart_link_create",
-            {"products": [{"xml_id": 100}]},  # нет q!
+            {"products": [{"xml_id": 100}]},  # нет q — и не добавляется
         )
 
-        # Проверяем, что в запросе был добавлен q=1
+        # call_tool больше не добавляет q=1 — это делает ToolExecutor.preprocess_args
         request_body = json.loads(respx.calls.last.request.content)
         products = request_body["params"]["arguments"]["products"]
-        assert products[0]["q"] == 1
+        assert products[0] == {"xml_id": 100}
         await mcp_client.close()
 
     @respx.mock
-    async def test_search_limit_auto_added(self, mcp_client):
-        """Лимит SEARCH_LIMIT автоматически добавляется к поисковым запросам."""
+    async def test_search_passthrough_no_limit(self, mcp_client):
+        """call_tool не добавляет limit — это делает ToolExecutor.preprocess_args."""
         mcp_client._session_id = "sid-existing"
         mcp_client._client = httpx.AsyncClient()
 
@@ -408,7 +408,7 @@ class TestCallTool:
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]
-        assert args["limit"] == mcp_client.SEARCH_LIMIT
+        assert "limit" not in args  # limit добавляется в ToolExecutor, не в call_tool
         await mcp_client.close()
 
     @respx.mock
@@ -682,8 +682,8 @@ class TestSearchQueryCleaningInCallTool:
     """Тесты очистки поисковых запросов при вызове call_tool (lines 369-370)."""
 
     @respx.mock
-    async def test_cleaned_query_is_sent(self, mcp_client):
-        """Если запрос содержит числа с единицами, очищенный запрос отправляется."""
+    async def test_search_query_passthrough(self, mcp_client):
+        """call_tool не очищает запрос — это делает ToolExecutor.preprocess_args."""
         mcp_client._session_id = "sid-existing"
         mcp_client._client = httpx.AsyncClient()
 
@@ -697,8 +697,8 @@ class TestSearchQueryCleaningInCallTool:
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]
-        # Запрос должен быть очищен: "Творог 5% 400 гр" → "Творог"
-        assert args["q"] == "Творог"
+        # call_tool передаёт запрос как есть — очистка в ToolExecutor
+        assert args["q"] == "Творог 5% 400 гр"
         await mcp_client.close()
 
     @respx.mock
@@ -713,25 +713,6 @@ class TestSearchQueryCleaningInCallTool:
 
         await mcp_client.call_tool(
             "vkusvill_products_search", {"q": "молоко"}
-        )
-
-        request_body = json.loads(respx.calls.last.request.content)
-        args = request_body["params"]["arguments"]
-        assert args["q"] == "молоко"
-        await mcp_client.close()
-
-    @respx.mock
-    async def test_cleaned_query_with_units_ml(self, mcp_client):
-        """Запрос с единицами мл очищается."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
-        )
-
-        await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "молоко 3,2% 450 мл"}
         )
 
         request_body = json.loads(respx.calls.last.request.content)
