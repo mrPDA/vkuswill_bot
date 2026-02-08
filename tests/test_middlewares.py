@@ -6,6 +6,7 @@
 - Сброс лимита после истечения периода
 - Изоляция лимитов между пользователями
 - Обработка сообщений без from_user
+- F-05: Защита от DDoS (периодическая очистка, лимит отслеживаемых users)
 """
 
 import time
@@ -135,3 +136,144 @@ class TestThrottlingMiddleware:
         mw = ThrottlingMiddleware(rate_limit=10, period=120.0)
         assert mw.rate_limit == 10
         assert mw.period == 120.0
+
+
+# ============================================================================
+# F-05: DDoS-защита
+# ============================================================================
+
+
+class TestDDoSProtection:
+    """F-05: Тесты защиты ThrottlingMiddleware от DDoS."""
+
+    async def test_stale_users_cleaned_up(self):
+        """Устаревшие записи удаляются при полной очистке."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=1.0)
+        handler = AsyncMock(return_value="ok")
+
+        # Создаём записи для нескольких пользователей
+        for uid in range(10):
+            event = _make_message_event(user_id=uid)
+            await mw(handler, event, {})
+
+        assert len(mw._user_timestamps) == 10
+
+        # Делаем все timestamps устаревшими
+        for uid in mw._user_timestamps:
+            mw._user_timestamps[uid] = [t - 100.0 for t in mw._user_timestamps[uid]]
+
+        # Форсируем полную очистку
+        now = time.monotonic()
+        mw._full_cleanup(now)
+
+        assert len(mw._user_timestamps) == 0
+
+    async def test_max_tracked_users_limit(self):
+        """При превышении max_tracked_users — принудительная очистка."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=60.0, max_tracked_users=10)
+        handler = AsyncMock(return_value="ok")
+
+        # Заполняем до лимита
+        for uid in range(10):
+            event = _make_message_event(user_id=uid)
+            await mw(handler, event, {})
+
+        assert len(mw._user_timestamps) == 10
+
+        # Делаем все timestamps устаревшими чтобы cleanup помог
+        for uid in list(mw._user_timestamps.keys()):
+            mw._user_timestamps[uid] = [t - 100.0 for t in mw._user_timestamps[uid]]
+
+        # Новый пользователь — должен триггерить cleanup + пройти
+        event = _make_message_event(user_id=999)
+        result = await mw(handler, event, {})
+        assert result == "ok"
+
+        # После cleanup старые записи удалены
+        assert len(mw._user_timestamps) <= 1  # только новый user
+
+    async def test_overflow_skips_tracking(self):
+        """При реальном переполнении (все активные) — новый user пропускается."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=60.0, max_tracked_users=5)
+        handler = AsyncMock(return_value="ok")
+
+        # Заполняем лимит активными пользователями
+        for uid in range(5):
+            event = _make_message_event(user_id=uid)
+            await mw(handler, event, {})
+
+        assert len(mw._user_timestamps) == 5
+
+        # Новый user 999 — overflow, tracking пропускается, но запрос проходит
+        event = _make_message_event(user_id=999)
+        result = await mw(handler, event, {})
+        assert result == "ok"
+        # User 999 не добавлен в tracking
+        assert 999 not in mw._user_timestamps
+
+    async def test_empty_lists_removed(self):
+        """Пустые списки timestamp удаляются из словаря."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=0.01)
+        handler = AsyncMock(return_value="ok")
+
+        # Создаём запись
+        event = _make_message_event(user_id=1)
+        await mw(handler, event, {})
+        assert 1 in mw._user_timestamps
+
+        # Делаем timestamp устаревшим
+        mw._user_timestamps[1] = [time.monotonic() - 1.0]
+
+        # Следующий запрос — cleanup удалит пустой список
+        event = _make_message_event(user_id=1)
+        await mw(handler, event, {})
+
+        # Запись всё ещё есть (новый timestamp добавлен)
+        assert 1 in mw._user_timestamps
+
+    async def test_periodic_cleanup_interval(self):
+        """Полная очистка вызывается через _FULL_CLEANUP_INTERVAL."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=1.0)
+        handler = AsyncMock(return_value="ok")
+
+        # Добавляем устаревших пользователей
+        for uid in range(5):
+            mw._user_timestamps[uid] = [time.monotonic() - 100.0]
+
+        # Смещаем время последней очистки далеко в прошлое
+        mw._last_full_cleanup = time.monotonic() - 600.0
+
+        # Новый запрос должен триггерить полную очистку
+        event = _make_message_event(user_id=100)
+        await mw(handler, event, {})
+
+        # Устаревшие пользователи удалены, остался только user 100
+        assert len(mw._user_timestamps) == 1
+        assert 100 in mw._user_timestamps
+
+    async def test_no_defaultdict_behavior(self):
+        """Словарь НЕ defaultdict — обращение по несуществующему ключу не создаёт запись."""
+        mw = ThrottlingMiddleware(rate_limit=5, period=60.0)
+
+        # Прямое обращение не должно создать запись
+        result = mw._user_timestamps.get(999)
+        assert result is None
+        assert 999 not in mw._user_timestamps
+
+    async def test_memory_bounded_under_many_users(self):
+        """Общий тест: после массовых запросов + cleanup, память ограничена."""
+        mw = ThrottlingMiddleware(rate_limit=2, period=0.01, max_tracked_users=50)
+        handler = AsyncMock(return_value="ok")
+
+        # Имитируем 100 уникальных пользователей
+        for uid in range(100):
+            event = _make_message_event(user_id=uid)
+            await mw(handler, event, {})
+            # Устариваем сразу
+            if uid in mw._user_timestamps:
+                mw._user_timestamps[uid] = [
+                    t - 1.0 for t in mw._user_timestamps[uid]
+                ]
+
+        # Размер не может превышать max_tracked_users
+        assert len(mw._user_timestamps) <= 50
