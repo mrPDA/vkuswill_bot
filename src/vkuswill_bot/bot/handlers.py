@@ -114,7 +114,7 @@ async def cmd_reset(
 ) -> None:
     """Обработчик команды /reset — сброс диалога."""
     if message.from_user:
-        gigachat_service.reset_conversation(message.from_user.id)
+        await gigachat_service.reset_conversation(message.from_user.id)
     await message.answer("Диалог сброшен. Напиши, что хочешь купить!")
 
 
