@@ -201,17 +201,17 @@ class TestHistory:
 
         assert len(service._conversations[1]) == original_len
 
-    def test_reset_conversation(self, service):
+    async def test_reset_conversation(self, service):
         """Сброс удаляет историю пользователя."""
         service._get_history(user_id=42)
         assert 42 in service._conversations
 
-        service.reset_conversation(user_id=42)
+        await service.reset_conversation(user_id=42)
         assert 42 not in service._conversations
 
-    def test_reset_nonexistent_user(self, service):
+    async def test_reset_nonexistent_user(self, service):
         """Сброс несуществующего пользователя не падает."""
-        service.reset_conversation(user_id=999)  # не должно бросить исключение
+        await service.reset_conversation(user_id=999)  # не должно бросить исключение
 
 
 # ============================================================================
