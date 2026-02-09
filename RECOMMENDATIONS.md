@@ -1,409 +1,332 @@
 # Рекомендации по улучшению vkuswill-bot
 
-> На основе code review от 06.02.2026 (ревью #3)
+> На основе code review от 09.02.2026 (ревью #4)
 >
-> **Текущее состояние:** 469 тестов, 98% покрытие, 0 блокеров
+> **Текущее состояние:** 984 теста, 99% покрытие, 0 блокеров, версия 0.3.0
 >
-> **Оценка:** 💬 Comment — код готов к production, есть улучшения
+> **Оценка:** 💬 Comment — качество кода высокое, есть одна системная проблема
 
 ---
 
 ## Статус предыдущих рекомендаций
 
+### Ревью #1–#3 (12 рекомендаций)
+
 | # | Рекомендация | Статус |
 |---|---|---|
-| 1 | Rate-limiting пользователей | ✅ Выполнено — `ThrottlingMiddleware` |
-| 2 | LRU-вытеснение диалогов | ✅ Выполнено — `OrderedDict` + `MAX_CONVERSATIONS` |
-| 3 | Ограничение длины сообщения | ✅ Выполнено — `MAX_USER_MESSAGE_LENGTH = 4096` |
-| 4 | Graceful shutdown | ✅ Выполнено — `asyncio.Event` + `SIGTERM`/`SIGINT` |
-| 5 | SSL-верификация GigaChat | ⏳ Ожидание SDK — TODO-комментарий добавлен |
-| 6 | Логирование исключений | ✅ Выполнено — `logger.debug` вместо `pass` |
-| 7 | Дедупликация тестовых хелперов | ✅ Выполнено — `tests/helpers.py` |
-| 8 | Синхронизация версии MCP | ✅ Выполнено — `importlib.metadata` |
-| 9 | Расширить `.gitignore` | ✅ Выполнено — `*.log`, `*.db`, etc. |
-| 10 | Персистентные диалоги | 🔄 Частично — `PreferencesStore` (SQLite) для предпочтений, диалоги в памяти |
-| 11 | Пул потоков GigaChat | ✅ Выполнено — `ThreadPoolExecutor(max_workers=50)` |
-| 12 | Покрытие кода 97%+ | ✅ Выполнено — 98% |
+| 1 | Rate-limiting пользователей | ✅ `ThrottlingMiddleware` |
+| 2 | LRU-вытеснение диалогов | ✅ `DialogManager` + `OrderedDict` |
+| 3 | Ограничение длины сообщения | ✅ `MAX_USER_MESSAGE_LENGTH = 4096` |
+| 4 | Graceful shutdown | ✅ `asyncio.Event` + сигналы |
+| 5 | SSL-верификация GigaChat | ⏳ Ожидание SDK |
+| 6 | Логирование исключений | ✅ `logger.debug` вместо `pass` |
+| 7 | Дедупликация тестовых хелперов | ✅ `tests/helpers.py` |
+| 8 | Синхронизация версии MCP | ✅ `importlib.metadata` |
+| 9 | Расширить `.gitignore` | ✅ `data/`, `*.db`, `*.log`, `.cursor/` |
+| 10 | Персистентные диалоги | ✅ `RedisDialogManager` + `redis_client.py` |
+| 11 | Пул потоков GigaChat | ✅ `ThreadPoolExecutor(max_workers=50)` |
+| 12 | Покрытие кода 97%+ | ✅ 99% |
+
+### Ревью #3 (8 рекомендаций)
+
+| # | Рекомендация | Статус |
+|---|---|---|
+| 1 | `.gitignore`: `data/`, `*.db` | ✅ Выполнено |
+| 2 | `.env.example`: `DATABASE_PATH` | ✅ Выполнено |
+| 3 | TTL/лимит для `_price_cache` | ✅ `PriceCache` с FIFO-вытеснением (`MAX_PRICE_CACHE_SIZE = 5000`) |
+| 4 | Проверка `"data"` в cart/verify | Требует проверки в `CartProcessor` |
+| 5 | Импорты `copy`, `math` в начало файла | ✅ В `cart_processor.py` импорты на своём месте |
+| 6 | Рефакторинг `gigachat_service.py` | ✅ Разделён на 10 модулей (349 из 859 строк) |
+| 7 | Персистентные диалоги (SQLite) | ✅ Redis-бэкенд |
+| 8 | SSL-верификация GigaChat | ⏳ Ожидание SDK |
 
 ---
 
-## Критические (устранить до production)
+## Новая архитектура (после рефакторинга)
 
-### 1. Добавить `data/` и `*.db` в `.gitignore`
-
-**Риск:** файл БД предпочтений (`data/preferences.db`) с данными пользователей попадёт в Git-репозиторий
-
-**Текущее состояние:** `config.py` задаёт `database_path = "data/preferences.db"`, но ни `data/`, ни `*.db` не указаны в `.gitignore`
-
-**Что сделать:**
-- [ ] Добавить в `.gitignore`:
-
-```gitignore
-# База данных
-data/
-*.db
-*.db-journal
-*.db-wal
 ```
-
-**Файлы:** `.gitignore`
-**Оценка:** 1 минута
+src/vkuswill_bot/services/     (16 модулей, 1302 statements)
+├── gigachat_service.py         # 177 stmts — оркестрация, цикл function calling
+├── cart_processor.py           # 148 stmts — корзина, расчёт, верификация
+├── tool_executor.py            # 150 stmts — вызов инструментов, маршрутизация
+├── mcp_client.py               # 160 stmts — JSON-RPC к MCP-серверу
+├── search_processor.py         #  68 stmts — обрезка/обогащение результатов поиска
+├── dialog_manager.py           #  45 stmts — in-memory LRU-диалоги
+├── redis_dialog_manager.py     #  89 stmts — Redis-бэкенд диалогов
+├── redis_client.py             #  29 stmts — Redis-обёртка
+├── preferences_store.py        #  66 stmts — SQLite-хранилище предпочтений
+├── recipe_service.py           #  82 stmts — генерация рецептов через GigaChat
+├── recipe_store.py             #  59 stmts — SQLite-хранилище рецептов
+├── price_cache.py              #  47 stmts — PriceCache с FIFO-вытеснением
+├── prompts.py                  #   6 stmts — системный промпт и описания инструментов
+└── config.py                   #  21 stmts — pydantic-settings
+```
 
 ---
 
-### 2. Добавить `DATABASE_PATH` в `.env.example`
+## Критические (устранить в ближайший спринт)
 
-**Риск:** разработчик не узнает о настройке пути к БД предпочтений
+### 1. Рефакторинг тестов — удалить дублирование и делегаты совместимости
 
-**Текущее состояние:** в `config.py` добавлено поле `database_path`, но `.env.example` не обновлён
+**Проблема:** `test_gigachat_service.py` содержит **2664 строки и 30 классов** — это самый большой файл проекта. Из них **15 классов дублируют** тесты, которые уже есть в выделенных тестовых файлах. Кроме того, в production-коде `gigachat_service.py` (строки 171-213) живут **делегаты обратной совместимости**, единственная цель которых — чтобы старые тесты продолжали работать через `GigaChatService._parse_preferences(...)` вместо `ToolExecutor._parse_preferences(...)`.
 
-**Что сделать:**
-- [ ] Добавить в `.env.example`:
+Это анти-паттерн: **production-код несёт мёртвый груз ради тестов**.
 
-```env
-# Хранилище предпочтений (SQLite)
-DATABASE_PATH=data/preferences.db
+**Дублирующие классы (удалить из `test_gigachat_service.py`):**
 
-# Лимиты
-MAX_TOOL_CALLS=15
-MAX_HISTORY_MESSAGES=50
+| Класс | Строки | Дубликат в |
+|---|---|---|
+| `TestHistory` | 154 | `test_dialog_manager.py::TestGetHistory` |
+| `TestLRUEviction` | 222 | `test_dialog_manager.py::TestLRUEviction` |
+| `TestParsePreferences` | 647 | `test_tool_executor.py::TestParsePreferences` |
+| `TestParsePreferencesEdgeCases` | 875 | `test_tool_executor.py::TestParsePreferences` |
+| `TestApplyPreferencesToQuery` | 703 | `test_tool_executor.py::TestApplyPreferencesToQuery` |
+| `TestParseToolArguments` | 913 | `test_tool_executor.py::TestParseArguments` |
+| `TestAppendAssistantMessage` | 950 | `test_tool_executor.py::TestBuildAssistantMessage` |
+| `TestPreprocessToolArgs` | 1016 | `test_tool_executor.py::TestPreprocessArgs` |
+| `TestIsDuplicateCall` | 1065 | `test_tool_executor.py::TestIsDuplicateCall` |
+| `TestExecuteTool` | 1170 | `test_tool_executor.py::TestExecute` |
+| `TestPostprocessToolResult` | 1205 | `test_tool_executor.py::TestPostprocessResult` |
+| `TestCallLocalTool` | 790 | `test_tool_executor.py::TestCallLocalTool` |
+| `TestParseJsonFromLLM` | 1688 | `test_recipe_service.py::TestParseJson` |
+| `TestEnrichWithKg` | 2006 | `test_recipe_service.py::TestEnrichWithKg` |
+| `TestFormatRecipeResult` | 2156 | `test_recipe_service.py::TestFormatResult` |
+
+**Классы, которые должны ОСТАТЬСЯ (тестируют оркестрацию `GigaChatService`):**
+
+| Класс | Что тестирует |
+|---|---|
+| `TestMessageTruncation` | Обрезка входящего сообщения |
+| `TestProcessMessage` | Основной цикл function calling |
+| `TestProcessMessageWithPrefs` | Цикл с предпочтениями |
+| `TestSearchTrimCacheCartFlow` | Интеграция: поиск → кеш → корзина |
+| `TestClose` | Закрытие GigaChat-клиента |
+| `TestGetFunctions` / `WithPrefs` / `WithRecipes` | Загрузка инструментов |
+| `TestRecipeToolRouting` | Маршрутизация `recipe_ingredients` |
+| `TestHandleRecipeIngredients` | Обработка рецептов |
+| `TestHandleRecipeIngredientsEdgeCases` | Edge cases рецептов |
+| `TestIsRateLimitError` | Определение 429 |
+| `TestCallGigachat` | Семафор + retry |
+| `TestModuleConstants` | Проверка констант |
+| `TestSyncDelegatesWithRedisBackend` | Совместимость делегатов |
+
+**Делегаты для удаления из `gigachat_service.py` (строки 171-213):**
+
+```python
+# Удалить полностью — строки 171-213:
+_parse_preferences = staticmethod(ToolExecutor._parse_preferences)
+_apply_preferences_to_query = staticmethod(ToolExecutor._apply_preferences_to_query)
+_parse_tool_arguments = staticmethod(ToolExecutor.parse_arguments)
+_append_assistant_message = staticmethod(ToolExecutor.build_assistant_message)
+_enrich_with_kg = staticmethod(RecipeService._enrich_with_kg)
+_format_recipe_result = staticmethod(RecipeService._format_result)
+_parse_json_from_llm = staticmethod(RecipeService._parse_json)
+
+def _preprocess_tool_args(self, ...): ...
+def _is_duplicate_call(self, ...): ...
+async def _execute_tool(self, ...): ...
+def _postprocess_tool_result(self, ...): ...
+async def _call_local_tool(self, ...): ...
 ```
 
-**Файлы:** `.env.example`
-**Оценка:** 1 минута
+**Что сделать:**
+- [ ] Убедиться, что все кейсы из 15 дублирующих классов покрыты в новых тестовых файлах (перенести уникальные, если есть)
+- [ ] Удалить 15 дублирующих классов из `test_gigachat_service.py`
+- [ ] Удалить делегаты совместимости из `gigachat_service.py` (строки 171-213)
+- [ ] Обновить `TestSyncDelegatesWithRedisBackend` — удалить или переписать без делегатов
+- [ ] Запустить `pytest --cov` — покрытие не должно упасть
+
+**Ожидаемый результат:**
+
+| Метрика | Сейчас | После |
+|---|---|---|
+| `test_gigachat_service.py` | 2664 строк, 30 классов | ~1000-1200 строк, ~15 классов |
+| `gigachat_service.py` | 349 строк (43 строки — делегаты) | ~300 строк |
+| Тестов (всего) | 984 | ~984 (дубликаты покрыты) |
+| Покрытие | 99% | 99% |
+
+**Порядок работы:**
+
+```bash
+# 1. Проверить покрытие перед удалением
+uv run pytest --cov -q
+
+# 2. Сравнить тесты: какие кейсы уникальны для test_gigachat_service.py
+# Для каждого дублирующего класса — проверить, что ВСЕ тест-методы
+# имеют аналоги в целевом файле
+
+# 3. Перенести уникальные кейсы (если есть) в целевой файл
+
+# 4. Удалить дублирующие классы из test_gigachat_service.py
+
+# 5. Удалить делегаты из gigachat_service.py
+
+# 6. Проверить, что ничего не сломалось
+uv run pytest --cov -q
+```
+
+**Файлы:** `test_gigachat_service.py`, `gigachat_service.py`
+**Оценка:** 2-3 часа (основное время — на сверку кейсов)
 
 ---
 
-## Важные (ближайший спринт)
+## Важные (желательно в ближайшем спринте)
 
-### 3. Ограничить рост `_price_cache` (TTL + maxsize)
+### 2. SSL-верификация GigaChat (отложено)
 
-**Риск:** утечка памяти — кеш цен растёт неограниченно, цены устаревают
+**Статус:** ожидание поддержки CA-сертификата Минцифры в GigaChat SDK
 
-**Текущее состояние:** `self._price_cache: dict[int, dict] = {}` — без лимитов и очистки
+**Текущее состояние:** `verify_ssl_certs=False` в `gigachat_service.py:80`
 
-**Что сделать:**
-- [ ] Установить `cachetools`:
-  ```bash
-  uv add cachetools
-  ```
-- [ ] Заменить `dict` на `TTLCache`:
+**Что отслеживать:**
+- [ ] [GigaChat SDK issues](https://github.com/ai-forever/gigachat/issues)
+- [ ] Обновления SDK: `uv update gigachat`
 
-```python
-from cachetools import TTLCache
-
-# Лимит 5000 записей, TTL 30 минут
-PRICE_CACHE_MAXSIZE = 5000
-PRICE_CACHE_TTL = 1800  # секунды
-
-class GigaChatService:
-    def __init__(self, ...) -> None:
-        ...
-        self._price_cache: TTLCache[int, dict] = TTLCache(
-            maxsize=PRICE_CACHE_MAXSIZE,
-            ttl=PRICE_CACHE_TTL,
-        )
-```
-
-- [ ] Добавить тест: записать > `PRICE_CACHE_MAXSIZE` элементов → старые вытеснены
-
-**Альтернатива (без новой зависимости):**
-
-```python
-MAX_PRICE_CACHE_SIZE = 5000
-
-def _cache_prices_from_search(self, result_text: str) -> None:
-    # ... парсинг ...
-    if len(self._price_cache) > MAX_PRICE_CACHE_SIZE:
-        # Удаляем первые N записей (приблизительно FIFO)
-        keys_to_remove = list(self._price_cache.keys())[:MAX_PRICE_CACHE_SIZE // 2]
-        for k in keys_to_remove:
-            del self._price_cache[k]
-        logger.info("Очищен кеш цен: удалено %d записей", len(keys_to_remove))
-```
-
-**Файлы:** `gigachat_service.py`, `pyproject.toml`
-**Оценка:** 15 минут
+**Когда будет готово:**
+- [ ] Установить `verify_ssl_certs=True` + `ca_bundle_file` (если нужен кастомный CA)
+- [ ] Убрать `xfail` с теста `TestSSLSecurity::test_ssl_verification_settings`
 
 ---
 
-### 4. Проверка ключа `"data"` в `_calc_cart_total` и верификации корзины
+### 3. ResourceWarning в тестах
 
-**Риск:** `KeyError` при нестандартном ответе MCP (например `{"ok": true}` без `"data"`)
+**Текущее состояние:** 2 warnings в выводе pytest:
 
-**Текущее состояние:**
-
-```python
-# gigachat_service.py:505 — прямой доступ без проверки
-result_data["data"]["price_summary"] = summary
-
-# gigachat_service.py:833 — обёрнуто в try/except KeyError, но это workaround
-result_data["data"]["verification"] = verification
+```
+Enable tracemalloc to get traceback where the object was allocated.
+See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings
 ```
 
 **Что сделать:**
-- [ ] Добавить проверку перед записью:
+- [ ] Запустить `uv run pytest -W error::ResourceWarning` для выявления конкретных файлов
+- [ ] Добавить `await client.aclose()` или `async with` для незакрытых httpx/aiosqlite соединений в фикстурах
+- [ ] Или добавить в `pyproject.toml`:
 
-```python
-# _calc_cart_total
-data = result_data.get("data")
-if not isinstance(data, dict):
-    logger.warning("Результат корзины без поля 'data': %s", result_text[:200])
-    return result_text
-data["price_summary"] = summary
-
-# process_message, блок верификации
-if search_log:
-    verification = self._verify_cart(args, search_log)
-    try:
-        result_data = json.loads(result)
-        data = result_data.get("data")
-        if isinstance(data, dict):
-            data["verification"] = verification
-            result = json.dumps(result_data, ensure_ascii=False, indent=4)
-    except (json.JSONDecodeError, TypeError):
-        pass
+```toml
+filterwarnings = [
+    "ignore::DeprecationWarning",
+    "ignore::ResourceWarning",  # если не критично
+]
 ```
 
-- [ ] Добавить тест: `_calc_cart_total` с `{"ok": true}` без `"data"` → не падает
-
-**Файлы:** `gigachat_service.py`, `test_gigachat_service.py`
-**Оценка:** 10 минут
-
----
-
-### 5. Перенести импорты `copy` и `math` в начало файла
-
-**Проблема:** нестандартные импорты внутри методов, ухудшают читаемость
-
-**Текущее состояние:**
-
-```python
-# gigachat_service.py:196 — внутри _enhance_cart_schema
-import copy
-
-# gigachat_service.py:430 — внутри _fix_unit_quantities
-import math
-```
-
-**Что сделать:**
-- [ ] Перенести оба импорта в начало файла (после `from collections import OrderedDict`):
-
-```python
-import asyncio
-import copy
-import json
-import logging
-import math
-from collections import OrderedDict
-```
-
-- [ ] Убрать дублирующий локальный импорт `VkusvillMCPClient` из `_trim_search_result` (строка 381) — класс уже импортирован в начале файла:
-
-```python
-# Было (строка 381-383):
-from vkuswill_bot.services.mcp_client import VkusvillMCPClient
-max_items = VkusvillMCPClient.SEARCH_LIMIT
-
-# Стало:
-max_items = self._mcp_client.SEARCH_LIMIT
-# или вынести константу: SEARCH_LIMIT = 5
-```
-
-**Файлы:** `gigachat_service.py`
-**Оценка:** 2 минуты
+**Оценка:** 15-30 минут
 
 ---
 
 ## Желательные (бэклог)
 
-### 6. Рефакторинг `gigachat_service.py` — разделение на подмодули
+### 4. Тип возврата `_call_gigachat` — `object` вместо конкретного типа
 
-**Проблема:** файл вырос до 859 строк и несёт 10+ ответственностей
-
-**Текущие ответственности:**
-1. Управление историей диалогов (LRU, trim, reset)
-2. Цикл function calling с GigaChat API
-3. Кеширование цен из результатов поиска
-4. Расчёт стоимости корзины
-5. Верификация корзины vs поисковые запросы
-6. Обрезка результатов поиска (trim fields)
-7. Маршрутизация локальных инструментов (preferences)
-8. Подстановка предпочтений в поисковые запросы
-9. Округление единиц для штучных товаров
-10. Обогащение JSON-схемы корзины для GigaChat
-
-**Предлагаемая структура:**
-
-```
-services/
-├── gigachat_service.py         # Основной цикл + история (300 строк)
-│   - GigaChatService.__init__
-│   - _get_history, _trim_history, reset_conversation
-│   - _get_functions
-│   - process_message (основной цикл)
-│   - close
-│
-├── cart_processor.py            # Логика корзины (200 строк)
-│   - CartProcessor
-│   - cache_prices_from_search
-│   - calc_cart_total
-│   - verify_cart
-│   - fix_unit_quantities
-│   - extract_xml_ids_from_search
-│   - enhance_cart_schema
-│
-├── search_processor.py          # Логика поиска (100 строк)
-│   - SearchProcessor
-│   - trim_search_result
-│   - SEARCH_ITEM_FIELDS
-│
-├── preferences_engine.py        # Логика предпочтений (150 строк)
-│   - PreferencesEngine
-│   - parse_preferences
-│   - apply_preferences_to_query
-│   - call_local_tool
-│   - LOCAL_TOOLS, LOCAL_TOOL_NAMES
-│
-├── preferences_store.py         # SQLite-хранилище (без изменений)
-└── mcp_client.py                # MCP-клиент (без изменений)
-```
-
-**Пример рефакторинга `CartProcessor`:**
+**Файл:** `gigachat_service.py`, строка 240-244
 
 ```python
-# services/cart_processor.py
-"""Обработка корзины: кеш цен, расчёт стоимости, верификация."""
-
-import json
-import logging
-import math
-from typing import Any
-
-logger = logging.getLogger(__name__)
-
-DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
-
-
-class CartProcessor:
-    """Обработчик операций с корзиной ВкусВилл."""
-
-    def __init__(self) -> None:
-        self.price_cache: dict[int, dict] = {}
-
-    def cache_prices_from_search(self, result_text: str) -> None:
-        """Извлечь цены из результата поиска и закешировать."""
-        ...
-
-    def fix_unit_quantities(self, args: dict) -> dict:
-        """Округлить q для штучных товаров."""
-        ...
-
-    def calc_total(self, args: dict, result_text: str) -> str:
-        """Рассчитать стоимость корзины."""
-        ...
-
-    def verify(self, cart_args: dict, search_log: dict[str, set[int]]) -> dict:
-        """Сопоставить корзину с поисковыми запросами."""
-        ...
+async def _call_gigachat(
+    self,
+    history: list[Messages],
+    functions: list[dict],
+) -> object:
 ```
 
-**Использование в `GigaChatService`:**
-
-```python
-# gigachat_service.py
-from vkuswill_bot.services.cart_processor import CartProcessor
-from vkuswill_bot.services.search_processor import SearchProcessor
-from vkuswill_bot.services.preferences_engine import PreferencesEngine
-
-class GigaChatService:
-    def __init__(self, ...) -> None:
-        ...
-        self._cart = CartProcessor()
-        self._search = SearchProcessor()
-        self._prefs_engine = PreferencesEngine(preferences_store)
-
-    async def process_message(self, user_id: int, text: str) -> str:
-        ...
-        # Вместо self._cache_prices_from_search(result)
-        self._cart.cache_prices_from_search(result)
-        # Вместо self._trim_search_result(result)
-        result = self._search.trim_result(result)
-        # Вместо self._apply_preferences_to_query(q, user_prefs)
-        enhanced_q = self._prefs_engine.apply_to_query(q, user_prefs)
-```
-
-**Миграция тестов:**
-
-```
-tests/
-├── test_gigachat_service.py     # Только цикл + история (300 строк)
-├── test_cart_processor.py       # TestCachePrices, TestCalcCartTotal, TestVerifyCart, TestFixUnit
-├── test_search_processor.py     # TestTrimSearchResult
-├── test_preferences_engine.py   # TestParsePreferences, TestApplyPreferences, TestCallLocalTool
-├── test_preferences_store.py    # Без изменений
-└── ...
-```
-
-**Оценка:** 2-4 часа
-**Рекомендация:** делать поэтапно — сначала `CartProcessor`, потом `SearchProcessor`, потом `PreferencesEngine`. Каждый этап — отдельный PR.
-
----
-
-### 7. Персистентное хранение диалогов
-
-**Проблема:** при перезапуске бота все диалоги теряются (в памяти `OrderedDict`)
+**Проблема:** возвращаемый тип `object` слишком общий — теряется автодополнение и проверка типов
 
 **Что сделать:**
-- [ ] Добавить таблицу `conversations` в `PreferencesStore` (или отдельный `ConversationStore`)
-- [ ] Сериализация `Messages` → JSON для хранения в SQLite
-- [ ] TTL для диалогов (например, 24 часа)
-- [ ] Lazy-загрузка: читать из БД только при обращении к пользователю
+- [ ] Заменить на конкретный тип из GigaChat SDK:
 
-**Пример схемы:**
+```python
+from gigachat.models import ChatCompletion
 
-```sql
-CREATE TABLE IF NOT EXISTS conversations (
-    user_id     INTEGER PRIMARY KEY,
-    messages    TEXT    NOT NULL,  -- JSON-массив сообщений
-    updated_at  TEXT    DEFAULT CURRENT_TIMESTAMP
-);
+async def _call_gigachat(
+    self,
+    history: list[Messages],
+    functions: list[dict],
+) -> ChatCompletion:
 ```
 
-**Файлы:** новый `services/conversation_store.py` или расширение `preferences_store.py`
-**Оценка:** 4-8 часов
+**Оценка:** 2 минуты
 
 ---
 
-### 8. SSL-верификация GigaChat (отложено)
+### 5. Константа `MAX_CONVERSATIONS` дублируется
 
-**Статус:** ожидание поддержки CA-сертификата Минцифры в GigaChat SDK
+**Файл:** `gigachat_service.py`, строка 35
 
-**Что отслеживать:**
-- [ ] [GigaChat SDK issues](https://github.com/ai-forever/gigachat/issues)
-- [ ] Обновления SDK через `uv update gigachat`
+```python
+MAX_CONVERSATIONS = 1000
+```
 
-**Когда будет готово:**
-- [ ] Удалить `verify_ssl_certs=False` из `__init__`
-- [ ] Добавить `ca_bundle_file` в `config.py` (если нужен кастомный CA)
-- [ ] Убрать `xfail` с теста `TestSSLSecurity::test_ssl_verification_settings`
+**Проблема:** Константа `MAX_CONVERSATIONS` определена в `gigachat_service.py`, но фактически используется в `DialogManager` (который принимает её как параметр `max_conversations`). При изменении значения можно забыть обновить одно из мест.
+
+**Что сделать:**
+- [ ] Определить `MAX_CONVERSATIONS` в `dialog_manager.py` и импортировать при необходимости
+- [ ] Или: передавать через `config.py` как `max_conversations: int = 1000`
+
+**Оценка:** 5 минут
 
 ---
 
-## Инструменты — уже настроенные
+### 6. `_is_rate_limit_error` — строковая эвристика вместо типа
 
-| Инструмент | Статус | Файл |
-|---|---|---|
-| CI/CD (тесты, lint) | ✅ | `.github/workflows/ci.yml` |
-| Release workflow | ✅ | `.github/workflows/release.yml` |
-| Git hooks | ✅ | `.githooks/commit-msg`, `pre-push` |
-| SAST-тесты | ✅ | `test_security_sast.py` |
-| AI Safety тесты | ✅ | `test_ai_safety.py` |
-| Input validation | ✅ | `test_input_validation.py` |
-| Config security | ✅ | `test_config_security.py` |
-| Ruff (lint + format) | ✅ | `pyproject.toml [dev]` |
-| Makefile | ✅ | `Makefile` |
-| Issue/PR templates | ✅ | `.github/` |
+**Файл:** `gigachat_service.py`, строки 285-293
+
+```python
+@staticmethod
+def _is_rate_limit_error(exc: Exception) -> bool:
+    exc_str = str(exc).lower()
+    return "429" in exc_str or "rate" in exc_str or "too many" in exc_str
+```
+
+**Проблема:** хрупкая эвристика по строке исключения. Может ложно срабатывать (например, текст ошибки «rate of fire too many items found»). Есть TODO-комментарий.
+
+**Что сделать:**
+- [ ] Изучить иерархию исключений GigaChat SDK
+- [ ] Заменить на проверку типа/атрибута:
+
+```python
+@staticmethod
+def _is_rate_limit_error(exc: Exception) -> bool:
+    # httpx.HTTPStatusError (если SDK пробрасывает)
+    if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+        return exc.response.status_code == 429
+    # Fallback: строковая эвристика
+    exc_str = str(exc).lower()
+    return "429" in exc_str or "too many" in exc_str
+```
+
+**Оценка:** 30 минут (включая исследование SDK)
+
+---
+
+## Инструменты — текущее состояние
+
+| Инструмент | Статус |
+|---|---|
+| CI/CD (тесты, lint) | ✅ `.github/workflows/ci.yml` |
+| Release workflow | ✅ `.github/workflows/release.yml` |
+| Git hooks | ✅ `.githooks/commit-msg`, `pre-push` |
+| SAST-тесты | ✅ `test_security_sast.py` |
+| AI Safety тесты | ✅ `test_ai_safety.py` |
+| Input validation | ✅ `test_input_validation.py` |
+| Config security | ✅ `test_config_security.py` |
+| Ruff (lint + format) | ✅ `pyproject.toml [dev]` |
+| Makefile | ✅ `Makefile` |
+| Issue/PR templates | ✅ `.github/` |
+| Redis-бэкенд | ✅ `redis_dialog_manager.py` |
+| Кеш рецептов | ✅ `recipe_store.py` |
+| PriceCache с FIFO | ✅ `price_cache.py` |
+
+---
+
+## Метрики проекта
+
+| Метрика | Ревью #1 | Ревью #3 | Ревью #4 (текущее) |
+|---|---|---|---|
+| Тестов | 292 | 469 | **984** |
+| Покрытие | 94% | 98% | **99%** |
+| Модулей (src) | 6 | 9 | **16** |
+| `gigachat_service.py` | 326 строк | 859 строк | **349 строк** |
+| Версия | 0.1.0 | 0.1.0 | **0.3.0** |
+| xfailed | 3 | 4 | **4** |
+| Блокеров | 0 | 0 | **0** |
 
 ---
 
@@ -411,11 +334,9 @@ CREATE TABLE IF NOT EXISTS conversations (
 
 | # | Рекомендация | Приоритет | Сложность | Время |
 |---|---|---|---|---|
-| 1 | `.gitignore`: `data/`, `*.db` | 🔴 Критический | Низкая | 1 мин |
-| 2 | `.env.example`: `DATABASE_PATH` | 🔴 Критический | Низкая | 1 мин |
-| 3 | TTL/лимит для `_price_cache` | 🟡 Важный | Низкая | 15 мин |
-| 4 | Проверка `"data"` в cart/verify | 🟡 Важный | Низкая | 10 мин |
-| 5 | Импорты `copy`, `math` в начало файла | 🟡 Важный | Низкая | 2 мин |
-| 6 | Рефакторинг `gigachat_service.py` | 🟢 Желательный | Высокая | 2-4 ч |
-| 7 | Персистентные диалоги (SQLite) | 🟢 Желательный | Высокая | 4-8 ч |
-| 8 | SSL-верификация GigaChat | 🟢 Желательный | Средняя | Ожидание SDK |
+| 1 | Рефакторинг тестов + удаление делегатов | 🔴 Важный | Средняя | 2-3 ч |
+| 2 | SSL-верификация GigaChat | 🟡 Средний | Средняя | Ожидание SDK |
+| 3 | ResourceWarning в тестах | 🟡 Средний | Низкая | 15-30 мин |
+| 4 | Тип возврата `_call_gigachat` | 🟢 Низкий | Низкая | 2 мин |
+| 5 | `MAX_CONVERSATIONS` — единый источник | 🟢 Низкий | Низкая | 5 мин |
+| 6 | `_is_rate_limit_error` — типизация | 🟢 Низкий | Низкая | 30 мин |

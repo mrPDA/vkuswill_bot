@@ -42,4 +42,8 @@ Archive/
 # Cursor IDE
 .cursor/
 
+# Нагрузочное тестирование (сессии Telethon содержат токены)
+loadtests/sessions/
+loadtests/*.session
+
 HABR_STRATEGY.md

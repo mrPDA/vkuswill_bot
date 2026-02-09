@@ -25,6 +25,10 @@ test = [
 dev = [
     "ruff>=0.8",
 ]
+loadtest = [
+    "locust>=2.29",
+    "telethon>=1.36",
+]
 
 [build-system]
 requires = ["hatchling"]
