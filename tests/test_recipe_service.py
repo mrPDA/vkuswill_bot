@@ -296,6 +296,56 @@ class TestEnrichWithKg:
         result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
         assert result[0]["kg_equivalent"] == 0.6
 
+    def test_adds_kg_equivalent_for_potato(self):
+        """Картофель 5 шт → kg_equivalent=0.75."""
+        items = [{"name": "Картофель молодой", "quantity": 5, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.75
+
+    def test_skips_negative_quantity(self):
+        """Отрицательное quantity — не обогащается."""
+        items = [{"name": "лук", "quantity": -1, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert "kg_equivalent" not in result[0]
+
+    def test_substring_matching(self):
+        """Подстрока: 'морковь' найдена в 'морковь свежая'."""
+        items = [{"name": "морковь свежая", "quantity": 2, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.3
+
+    def test_mixed_items(self):
+        """Смешанный список: одни обогащаются, другие — нет."""
+        items = [
+            {"name": "картофель", "quantity": 4, "unit": "шт"},
+            {"name": "сливочное масло", "quantity": 1, "unit": "шт"},
+            {"name": "помидор", "quantity": 3, "unit": "шт"},
+            {"name": "курица", "quantity": 0.8, "unit": "кг"},
+        ]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.6
+        assert "kg_equivalent" not in result[1]
+        assert result[2]["kg_equivalent"] == 0.45
+        assert "kg_equivalent" not in result[3]
+
+    def test_empty_weights(self):
+        """Пустая таблица весов — ничего не обогащается."""
+        items = [{"name": "лук", "quantity": 2, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, {})
+        assert "kg_equivalent" not in result[0]
+
+    def test_rounding(self):
+        """Результат округляется до 2 знаков."""
+        items = [{"name": "свекла", "quantity": 3, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.9
+
+    def test_fractional_quantity(self):
+        """Дробное quantity корректно обрабатывается."""
+        items = [{"name": "лук", "quantity": 1.5, "unit": "шт"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.15
+
 
 # ============================================================================
 # _format_result
@@ -317,6 +367,17 @@ class TestFormatResult:
         assert parsed["cached"] is True
         assert "hint" in parsed
         assert "kg_equivalent" in parsed["hint"]
+
+    def test_hint_forbids_extra_items(self):
+        """Hint явно запрещает добавлять товары не из списка."""
+        result = RecipeService._format_result(
+            dish="блинчики", servings=5,
+            ingredients=[{"name": "мука"}], cached=False,
+        )
+        parsed = json.loads(result)
+        hint = parsed["hint"].lower()
+        assert "только" in hint or "не добавляй" in hint
+        assert "не ищи" in hint or "нет в списке" in hint
 
     def test_cached_false(self):
         result = RecipeService._format_result(

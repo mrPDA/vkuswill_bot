@@ -36,7 +36,7 @@ def processor() -> SearchProcessor:
 class TestCachePrices:
     """Тесты cache_prices: кеширование цен из результатов поиска."""
 
-    def test_caches_prices(self, processor):
+    async def test_caches_prices(self, processor):
         """Извлекает цены из результата поиска."""
         search_result = json.dumps({
             "ok": True,
@@ -58,7 +58,7 @@ class TestCachePrices:
             },
         })
 
-        processor.cache_prices(search_result)
+        await processor.cache_prices(search_result)
 
         assert 41728 in processor.price_cache
         assert processor.price_cache[41728]["price"] == 135
@@ -69,21 +69,21 @@ class TestCachePrices:
         assert processor.price_cache[103297]["price"] == 79
         assert processor.price_cache[103297]["unit"] == "шт"
 
-    def test_handles_invalid_json(self, processor):
+    async def test_handles_invalid_json(self, processor):
         """Не падает на невалидном JSON."""
-        processor.cache_prices("not json")
+        await processor.cache_prices("not json")
         assert len(processor.price_cache) == 0
 
-    def test_handles_empty_items(self, processor):
+    async def test_handles_empty_items(self, processor):
         """Не падает на пустом списке товаров."""
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True, "data": {"items": []}
         }))
         assert len(processor.price_cache) == 0
 
-    def test_handles_missing_price(self, processor):
+    async def test_handles_missing_price(self, processor):
         """Пропускает товары без цены."""
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -95,11 +95,11 @@ class TestCachePrices:
         assert 100 not in processor.price_cache
         assert 200 in processor.price_cache
 
-    def test_updates_existing_cache(self, processor):
+    async def test_updates_existing_cache(self, processor):
         """Перезаписывает цены при повторном поиске."""
         processor.price_cache[41728] = {"name": "Старое", "price": 100, "unit": "кг"}
 
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -111,7 +111,7 @@ class TestCachePrices:
         assert processor.price_cache[41728]["name"] == "Новое"
         assert processor.price_cache[41728]["price"] == 135
 
-    def test_evicts_when_exceeds_max_size(self, processor):
+    async def test_evicts_when_exceeds_max_size(self, processor):
         """Старые записи удаляются при превышении MAX_PRICE_CACHE_SIZE."""
         # Заполняем кеш до лимита
         for i in range(MAX_PRICE_CACHE_SIZE):
@@ -120,7 +120,7 @@ class TestCachePrices:
         assert len(processor.price_cache) == MAX_PRICE_CACHE_SIZE
 
         # Добавляем ещё товар через cache_prices
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -450,9 +450,9 @@ class TestTrimSearchLimit:
 class TestCachePricesEdgeCases:
     """Дополнительные тесты cache_prices."""
 
-    def test_missing_xml_id(self, processor):
+    async def test_missing_xml_id(self, processor):
         """Товар без xml_id не кешируется."""
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -462,9 +462,9 @@ class TestCachePricesEdgeCases:
         }))
         assert len(processor.price_cache) == 0
 
-    def test_default_unit_sht(self, processor):
+    async def test_default_unit_sht(self, processor):
         """Если unit не указан — по умолчанию 'шт'."""
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -474,9 +474,9 @@ class TestCachePricesEdgeCases:
         }))
         assert processor.price_cache[1]["unit"] == "шт"
 
-    def test_price_not_dict_skipped(self, processor):
+    async def test_price_not_dict_skipped(self, processor):
         """Если price — не dict, товар пропускается."""
-        processor.cache_prices(json.dumps({
+        await processor.cache_prices(json.dumps({
             "ok": True,
             "data": {
                 "items": [
@@ -487,14 +487,14 @@ class TestCachePricesEdgeCases:
         # price не dict → get("current") вернёт AttributeError → пропуск
         assert len(processor.price_cache) == 0
 
-    def test_data_not_dict_ignored(self, processor):
+    async def test_data_not_dict_ignored(self, processor):
         """JSON без dict-data не крашит cache_prices."""
-        processor.cache_prices(json.dumps({"ok": True, "data": "string"}))
+        await processor.cache_prices(json.dumps({"ok": True, "data": "string"}))
         assert len(processor.price_cache) == 0
 
-    def test_none_input(self, processor):
+    async def test_none_input(self, processor):
         """None на входе не крашит."""
-        processor.cache_prices(None)
+        await processor.cache_prices(None)
         assert len(processor.price_cache) == 0
 
 
