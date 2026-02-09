@@ -3,8 +3,10 @@
 Отвечает за:
 - LRU-кэш диалогов (OrderedDict)
 - Per-user asyncio.Lock для защиты от race condition
-- Обрезку истории (_trim)
+- Обрезку истории (trim / trim_list)
 - Сброс диалога (reset)
+- Async-интерфейс (aget_history, save_history, areset) для совместимости
+  с RedisDialogManager
 """
 
 import asyncio
@@ -22,10 +24,15 @@ MAX_CONVERSATIONS = 1000
 
 
 class DialogManager:
-    """Управление историей диалогов пользователей.
+    """Управление историей диалогов пользователей (in-memory).
 
     Хранит LRU-кэш диалогов в памяти с per-user lock
     для защиты от параллельных мутаций.
+
+    Предоставляет два API:
+    - Sync (get_history, trim, reset) — для обратной совместимости и тестов.
+    - Async (aget_history, save_history, trim_list, areset) — единый интерфейс
+      с RedisDialogManager, используется в GigaChatService.
     """
 
     def __init__(
@@ -38,6 +45,8 @@ class DialogManager:
         self._conversations: OrderedDict[int, list[Messages]] = OrderedDict()
         self._locks: dict[int, asyncio.Lock] = {}
 
+    # ---- Per-user lock (общий для sync и async) ----
+
     def get_lock(self, user_id: int) -> asyncio.Lock:
         """Per-user lock для защиты от параллельных мутаций.
 
@@ -46,6 +55,8 @@ class DialogManager:
         if user_id not in self._locks:
             self._locks[user_id] = asyncio.Lock()
         return self._locks[user_id]
+
+    # ---- Sync API (обратная совместимость) ----
 
     def get_history(self, user_id: int) -> list[Messages]:
         """Получить или создать историю диалога пользователя.
@@ -87,6 +98,38 @@ class DialogManager:
         """Сбросить историю диалога пользователя."""
         self._conversations.pop(user_id, None)
         self._locks.pop(user_id, None)
+
+    # ---- Async API (единый интерфейс с RedisDialogManager) ----
+
+    async def aget_history(self, user_id: int) -> list[Messages]:
+        """Async-обёртка get_history (для in-memory — trivially sync)."""
+        return self.get_history(user_id)
+
+    async def save_history(
+        self, user_id: int, history: list[Messages],
+    ) -> None:
+        """Сохранить историю диалога.
+
+        Для in-memory: обновляет ссылку в _conversations (необходимо,
+        т.к. trim_list может вернуть новый список).
+        """
+        self._conversations[user_id] = history
+
+    def trim_list(self, history: list[Messages]) -> list[Messages]:
+        """Обрезать историю (чистая функция, не зависит от хранилища).
+
+        Принимает и возвращает list — работает одинаково для in-memory
+        и Redis-бэкенда.
+        """
+        if len(history) > self._max_history:
+            return [history[0]] + history[-(self._max_history - 1):]
+        return history
+
+    async def areset(self, user_id: int) -> None:
+        """Async-обёртка reset (для in-memory — trivially sync)."""
+        self.reset(user_id)
+
+    # ---- Свойства ----
 
     @property
     def conversations(self) -> OrderedDict[int, list[Messages]]:
