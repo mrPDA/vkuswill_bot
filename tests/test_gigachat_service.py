@@ -26,6 +26,8 @@ from gigachat.models import (
 )
 
 from vkuswill_bot.services.gigachat_service import (
+    DEFAULT_GIGACHAT_MAX_CONCURRENT,
+    GIGACHAT_MAX_RETRIES,
     GigaChatService,
     MAX_CONVERSATIONS,
     MAX_USER_MESSAGE_LENGTH,
@@ -2395,3 +2397,214 @@ class TestHandleRecipeIngredientsEdgeCases:
         mock_recipe_store.get.assert_called_once()
         # MCP вызван для поиска (дважды — свёкла и капуста)
         assert mock_mcp_client.call_tool.call_count == 2
+
+
+# ============================================================================
+# _is_rate_limit_error: определение rate limit ошибок
+# ============================================================================
+
+
+class TestIsRateLimitError:
+    """Тесты _is_rate_limit_error: определение 429 / rate limit ошибок."""
+
+    def test_429_in_message(self):
+        """Сообщение содержит '429' → rate limit."""
+        exc = RuntimeError("HTTP 429 Too Many Requests")
+        assert GigaChatService._is_rate_limit_error(exc) is True
+
+    def test_rate_in_message(self):
+        """Сообщение содержит 'rate' → rate limit."""
+        exc = RuntimeError("Rate limit exceeded")
+        assert GigaChatService._is_rate_limit_error(exc) is True
+
+    def test_too_many_in_message(self):
+        """Сообщение содержит 'too many' → rate limit."""
+        exc = RuntimeError("Too many requests, please slow down")
+        assert GigaChatService._is_rate_limit_error(exc) is True
+
+    def test_case_insensitive(self):
+        """Проверка регистронезависимая."""
+        exc = RuntimeError("RATE LIMIT")
+        assert GigaChatService._is_rate_limit_error(exc) is True
+
+    def test_not_rate_limit(self):
+        """Обычная ошибка — не rate limit."""
+        exc = RuntimeError("Connection refused")
+        assert GigaChatService._is_rate_limit_error(exc) is False
+
+    def test_empty_message(self):
+        """Пустое сообщение — не rate limit."""
+        exc = RuntimeError("")
+        assert GigaChatService._is_rate_limit_error(exc) is False
+
+    def test_timeout_not_rate_limit(self):
+        """Таймаут — не rate limit."""
+        exc = TimeoutError("Read timed out")
+        assert GigaChatService._is_rate_limit_error(exc) is False
+
+    def test_value_error(self):
+        """ValueError — не rate limit."""
+        exc = ValueError("Invalid argument")
+        assert GigaChatService._is_rate_limit_error(exc) is False
+
+
+# ============================================================================
+# _call_gigachat: семафор и retry при rate limit
+# ============================================================================
+
+
+class TestCallGigachat:
+    """Тесты _call_gigachat: семафор, retry при 429, ограничение параллелизма."""
+
+    async def test_successful_call(self, service):
+        """Успешный вызов возвращает ответ GigaChat."""
+        expected = make_text_response("Привет!")
+        with patch.object(
+            service._client,
+            "chat",
+            return_value=expected,
+        ):
+            result = await service._call_gigachat(
+                history=[],
+                functions=[],
+            )
+        assert result is expected
+
+    async def test_retry_on_rate_limit(self, service):
+        """Retry при получении rate limit (429)."""
+        expected = make_text_response("Ответ после retry")
+        rate_limit_error = RuntimeError("HTTP 429 Too Many Requests")
+
+        call_count = 0
+
+        def mock_chat(chat):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise rate_limit_error
+            return expected
+
+        with patch.object(service._client, "chat", side_effect=mock_chat):
+            with patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"):
+                result = await service._call_gigachat(
+                    history=[],
+                    functions=[],
+                )
+
+        assert result is expected
+        assert call_count == 2
+
+    async def test_raises_after_max_retries(self, service):
+        """Бросает исключение после исчерпания retry."""
+        rate_limit_error = RuntimeError("HTTP 429 Too Many Requests")
+
+        with patch.object(
+            service._client,
+            "chat",
+            side_effect=rate_limit_error,
+        ):
+            with patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"):
+                with pytest.raises(RuntimeError, match="429"):
+                    await service._call_gigachat(
+                        history=[],
+                        functions=[],
+                    )
+
+    async def test_non_rate_limit_error_not_retried(self, service):
+        """Обычная ошибка (не rate limit) не повторяется."""
+        error = RuntimeError("Connection refused")
+
+        call_count = 0
+
+        def mock_chat(chat):
+            nonlocal call_count
+            call_count += 1
+            raise error
+
+        with patch.object(service._client, "chat", side_effect=mock_chat):
+            with pytest.raises(RuntimeError, match="Connection refused"):
+                await service._call_gigachat(
+                    history=[],
+                    functions=[],
+                )
+
+        # Только 1 вызов — retry не было
+        assert call_count == 1
+
+    async def test_exponential_backoff_delays(self, service):
+        """Retry использует exponential backoff (1s, 2s)."""
+        rate_limit_error = RuntimeError("429")
+        sleep_calls = []
+
+        async def mock_sleep(delay):
+            sleep_calls.append(delay)
+
+        call_count = 0
+
+        def mock_chat(chat):
+            nonlocal call_count
+            call_count += 1
+            if call_count < GIGACHAT_MAX_RETRIES:
+                raise rate_limit_error
+            return make_text_response("OK")
+
+        with patch.object(service._client, "chat", side_effect=mock_chat):
+            with patch(
+                "vkuswill_bot.services.gigachat_service.asyncio.sleep",
+                side_effect=mock_sleep,
+            ):
+                await service._call_gigachat(
+                    history=[],
+                    functions=[],
+                )
+
+        # delay = 2 ** attempt: attempt=0 → 1, attempt=1 → 2
+        assert sleep_calls == [1, 2]
+
+    async def test_semaphore_limits_concurrency(self, mock_mcp_client):
+        """Семафор ограничивает параллельные вызовы."""
+        svc = GigaChatService(
+            credentials="test-creds",
+            model="GigaChat",
+            scope="GIGACHAT_API_PERS",
+            mcp_client=mock_mcp_client,
+            gigachat_max_concurrent=2,  # лимит 2
+        )
+
+        # Проверяем, что семафор создан с правильным лимитом
+        assert svc._api_semaphore._value == 2
+
+    async def test_default_max_concurrent(self, mock_mcp_client):
+        """По умолчанию gigachat_max_concurrent = DEFAULT_GIGACHAT_MAX_CONCURRENT."""
+        svc = GigaChatService(
+            credentials="test-creds",
+            model="GigaChat",
+            scope="GIGACHAT_API_PERS",
+            mcp_client=mock_mcp_client,
+        )
+        assert svc._api_semaphore._value == DEFAULT_GIGACHAT_MAX_CONCURRENT
+
+
+# ============================================================================
+# Константы модуля
+# ============================================================================
+
+
+class TestModuleConstants:
+    """Тесты констант модуля gigachat_service."""
+
+    def test_max_retries_value(self):
+        """GIGACHAT_MAX_RETRIES имеет разумное значение."""
+        assert 1 <= GIGACHAT_MAX_RETRIES <= 10
+
+    def test_max_conversations_value(self):
+        """MAX_CONVERSATIONS имеет значение 1000."""
+        assert MAX_CONVERSATIONS == 1000
+
+    def test_max_user_message_length_value(self):
+        """MAX_USER_MESSAGE_LENGTH = 4096."""
+        assert MAX_USER_MESSAGE_LENGTH == 4096
+
+    def test_default_gigachat_max_concurrent(self):
+        """DEFAULT_GIGACHAT_MAX_CONCURRENT = 15."""
+        assert DEFAULT_GIGACHAT_MAX_CONCURRENT == 15

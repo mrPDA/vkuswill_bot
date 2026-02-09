@@ -35,7 +35,7 @@ class SearchProcessor:
     _STANDALONE_NUM = re.compile(r"\b\d+\b")
 
     def __init__(self, price_cache: PriceCache | None = None) -> None:
-        self.price_cache: PriceCache = price_cache or PriceCache()
+        self.price_cache: PriceCache = price_cache if price_cache is not None else PriceCache()
 
     @classmethod
     def clean_search_query(cls, query: str) -> str:
