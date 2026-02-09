@@ -58,6 +58,14 @@ class PriceCache:
         """Получить информацию о цене товара (или None)."""
         return self._data.get(xml_id)
 
+    def __bool__(self) -> bool:
+        """PriceCache всегда truthy — даже пустой кэш является валидным объектом.
+
+        Без этого метода Python использует __len__ для bool(),
+        и пустой кэш оценивается как False, ломая паттерн ``cache or default``.
+        """
+        return True
+
     def __len__(self) -> int:
         return len(self._data)
 

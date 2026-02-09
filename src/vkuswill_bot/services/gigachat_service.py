@@ -34,6 +34,12 @@ MAX_USER_MESSAGE_LENGTH = 4096
 # Лимит длины результата инструмента для логирования
 MAX_RESULT_LOG_LENGTH = 1000
 
+# Макс. параллельных запросов к GigaChat API (семафор)
+DEFAULT_GIGACHAT_MAX_CONCURRENT = 15
+
+# Макс. количество retry при 429 от GigaChat
+GIGACHAT_MAX_RETRIES = 3
+
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat и MCP-инструментами.
@@ -60,6 +66,7 @@ class GigaChatService:
         dialog_manager: DialogManager | None = None,
         tool_executor: "ToolExecutor | None" = None,
         recipe_service: "RecipeService | None" = None,
+        gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
     ) -> None:
         # TODO: verify_ssl_certs=True + ca_bundle_file когда SDK поддержит CA Минцифры
         self._client = GigaChat(
@@ -71,6 +78,9 @@ class GigaChatService:
         self._recipe_store = recipe_store
         self._max_tool_calls = max_tool_calls
         self._max_history = max_history
+
+        # Семафор для ограничения параллельных запросов к GigaChat API
+        self._api_semaphore = asyncio.Semaphore(gigachat_max_concurrent)
 
         self._dialog_manager = dialog_manager or DialogManager(
             max_conversations=MAX_CONVERSATIONS, max_history=max_history,
@@ -196,6 +206,61 @@ class GigaChatService:
         async with self._dialog_manager.get_lock(user_id):
             return await self._process_message_locked(user_id, text)
 
+    async def _call_gigachat(
+        self,
+        history: list[Messages],
+        functions: list[dict],
+    ) -> object:
+        """Вызвать GigaChat API с семафором и retry при 429.
+
+        Ограничивает параллельные запросы через asyncio.Semaphore.
+        При получении rate limit (429) — retry с exponential backoff.
+
+        Returns:
+            Ответ GigaChat (response объект).
+
+        Raises:
+            Exception: Если все retry исчерпаны или ошибка не связана с rate limit.
+        """
+        for attempt in range(GIGACHAT_MAX_RETRIES):
+            try:
+                async with self._api_semaphore:
+                    return await asyncio.to_thread(
+                        self._client.chat,
+                        Chat(
+                            messages=history,
+                            functions=functions,
+                            function_call="auto",
+                        ),
+                    )
+            except Exception as e:
+                if attempt < GIGACHAT_MAX_RETRIES - 1 and self._is_rate_limit_error(e):
+                    delay = 2 ** attempt  # 1s, 2s
+                    logger.warning(
+                        "GigaChat rate limit, retry %d/%d через %ds: %s",
+                        attempt + 1,
+                        GIGACHAT_MAX_RETRIES,
+                        delay,
+                        e,
+                    )
+                    await asyncio.sleep(delay)
+                    continue
+                raise
+
+        # Unreachable, но для безопасности типов
+        msg = "Все retry исчерпаны"
+        raise RuntimeError(msg)  # pragma: no cover
+
+    @staticmethod
+    def _is_rate_limit_error(exc: Exception) -> bool:
+        """Определить, является ли ошибка rate limit (429).
+
+        Проверяет строковое представление исключения.
+        TODO: заменить на проверку типа/кода при изучении иерархии GigaChat SDK.
+        """
+        exc_str = str(exc).lower()
+        return "429" in exc_str or "rate" in exc_str or "too many" in exc_str
+
     async def _process_message_locked(self, user_id: int, text: str) -> str:
         """Цикл function calling (под per-user lock)."""
         history = self._get_history(user_id)
@@ -215,10 +280,7 @@ class GigaChatService:
             logger.info("Шаг %d для user %d (вызовов: %d)", total_steps, user_id, real_calls)
 
             try:
-                response = await asyncio.to_thread(
-                    self._client.chat,
-                    Chat(messages=history, functions=functions, function_call="auto"),
-                )
+                response = await self._call_gigachat(history, functions)
             except Exception as e:
                 logger.error("Ошибка GigaChat: %s", e, exc_info=True)
                 return ERROR_GIGACHAT

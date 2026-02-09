@@ -116,6 +116,57 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.gigachat_scope, "gigachat_scope не должен быть пустым"
 
+    def test_storage_backend_default_memory(self):
+        """storage_backend по умолчанию — 'memory'."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.storage_backend == "memory"
+
+    def test_redis_url_default_empty(self):
+        """redis_url по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.redis_url == ""
+
+    def test_database_url_default_empty(self):
+        """database_url по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.database_url == ""
+
+    def test_webhook_disabled_by_default(self):
+        """Webhook отключён по умолчанию."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.use_webhook is False
+
+    def test_webhook_port_default(self):
+        """Порт webhook по умолчанию — 8080."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_port == 8080
+
+    def test_webhook_host_default_empty(self):
+        """webhook_host по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_host == ""
+
+    def test_gigachat_max_concurrent_default(self):
+        """gigachat_max_concurrent по умолчанию — 15."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.gigachat_max_concurrent == 15
+
+    def test_gigachat_max_concurrent_reasonable(self):
+        """gigachat_max_concurrent в разумных пределах [1, 100]."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 1 <= cfg.gigachat_max_concurrent <= 100, (
+            f"gigachat_max_concurrent={cfg.gigachat_max_concurrent} — "
+            f"должен быть в [1, 100]"
+        )
+
 
 # ============================================================================
 # Защита секретов
@@ -164,6 +215,41 @@ class TestSecretProtection:
         assert cfg.bot_token == "custom-token-123"
         assert cfg.gigachat_credentials == "custom-creds-456"
         assert cfg.mcp_server_url == "https://custom-mcp.example.com/mcp"
+
+    def test_storage_backend_customizable(self):
+        """storage_backend настраивается через переменную окружения."""
+        custom_env = {**MINIMAL_ENV, "STORAGE_BACKEND": "redis"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.storage_backend == "redis"
+
+    def test_redis_url_customizable(self):
+        """redis_url настраивается через переменную окружения."""
+        custom_env = {**MINIMAL_ENV, "REDIS_URL": "redis://localhost:6379/0"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.redis_url == "redis://localhost:6379/0"
+
+    def test_webhook_settings_customizable(self):
+        """Webhook-настройки настраиваются через переменные окружения."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "USE_WEBHOOK": "true",
+            "WEBHOOK_HOST": "https://bot.example.com",
+            "WEBHOOK_PORT": "443",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.use_webhook is True
+        assert cfg.webhook_host == "https://bot.example.com"
+        assert cfg.webhook_port == 443
+
+    def test_gigachat_max_concurrent_customizable(self):
+        """gigachat_max_concurrent настраивается через env."""
+        custom_env = {**MINIMAL_ENV, "GIGACHAT_MAX_CONCURRENT": "30"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.gigachat_max_concurrent == 30
 
 
 # ============================================================================

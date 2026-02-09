@@ -95,6 +95,7 @@ async def main() -> None:
         max_history=config.max_history_messages,
         dialog_manager=dialog_manager,
         tool_executor=tool_executor,
+        gigachat_max_concurrent=config.gigachat_max_concurrent,
     )
 
     # Предзагрузка MCP-инструментов

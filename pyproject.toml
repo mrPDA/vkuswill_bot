@@ -9,6 +9,8 @@ dependencies = [
     "gigachat>=0.1.36",
     "mcp>=1.9",
     "pydantic-settings>=2.0",
+    "redis[hiredis]>=5.0",
+    "asyncpg>=0.29",
 ]
 
 [project.optional-dependencies]
