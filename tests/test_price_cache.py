@@ -132,6 +132,87 @@ class TestPriceCache:
         assert cache._max_size == 10
 
 
+class TestPriceCacheBool:
+    """Тесты: пустой PriceCache должен быть truthy (иначе ломается DI)."""
+
+    def test_empty_cache_is_truthy(self):
+        """Пустой PriceCache должен быть truthy.
+
+        Без __bool__ Python использует __len__ для bool(),
+        и пустой кэш оценивается как False, ломая паттерн
+        ``cache or PriceCache()`` в SearchProcessor.__init__.
+
+        Баг: SearchProcessor и CartProcessor работали с разными PriceCache,
+        потому что ``price_cache or PriceCache()`` создавал новый объект.
+        """
+        cache = PriceCache()
+        assert bool(cache) is True
+
+    def test_non_empty_cache_is_truthy(self):
+        cache = PriceCache()
+        cache.set(1, "item", 10.0)
+        assert bool(cache) is True
+
+    def test_or_pattern_preserves_empty_cache(self):
+        """``price_cache or PriceCache()`` должен вернуть переданный кэш."""
+        original = PriceCache()
+        result = original or PriceCache()
+        assert result is original
+
+    def test_di_shared_cache_e2e(self):
+        """E2E: SearchProcessor и CartProcessor должны разделять один PriceCache.
+
+        Воспроизводит production-баг: бот перестал считать цену корзины
+        после рефакторинга, потому что SearchProcessor создавал свой PriceCache
+        вместо использования общего (пустой PriceCache был falsy).
+        """
+        import json
+        from vkuswill_bot.services.cart_processor import CartProcessor
+        from vkuswill_bot.services.search_processor import SearchProcessor
+
+        # Как в __main__.py
+        shared_cache = PriceCache()
+        sp = SearchProcessor(shared_cache)
+        cp = CartProcessor(shared_cache)
+
+        # Проверяем: один и тот же объект
+        assert sp.price_cache is cp._price_cache
+
+        # Имитируем поиск → кэшируем цены
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "meta": {"q": "молоко", "total": 1},
+                "items": [
+                    {
+                        "xml_id": 100,
+                        "name": "Молоко 3.2%",
+                        "price": {"current": 79},
+                        "unit": "шт",
+                    }
+                ],
+            },
+        })
+        sp.cache_prices(search_result)
+        assert len(shared_cache) == 1
+        assert shared_cache.get(100) is not None
+        assert shared_cache.get(100).price == 79
+
+        # Имитируем корзину → рассчитываем стоимость
+        cart_args = {"products": [{"xml_id": 100, "q": 2}]}
+        cart_result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/cart/123"},
+        })
+        result = cp.calc_total(cart_args, cart_result)
+        data = json.loads(result)
+
+        summary = data["data"]["price_summary"]
+        assert summary["total"] == 158.0
+        assert "Молоко 3.2%" in summary["items"][0]
+        assert "цена неизвестна" not in summary["items"][0]
+
+
 class TestPriceCacheEviction:
     """Тесты FIFO-вытеснения."""
 
