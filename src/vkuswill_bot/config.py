@@ -18,6 +18,7 @@ class Config(BaseSettings):
     gigachat_credentials: str
     gigachat_model: str = "GigaChat"
     gigachat_scope: str = "GIGACHAT_API_PERS"
+    gigachat_max_concurrent: int = 15  # макс. параллельных запросов к GigaChat
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
@@ -26,9 +27,23 @@ class Config(BaseSettings):
     max_tool_calls: int = 20
     max_history_messages: int = 50
 
-    # Хранилище
+    # Хранилище (SQLite — legacy)
     database_path: str = "data/preferences.db"
     recipe_database_path: str = "data/recipes.db"
+
+    # Бэкенд хранилища: "redis" | "memory"
+    storage_backend: str = "memory"
+
+    # Redis
+    redis_url: str = ""
+
+    # PostgreSQL
+    database_url: str = ""
+
+    # Webhook
+    use_webhook: bool = False
+    webhook_host: str = ""
+    webhook_port: int = 8080
 
     # Отладка
     debug: bool = False
