@@ -3,9 +3,10 @@
 Тестируем:
 - Создание и получение истории диалога
 - LRU-вытеснение при переполнении
-- Обрезку истории (trim)
-- Сброс диалога (reset)
+- Обрезку истории (trim / trim_list)
+- Сброс диалога (reset / areset)
 - Per-user lock
+- Async API (aget_history, save_history, trim_list, areset)
 """
 
 import asyncio
@@ -263,3 +264,200 @@ class TestConversationsProperty:
         manager.get_history(1)
         assert 1 in manager.conversations
         assert isinstance(manager.conversations, dict)
+
+
+# ============================================================================
+# Async API: aget_history
+# ============================================================================
+
+
+class TestAgetHistory:
+    """Тесты aget_history: async-обёртка get_history."""
+
+    async def test_creates_new_with_system_prompt(self, manager):
+        """Async: создаёт историю с системным промптом."""
+        history = await manager.aget_history(user_id=1)
+
+        assert len(history) == 1
+        assert history[0].role == MessagesRole.SYSTEM
+        assert history[0].content == SYSTEM_PROMPT
+
+    async def test_reuses_existing(self, manager):
+        """Async: повторный вызов возвращает ту же историю."""
+        h1 = await manager.aget_history(user_id=1)
+        h2 = await manager.aget_history(user_id=1)
+        assert h1 is h2
+
+    async def test_consistent_with_sync(self, manager):
+        """aget_history и get_history возвращают один и тот же объект."""
+        h_sync = manager.get_history(user_id=1)
+        h_async = await manager.aget_history(user_id=1)
+        assert h_sync is h_async
+
+
+# ============================================================================
+# Async API: save_history
+# ============================================================================
+
+
+class TestSaveHistory:
+    """Тесты save_history: сохранение (обновление) истории."""
+
+    async def test_saves_new_history(self, manager):
+        """save_history обновляет ссылку в conversations."""
+        original = await manager.aget_history(user_id=1)
+        original.append(Messages(role=MessagesRole.USER, content="тест"))
+
+        new_list = list(original)  # новый объект
+        await manager.save_history(user_id=1, history=new_list)
+
+        assert manager.conversations[1] is new_list
+
+    async def test_save_after_trim(self, manager):
+        """save_history после trim_list обновляет историю корректно."""
+        history = await manager.aget_history(user_id=1)
+        for i in range(15):
+            history.append(
+                Messages(role=MessagesRole.USER, content=f"msg-{i}")
+            )
+
+        trimmed = manager.trim_list(history)
+        await manager.save_history(user_id=1, history=trimmed)
+
+        saved = manager.conversations[1]
+        assert len(saved) == 10  # max_history
+        assert saved[0].role == MessagesRole.SYSTEM
+
+    async def test_save_for_new_user(self, manager):
+        """save_history для нового пользователя создаёт запись."""
+        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        await manager.save_history(user_id=99, history=history)
+
+        assert 99 in manager.conversations
+        assert manager.conversations[99] is history
+
+
+# ============================================================================
+# Async API: trim_list (чистая функция)
+# ============================================================================
+
+
+class TestTrimList:
+    """Тесты trim_list: обрезка истории как чистая функция."""
+
+    def test_trims_long_history(self, manager):
+        """Длинная история обрезается до max_history."""
+        history = [
+            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
+        ]
+        for i in range(15):
+            history.append(
+                Messages(role=MessagesRole.USER, content=f"msg-{i}")
+            )
+
+        result = manager.trim_list(history)
+
+        assert len(result) == 10  # max_history
+        assert result[0].role == MessagesRole.SYSTEM
+        assert result[-1].content == "msg-14"
+
+    def test_noop_when_short(self, manager):
+        """Короткая история возвращается без изменений."""
+        history = [
+            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.USER, content="привет"),
+        ]
+
+        result = manager.trim_list(history)
+        assert result is history  # тот же объект
+
+    def test_returns_new_list_when_trimmed(self, manager):
+        """При обрезке возвращается НОВЫЙ список (не мутирует оригинал)."""
+        history = [
+            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
+        ]
+        for i in range(15):
+            history.append(
+                Messages(role=MessagesRole.USER, content=f"msg-{i}")
+            )
+
+        original_len = len(history)
+        result = manager.trim_list(history)
+
+        assert result is not history  # новый объект
+        assert len(history) == original_len  # оригинал не мутирован
+
+    def test_preserves_system_prompt(self, manager):
+        """Системный промпт всегда первый после обрезки."""
+        history = [
+            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
+        ]
+        for i in range(20):
+            history.append(
+                Messages(role=MessagesRole.USER, content=f"msg-{i}")
+            )
+
+        result = manager.trim_list(history)
+        assert result[0].role == MessagesRole.SYSTEM
+        assert result[0].content == SYSTEM_PROMPT
+
+    def test_exact_max_history_noop(self, manager):
+        """Ровно max_history элементов — не обрезается."""
+        history = [
+            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
+        ]
+        for i in range(9):  # 1 + 9 = 10 = max_history
+            history.append(
+                Messages(role=MessagesRole.USER, content=f"msg-{i}")
+            )
+
+        result = manager.trim_list(history)
+        assert result is history
+        assert len(result) == 10
+
+
+# ============================================================================
+# Async API: areset
+# ============================================================================
+
+
+class TestAreset:
+    """Тесты areset: async-сброс диалога."""
+
+    async def test_removes_history(self, manager):
+        """areset удаляет историю пользователя."""
+        manager.get_history(user_id=42)
+        assert 42 in manager.conversations
+
+        await manager.areset(user_id=42)
+        assert 42 not in manager.conversations
+
+    async def test_removes_lock(self, manager):
+        """areset удаляет lock пользователя."""
+        manager.get_lock(42)
+        assert 42 in manager._locks
+
+        await manager.areset(user_id=42)
+        assert 42 not in manager._locks
+
+    async def test_nonexistent_user(self, manager):
+        """areset несуществующего пользователя не падает."""
+        await manager.areset(user_id=999)  # не должно бросить
+
+    async def test_consistent_with_sync_reset(self, manager):
+        """areset и reset дают одинаковый результат."""
+        # Подготовка: два пользователя
+        manager.get_history(user_id=1)
+        manager.get_history(user_id=2)
+        manager.get_lock(1)
+        manager.get_lock(2)
+
+        # Sync reset
+        manager.reset(user_id=1)
+        # Async reset
+        await manager.areset(user_id=2)
+
+        assert 1 not in manager.conversations
+        assert 2 not in manager.conversations
+        assert 1 not in manager._locks
+        assert 2 not in manager._locks
