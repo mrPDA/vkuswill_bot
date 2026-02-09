@@ -120,7 +120,7 @@ class TestCommands:
         """Команда /reset вызывает reset_conversation."""
         msg = make_message(user_id=42)
         mock_service = MagicMock()
-        mock_service.reset_conversation = MagicMock()
+        mock_service.reset_conversation = AsyncMock()
 
         await cmd_reset(msg, gigachat_service=mock_service)
 

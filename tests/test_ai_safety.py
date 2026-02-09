@@ -382,7 +382,7 @@ class TestToolAbuse:
             # Бот не крашнулся
             assert isinstance(result, str)
             # Сбрасываем историю для следующего payload
-            service.reset_conversation(1)
+            await service.reset_conversation(1)
 
 
 # ============================================================================
@@ -435,7 +435,7 @@ class TestDataExfiltration:
         assert len(h2) == 1  # только системный промпт
         assert all("Секрет" not in m.content for m in h2)
 
-    def test_reset_clears_all_user_data(self, service):
+    async def test_reset_clears_all_user_data(self, service):
         """Сброс полностью удаляет данные пользователя."""
         history = service._get_history(user_id=42)
         history.append(
@@ -445,7 +445,7 @@ class TestDataExfiltration:
             Messages(role=MessagesRole.ASSISTANT, content="Ответ с данными")
         )
 
-        service.reset_conversation(user_id=42)
+        await service.reset_conversation(user_id=42)
 
         assert 42 not in service._conversations
         # Новая история — чистая
