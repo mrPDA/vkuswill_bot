@@ -74,6 +74,14 @@ class TestSystemPromptContent:
         """Промпт описывает алгоритм работы с рецептами."""
         assert "рецепт" in SYSTEM_PROMPT.lower() or "РЕЦЕПТ" in SYSTEM_PROMPT
 
+    def test_forbids_adding_extra_items_for_recipes(self):
+        """Промпт запрещает добавлять от себя соль/перец/воду к рецептам."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не добавляй от себя" in lower or "не добавляй" in lower
+        assert "соль" in lower
+        assert "перец" in lower
+        assert "вод" in lower
+
     def test_defines_quantity_calculation(self):
         """Промпт содержит инструкции по расчёту количества."""
         assert "Расчёт количества" in SYSTEM_PROMPT or "q=" in SYSTEM_PROMPT
@@ -118,11 +126,17 @@ class TestRecipeExtractionPrompt:
         assert "шт" in RECIPE_EXTRACTION_PROMPT
 
     def test_excludes_common_items(self):
-        """Промпт исключает соль, перец, воду."""
+        """Промпт исключает соль, молотый перец, воду."""
         lower = RECIPE_EXTRACTION_PROMPT.lower()
         assert "соль" in lower
         assert "перец" in lower
         assert "вод" in lower
+
+    def test_distinguishes_pepper_spice_from_vegetable(self):
+        """Промпт различает перец-приправу и перец-овощ (болгарский)."""
+        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        assert "молотый" in lower
+        assert "болгарский" in lower or "чили" in lower
 
     def test_no_secrets(self):
         """В промпте рецептов нет секретов."""

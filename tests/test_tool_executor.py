@@ -204,42 +204,42 @@ class TestBuildAssistantMessage:
 class TestPreprocessArgs:
     """Тесты preprocess_args: предобработка аргументов."""
 
-    def test_cart_fix_applied(self, executor, search_processor):
+    async def test_cart_fix_applied(self, executor, search_processor):
         search_processor.price_cache[100] = {
             "name": "Молоко", "price": 79, "unit": "шт",
         }
         args = {"products": [{"xml_id": 100, "q": 0.5}]}
-        result = executor.preprocess_args(
+        result = await executor.preprocess_args(
             "vkusvill_cart_link_create", args, {},
         )
         assert result["products"][0]["q"] == 1
 
-    def test_search_with_preferences(self, executor):
+    async def test_search_with_preferences(self, executor):
         prefs = {"молоко": "козье 3,2%"}
         args = {"q": "молоко"}
-        result = executor.preprocess_args(
+        result = await executor.preprocess_args(
             "vkusvill_products_search", args, prefs,
         )
         assert result["q"] == "молоко козье 3,2%"
 
-    def test_search_without_preferences(self, executor):
+    async def test_search_without_preferences(self, executor):
         args = {"q": "творог"}
-        result = executor.preprocess_args(
+        result = await executor.preprocess_args(
             "vkusvill_products_search", args, {},
         )
         assert result["q"] == "творог"
 
-    def test_other_tool_passthrough(self, executor):
+    async def test_other_tool_passthrough(self, executor):
         args = {"xml_id": 123}
-        result = executor.preprocess_args(
+        result = await executor.preprocess_args(
             "vkusvill_product_details", args, {},
         )
         assert result == args
 
-    def test_search_preference_not_applied_if_no_match(self, executor):
+    async def test_search_preference_not_applied_if_no_match(self, executor):
         prefs = {"хлеб": "бородинский"}
         args = {"q": "молоко"}
-        result = executor.preprocess_args(
+        result = await executor.preprocess_args(
             "vkusvill_products_search", args, prefs,
         )
         assert result["q"] == "молоко"
@@ -376,7 +376,7 @@ class TestExecute:
 class TestPostprocessResult:
     """Тесты postprocess_result: постобработка результата."""
 
-    def test_preferences_get_parsed(self, executor):
+    async def test_preferences_get_parsed(self, executor):
         prefs_result = json.dumps({
             "ok": True,
             "preferences": [
@@ -386,7 +386,7 @@ class TestPostprocessResult:
         user_prefs: dict[str, str] = {}
         search_log: dict[str, set[int]] = {}
 
-        result = executor.postprocess_result(
+        result = await executor.postprocess_result(
             "user_preferences_get", {}, prefs_result,
             user_prefs, search_log,
         )
@@ -394,7 +394,7 @@ class TestPostprocessResult:
         assert user_prefs == {"молоко": "козье"}
         assert result == prefs_result
 
-    def test_search_caches_and_trims(self, executor):
+    async def test_search_caches_and_trims(self, executor):
         search_result = json.dumps({
             "ok": True,
             "data": {
@@ -413,7 +413,7 @@ class TestPostprocessResult:
         user_prefs: dict[str, str] = {}
         search_log: dict[str, set[int]] = {}
 
-        result = executor.postprocess_result(
+        result = await executor.postprocess_result(
             "vkusvill_products_search",
             {"q": "молоко"},
             search_result,
@@ -427,7 +427,7 @@ class TestPostprocessResult:
         assert "молоко" in search_log
         assert 100 in search_log["молоко"]
 
-    def test_cart_calculates_total(self, executor, search_processor):
+    async def test_cart_calculates_total(self, executor, search_processor):
         search_processor.price_cache[100] = {
             "name": "Молоко", "price": 79, "unit": "шт",
         }
@@ -437,7 +437,7 @@ class TestPostprocessResult:
         })
         args = {"products": [{"xml_id": 100, "q": 2}]}
 
-        result = executor.postprocess_result(
+        result = await executor.postprocess_result(
             "vkusvill_cart_link_create", args, cart_result, {}, {},
         )
 
@@ -445,11 +445,66 @@ class TestPostprocessResult:
         assert "price_summary" in parsed["data"]
         assert parsed["data"]["price_summary"]["total"] == 158.0
 
-    def test_unknown_tool_passthrough(self, executor):
-        result = executor.postprocess_result(
+    async def test_unknown_tool_passthrough(self, executor):
+        result = await executor.postprocess_result(
             "unknown_tool", {}, '{"some": "data"}', {}, {},
         )
         assert result == '{"some": "data"}'
+
+    async def test_cart_with_verification(self, executor, search_processor):
+        """vkusvill_cart_link_create добавляет verification если есть search_log."""
+        search_processor.price_cache[100] = {
+            "name": "Молоко", "price": 79, "unit": "шт",
+        }
+        cart_result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+        args = {"products": [{"xml_id": 100, "q": 2}]}
+        search_log = {"молоко": {100}}
+
+        result = await executor.postprocess_result(
+            "vkusvill_cart_link_create", args, cart_result, {}, search_log,
+        )
+
+        parsed = json.loads(result)
+        assert "verification" in parsed["data"]
+        assert parsed["data"]["verification"]["ok"] is True
+
+    async def test_search_empty_query_not_logged(self, executor):
+        """Пустой запрос не попадает в search_log."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {"xml_id": 100, "name": "Товар", "price": {"current": 50}, "unit": "шт"},
+                ]
+            },
+        })
+        search_log: dict[str, set[int]] = {}
+
+        await executor.postprocess_result(
+            "vkusvill_products_search", {"q": ""}, search_result, {}, search_log,
+        )
+
+        assert "" not in search_log
+
+    async def test_preferences_replaces_existing(self, executor):
+        """Повторная загрузка предпочтений заменяет старые."""
+        user_prefs = {"старое": "значение"}
+        prefs_result = json.dumps({
+            "ok": True,
+            "preferences": [
+                {"category": "новое", "preference": "значение"},
+            ],
+        })
+
+        await executor.postprocess_result(
+            "user_preferences_get", {}, prefs_result, user_prefs, {},
+        )
+
+        assert "старое" not in user_prefs
+        assert user_prefs == {"новое": "значение"}
 
 
 # ============================================================================
@@ -518,6 +573,26 @@ class TestCallLocalTool:
         assert parsed["ok"] is False
         assert "не настроен" in parsed["error"]
 
+    async def test_set_missing_preference(self, executor_with_prefs):
+        """set без предпочтения возвращает ошибку."""
+        result = await executor_with_prefs._call_local_tool(
+            "user_preferences_set",
+            {"category": "мороженое"},
+            user_id=42,
+        )
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+
+    async def test_delete_missing_category(self, executor_with_prefs):
+        """delete без категории возвращает ошибку."""
+        result = await executor_with_prefs._call_local_tool(
+            "user_preferences_delete",
+            {},
+            user_id=42,
+        )
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+
 
 # ============================================================================
 # _parse_preferences
@@ -559,6 +634,42 @@ class TestParsePreferences:
         })
         assert ToolExecutor._parse_preferences(result) == {"молоко": "козье"}
 
+    def test_preferences_is_dict(self):
+        """preferences — словарь вместо списка → пустой словарь."""
+        result = json.dumps({"ok": True, "preferences": {"key": "value"}})
+        assert ToolExecutor._parse_preferences(result) == {}
+
+    def test_preferences_is_none(self):
+        """preferences=None → пустой словарь."""
+        result = json.dumps({"ok": True, "preferences": None})
+        assert ToolExecutor._parse_preferences(result) == {}
+
+    def test_missing_fields(self):
+        """Пропущенные поля category/preference пропускаются."""
+        result = json.dumps({
+            "ok": True,
+            "preferences": [
+                {"category": "хлеб"},
+                {"preference": "чёрный"},
+                {"category": "", "preference": "ржаной"},
+                {"category": "сыр", "preference": ""},
+                {"category": "молоко", "preference": "козье"},
+            ],
+        })
+        prefs = ToolExecutor._parse_preferences(result)
+        assert prefs == {"молоко": "козье"}
+
+    def test_case_normalization(self):
+        """Категория приводится к lower case."""
+        result = json.dumps({
+            "ok": True,
+            "preferences": [
+                {"category": "Мороженое", "preference": "пломбир"},
+            ],
+        })
+        prefs = ToolExecutor._parse_preferences(result)
+        assert "мороженое" in prefs
+
 
 # ============================================================================
 # _apply_preferences_to_query
@@ -573,6 +684,7 @@ class TestApplyPreferencesToQuery:
         return {
             "вареники": "с картофелем и шкварками",
             "молоко": "Молоко безлактозное 2,5%, 900 мл",
+            "эскимо": "пломбир ванильный в молочном шоколаде, 70 г",
         }
 
     def test_exact_match(self, prefs):
@@ -594,6 +706,33 @@ class TestApplyPreferencesToQuery:
     def test_empty_query(self, prefs):
         result = ToolExecutor._apply_preferences_to_query("", prefs)
         assert result == ""
+
+    def test_exact_match_case_insensitive(self, prefs):
+        """Регистронезависимое совпадение."""
+        result = ToolExecutor._apply_preferences_to_query("Вареники", prefs)
+        assert result == "Вареники с картофелем и шкварками"
+
+    def test_partial_match(self, prefs):
+        """Запрос содержится в категории: 'эскимо' → подстановка."""
+        result = ToolExecutor._apply_preferences_to_query("эскимо", prefs)
+        assert "пломбир ванильный" in result
+
+    def test_specific_query_not_overridden(self, prefs):
+        """Уточнённый запрос НЕ заменяется предпочтением."""
+        result = ToolExecutor._apply_preferences_to_query("молоко козье", prefs)
+        assert result == "молоко козье"
+
+    def test_real_case_ice_cream(self):
+        """Реальный кейс: 'мороженое' при предпочтении category='мороженое'."""
+        prefs = {"мороженое": "пломбир ванильный в молочном шоколаде"}
+        result = ToolExecutor._apply_preferences_to_query("мороженое", prefs)
+        assert result == "мороженое пломбир ванильный в молочном шоколаде"
+
+    def test_real_case_milk(self):
+        """Реальный кейс: 'молоко' при предпочтении с полным названием."""
+        prefs = {"молоко": "Молоко безлактозное 2,5%, 900 мл"}
+        result = ToolExecutor._apply_preferences_to_query("молоко", prefs)
+        assert result == "Молоко безлактозное 2,5%, 900 мл"
 
 
 # ============================================================================
@@ -630,37 +769,254 @@ class TestPreprocessArgsSearchCleaning:
         sp = MagicMock()
         sp.clean_search_query = MagicMock(side_effect=lambda q: q.split()[0] if " " in q else q)
         cp = MagicMock()
+        cp.fix_unit_quantities = AsyncMock(side_effect=lambda x: x)
         return ToolExecutor(mcp_client=mcp, search_processor=sp, cart_processor=cp)
 
-    def test_search_query_cleaned(self, executor):
+    async def test_search_query_cleaned(self, executor):
         """Поисковый запрос очищается через SearchProcessor."""
-        args = executor.preprocess_args(
+        args = await executor.preprocess_args(
             "vkusvill_products_search", {"q": "Творог 5%"}, {},
         )
         executor._search_processor.clean_search_query.assert_called_once_with("Творог 5%")
         assert args["q"] == "Творог"
 
-    def test_search_limit_added(self, executor):
+    async def test_search_limit_added(self, executor):
         """limit автоматически добавляется к поиску."""
-        args = executor.preprocess_args(
+        args = await executor.preprocess_args(
             "vkusvill_products_search", {"q": "молоко"}, {},
         )
         assert "limit" in args
         assert args["limit"] == 5
 
-    def test_search_limit_not_overwritten(self, executor):
+    async def test_search_limit_not_overwritten(self, executor):
         """Если limit уже есть — не перезаписывается."""
-        args = executor.preprocess_args(
+        args = await executor.preprocess_args(
             "vkusvill_products_search", {"q": "молоко", "limit": 20}, {},
         )
         assert args["limit"] == 20
 
-    def test_cart_fix_cart_args_called(self, executor):
+    async def test_cart_fix_cart_args_called(self, executor):
         """fix_cart_args вызывается для корзины."""
         executor._cart_processor.fix_cart_args = MagicMock(side_effect=lambda x: x)
-        executor._cart_processor.fix_unit_quantities = MagicMock(side_effect=lambda x: x)
-        executor.preprocess_args(
+        executor._cart_processor.fix_unit_quantities = AsyncMock(side_effect=lambda x: x)
+        await executor.preprocess_args(
             "vkusvill_cart_link_create", {"products": [{"xml_id": 1}]}, {},
         )
         executor._cart_processor.fix_cart_args.assert_called_once()
         executor._cart_processor.fix_unit_quantities.assert_called_once()
+
+
+# ============================================================================
+# postprocess_result с cart_snapshot_store
+# ============================================================================
+
+
+class TestPostprocessResultWithSnapshot:
+    """Тесты postprocess_result: сохранение снимка корзины через CartSnapshotStore."""
+
+    @pytest.fixture
+    def mock_snapshot_store(self) -> AsyncMock:
+        """Замоканный CartSnapshotStore."""
+        store = AsyncMock()
+        store.save = AsyncMock()
+        return store
+
+    @pytest.fixture
+    def executor_with_snapshot(
+        self, mock_mcp_client, search_processor, cart_processor, mock_snapshot_store,
+    ) -> ToolExecutor:
+        """ToolExecutor с CartSnapshotStore."""
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            cart_snapshot_store=mock_snapshot_store,
+        )
+
+    async def test_cart_saves_snapshot(self, executor_with_snapshot, mock_snapshot_store, search_processor):
+        """При создании корзины снимок сохраняется, если есть user_id и store."""
+        search_processor.price_cache[100] = {
+            "name": "Молоко", "price": 79, "unit": "шт",
+        }
+        cart_result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+        args = {"products": [{"xml_id": 100, "q": 2}]}
+
+        await executor_with_snapshot.postprocess_result(
+            "vkusvill_cart_link_create", args, cart_result, {}, {},
+            user_id=42,
+        )
+
+        mock_snapshot_store.save.assert_called_once()
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["user_id"] == 42
+        assert call_kwargs["products"] == [{"xml_id": 100, "q": 2}]
+        assert "vkusvill.ru" in call_kwargs["link"]
+        assert call_kwargs["total"] == 158.0
+
+    async def test_cart_no_snapshot_without_user_id(
+        self, executor_with_snapshot, mock_snapshot_store, search_processor,
+    ):
+        """Без user_id снимок НЕ сохраняется (обратная совместимость)."""
+        search_processor.price_cache[100] = {
+            "name": "Молоко", "price": 79, "unit": "шт",
+        }
+        cart_result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+        args = {"products": [{"xml_id": 100, "q": 2}]}
+
+        await executor_with_snapshot.postprocess_result(
+            "vkusvill_cart_link_create", args, cart_result, {}, {},
+        )
+
+        mock_snapshot_store.save.assert_not_called()
+
+    async def test_cart_no_snapshot_without_store(self, executor, search_processor):
+        """Без cart_snapshot_store снимок НЕ сохраняется."""
+        search_processor.price_cache[100] = {
+            "name": "Молоко", "price": 79, "unit": "шт",
+        }
+        cart_result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+        args = {"products": [{"xml_id": 100, "q": 2}]}
+
+        # executor без cart_snapshot_store — не должно упасть
+        result = await executor.postprocess_result(
+            "vkusvill_cart_link_create", args, cart_result, {}, {},
+            user_id=42,
+        )
+
+        parsed = json.loads(result)
+        assert "price_summary" in parsed["data"]
+
+    async def test_snapshot_not_for_search(
+        self, executor_with_snapshot, mock_snapshot_store,
+    ):
+        """Снимок НЕ сохраняется для vkusvill_products_search."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {"items": [{"xml_id": 100, "name": "Молоко", "price": {"current": 79}, "unit": "шт"}]},
+        })
+
+        await executor_with_snapshot.postprocess_result(
+            "vkusvill_products_search", {"q": "молоко"}, search_result, {}, {},
+            user_id=42,
+        )
+
+        mock_snapshot_store.save.assert_not_called()
+
+
+# ============================================================================
+# _save_cart_snapshot: извлечение данных из результата корзины
+# ============================================================================
+
+
+class TestSaveCartSnapshot:
+    """Тесты _save_cart_snapshot: извлечение и сохранение снимка."""
+
+    @pytest.fixture
+    def mock_snapshot_store(self) -> AsyncMock:
+        store = AsyncMock()
+        store.save = AsyncMock()
+        return store
+
+    @pytest.fixture
+    def executor_with_snapshot(
+        self, mock_mcp_client, search_processor, cart_processor, mock_snapshot_store,
+    ) -> ToolExecutor:
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            cart_snapshot_store=mock_snapshot_store,
+        )
+
+    async def test_extracts_link_and_total(self, executor_with_snapshot, mock_snapshot_store):
+        """Извлекает link и total из результата корзины."""
+        result = json.dumps({
+            "ok": True,
+            "data": {
+                "link": "https://vkusvill.ru/?share_basket=abc",
+                "price_summary": {"total": 500.0, "total_text": "500.00 ₽"},
+            },
+        })
+        args = {"products": [{"xml_id": 100, "q": 2}]}
+
+        await executor_with_snapshot._save_cart_snapshot(42, args, result)
+
+        mock_snapshot_store.save.assert_called_once_with(
+            user_id=42,
+            products=[{"xml_id": 100, "q": 2}],
+            link="https://vkusvill.ru/?share_basket=abc",
+            total=500.0,
+        )
+
+    async def test_handles_missing_price_summary(self, executor_with_snapshot, mock_snapshot_store):
+        """Без price_summary — total=None."""
+        result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=abc"},
+        })
+        args = {"products": [{"xml_id": 100, "q": 1}]}
+
+        await executor_with_snapshot._save_cart_snapshot(42, args, result)
+
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["total"] is None
+        assert call_kwargs["link"] == "https://vkusvill.ru/?share_basket=abc"
+
+    async def test_handles_invalid_json(self, executor_with_snapshot, mock_snapshot_store):
+        """Невалидный JSON — link="", total=None, но не крашит."""
+        args = {"products": [{"xml_id": 100}]}
+
+        await executor_with_snapshot._save_cart_snapshot(42, args, "not json")
+
+        mock_snapshot_store.save.assert_called_once()
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["link"] == ""
+        assert call_kwargs["total"] is None
+
+    async def test_handles_data_not_dict(self, executor_with_snapshot, mock_snapshot_store):
+        """data — не dict → link="", total=None."""
+        result = json.dumps({"ok": True, "data": "string"})
+        args = {"products": []}
+
+        await executor_with_snapshot._save_cart_snapshot(42, args, result)
+
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["link"] == ""
+        assert call_kwargs["total"] is None
+
+    async def test_empty_products(self, executor_with_snapshot, mock_snapshot_store):
+        """Пустой список products передаётся корректно."""
+        result = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=xyz"},
+        })
+
+        await executor_with_snapshot._save_cart_snapshot(42, {"products": []}, result)
+
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["products"] == []
+
+    async def test_price_summary_not_dict(self, executor_with_snapshot, mock_snapshot_store):
+        """price_summary — не dict → total=None."""
+        result = json.dumps({
+            "ok": True,
+            "data": {
+                "link": "https://vkusvill.ru/?share_basket=abc",
+                "price_summary": "invalid",
+            },
+        })
+        args = {"products": []}
+
+        await executor_with_snapshot._save_cart_snapshot(42, args, result)
+
+        call_kwargs = mock_snapshot_store.save.call_args.kwargs
+        assert call_kwargs["total"] is None
