@@ -46,4 +46,10 @@ Archive/
 loadtests/sessions/
 loadtests/*.session
 
+#развитие
 HABR_STRATEGY.md
+articles/
+dosc/
+
+#sh
+*.sh
