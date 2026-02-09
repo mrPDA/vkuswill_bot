@@ -57,3 +57,8 @@ omit = ["src/vkuswill_bot/__main__.py"]
 [tool.coverage.report]
 show_missing = true
 skip_empty = true
+
+[dependency-groups]
+dev = [
+    "ruff>=0.15.0",
+]
