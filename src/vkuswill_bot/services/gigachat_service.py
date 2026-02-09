@@ -129,13 +129,16 @@ class GigaChatService:
     # ---- Делегаты в DialogManager ----
 
     def _get_history(self, user_id: int) -> list[Messages]:
+        """Sync-делегат для обратной совместимости (тесты)."""
         return self._dialog_manager.get_history(user_id)
 
     def _trim_history(self, user_id: int) -> None:
+        """Sync-делегат для обратной совместимости (тесты)."""
         self._dialog_manager.trim(user_id)
 
-    def reset_conversation(self, user_id: int) -> None:
-        self._dialog_manager.reset(user_id)
+    async def reset_conversation(self, user_id: int) -> None:
+        """Сбросить историю диалога (async, работает с любым бэкендом)."""
+        await self._dialog_manager.areset(user_id)
 
     # ---- Делегаты для обратной совместимости (тесты вызывают напрямую) ----
 
@@ -263,7 +266,8 @@ class GigaChatService:
 
     async def _process_message_locked(self, user_id: int, text: str) -> str:
         """Цикл function calling (под per-user lock)."""
-        history = self._get_history(user_id)
+        dm = self._dialog_manager
+        history = await dm.aget_history(user_id)
         history.append(Messages(role=MessagesRole.USER, content=text))
         functions = await self._get_functions()
         call_tracker = CallTracker()
@@ -289,7 +293,8 @@ class GigaChatService:
             te.build_assistant_message(history, msg)
 
             if not msg.function_call:
-                self._trim_history(user_id)
+                history = dm.trim_list(history)
+                await dm.save_history(user_id, history)
                 return msg.content or "Не удалось получить ответ."
 
             tool_name = msg.function_call.name
@@ -311,5 +316,6 @@ class GigaChatService:
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
 
-        self._trim_history(user_id)
+        history = dm.trim_list(history)
+        await dm.save_history(user_id, history)
         return ERROR_TOO_MANY_STEPS

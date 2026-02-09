@@ -19,6 +19,7 @@ from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.price_cache import PriceCache
 from vkuswill_bot.services.recipe_store import RecipeStore
+from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import ToolExecutor
 
@@ -72,8 +73,31 @@ async def main() -> None:
     search_processor = SearchProcessor(price_cache)
     cart_processor = CartProcessor(price_cache)
 
-    # Менеджер диалогов (LRU-кеш историй + per-user lock)
-    dialog_manager = DialogManager(max_history=config.max_history_messages)
+    # Менеджер диалогов: Redis (персистентный) или in-memory (fallback)
+    redis_client = None
+    if config.storage_backend == "redis" and config.redis_url:
+        try:
+            from vkuswill_bot.services.redis_dialog_manager import (
+                RedisDialogManager,
+            )
+
+            redis_client = await create_redis_client(config.redis_url)
+            dialog_manager = RedisDialogManager(
+                redis=redis_client,
+                max_history=config.max_history_messages,
+            )
+            logger.info("Менеджер диалогов: Redis (персистентный)")
+        except Exception as e:
+            logger.warning(
+                "Redis недоступен (%s), fallback на in-memory", e,
+            )
+            dialog_manager = DialogManager(
+                max_history=config.max_history_messages,
+            )
+    else:
+        dialog_manager = DialogManager(
+            max_history=config.max_history_messages,
+        )
 
     # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
     tool_executor = ToolExecutor(
@@ -145,6 +169,7 @@ async def main() -> None:
         await gigachat_service.close()
         await recipe_store.close()
         await prefs_store.close()
+        await close_redis_client(redis_client)
         await mcp_client.close()
         await bot.session.close()
         logger.info("Бот остановлен.")
