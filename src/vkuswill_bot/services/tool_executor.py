@@ -14,6 +14,7 @@ import logging
 from gigachat.models import Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.cart_snapshot_store import CartSnapshotStore
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.search_processor import SearchProcessor
@@ -75,11 +76,13 @@ class ToolExecutor:
         search_processor: SearchProcessor,
         cart_processor: CartProcessor,
         preferences_store: PreferencesStore | None = None,
+        cart_snapshot_store: CartSnapshotStore | None = None,
     ) -> None:
         self._mcp_client = mcp_client
         self._search_processor = search_processor
         self._cart_processor = cart_processor
         self._prefs_store = preferences_store
+        self._cart_snapshot_store = cart_snapshot_store
 
     # ---- Парсинг аргументов ----
 
@@ -121,7 +124,7 @@ class ToolExecutor:
 
     # ---- Предобработка аргументов ----
 
-    def preprocess_args(
+    async def preprocess_args(
         self,
         tool_name: str,
         args: dict,
@@ -134,7 +137,7 @@ class ToolExecutor:
         """
         if tool_name == "vkusvill_cart_link_create":
             args = self._cart_processor.fix_cart_args(args)
-            args = self._cart_processor.fix_unit_quantities(args)
+            args = await self._cart_processor.fix_unit_quantities(args)
 
         if tool_name == "vkusvill_products_search":
             # Очистка запроса от чисел и единиц измерения
@@ -226,21 +229,26 @@ class ToolExecutor:
 
     # ---- Постобработка результата ----
 
-    def postprocess_result(
+    async def postprocess_result(
         self,
         tool_name: str,
         args: dict,
         result: str,
         user_prefs: dict[str, str],
         search_log: dict[str, set[int]],
+        user_id: int | None = None,
     ) -> str:
         """Постобработать результат вызова инструмента.
 
         - Парсит предпочтения из user_preferences_get.
         - Кеширует цены и обрезает результат поиска.
-        - Рассчитывает стоимость корзины и верифицирует.
+        - Рассчитывает стоимость корзины, верифицирует и сохраняет снимок.
 
         Мутирует user_prefs и search_log in-place.
+
+        Args:
+            user_id: ID пользователя Telegram (для снимка корзины).
+                     Опционален для обратной совместимости с тестами.
 
         Returns:
             Обработанный результат (строка).
@@ -256,7 +264,7 @@ class ToolExecutor:
                 )
 
         elif tool_name == "vkusvill_products_search":
-            self._search_processor.cache_prices(result)
+            await self._search_processor.cache_prices(result)
             query = args.get("q", "")
             found_ids = self._search_processor.extract_xml_ids(result)
             if query and found_ids:
@@ -264,17 +272,47 @@ class ToolExecutor:
             result = self._search_processor.trim_search_result(result)
 
         elif tool_name == "vkusvill_cart_link_create":
-            result = self._cart_processor.calc_total(args, result)
+            result = await self._cart_processor.calc_total(args, result)
             if search_log:
-                result = self._cart_processor.add_verification(
+                result = await self._cart_processor.add_verification(
                     args, result, search_log,
                 )
+            # Сохраняем снимок корзины в Redis (если настроен)
+            if self._cart_snapshot_store and user_id is not None:
+                await self._save_cart_snapshot(user_id, args, result)
             logger.info(
                 "Расчёт корзины: %s",
                 result[:MAX_RESULT_PREVIEW_LENGTH],
             )
 
         return result
+
+    async def _save_cart_snapshot(
+        self,
+        user_id: int,
+        args: dict,
+        result: str,
+    ) -> None:
+        """Извлечь данные из результата корзины и сохранить снимок."""
+        products = args.get("products", [])
+        link = ""
+        total: float | None = None
+        try:
+            result_data = json.loads(result)
+            data = result_data.get("data", {})
+            if isinstance(data, dict):
+                link = data.get("link", "")
+                summary = data.get("price_summary", {})
+                if isinstance(summary, dict):
+                    total = summary.get("total")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        await self._cart_snapshot_store.save(  # type: ignore[union-attr]
+            user_id=user_id,
+            products=products,
+            link=link,
+            total=total,
+        )
 
     # ---- Маршрутизация локальных инструментов ----
 

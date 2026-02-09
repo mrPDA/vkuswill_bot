@@ -1,8 +1,11 @@
 """Сервис GigaChat с поддержкой function calling через MCP-инструменты."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
@@ -22,6 +25,9 @@ from vkuswill_bot.services.recipe_service import RecipeService
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import CallTracker, ToolExecutor
+
+if TYPE_CHECKING:
+    from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,7 +69,7 @@ class GigaChatService:
         recipe_store: RecipeStore | None = None,
         max_tool_calls: int = 20,
         max_history: int = 50,
-        dialog_manager: DialogManager | None = None,
+        dialog_manager: DialogManager | RedisDialogManager | None = None,
         tool_executor: "ToolExecutor | None" = None,
         recipe_service: "RecipeService | None" = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
@@ -85,7 +91,7 @@ class GigaChatService:
         self._dialog_manager = dialog_manager or DialogManager(
             max_conversations=MAX_CONVERSATIONS, max_history=max_history,
         )
-        self._conversations = self._dialog_manager.conversations  # обратная совместимость
+        self._conversations = getattr(self._dialog_manager, "conversations", {})  # обратная совместимость
 
         self._functions: list[dict] | None = None
         self._search_processor = SearchProcessor()  # создаёт PriceCache внутри
@@ -129,60 +135,38 @@ class GigaChatService:
     # ---- Делегаты в DialogManager ----
 
     def _get_history(self, user_id: int) -> list[Messages]:
-        """Sync-делегат для обратной совместимости (тесты)."""
-        return self._dialog_manager.get_history(user_id)
+        """Sync-делегат для обратной совместимости (тесты).
+
+        Работает с DialogManager (in-memory). Для RedisDialogManager
+        выбросит TypeError — используйте async API (aget_history).
+        """
+        dm = self._dialog_manager
+        if not hasattr(dm, "get_history"):
+            msg = (
+                f"{type(dm).__name__} не поддерживает sync get_history(). "
+                "Используйте async API: aget_history()."
+            )
+            raise TypeError(msg)
+        return dm.get_history(user_id)
 
     def _trim_history(self, user_id: int) -> None:
-        """Sync-делегат для обратной совместимости (тесты)."""
-        self._dialog_manager.trim(user_id)
+        """Sync-делегат для обратной совместимости (тесты).
+
+        Работает с DialogManager (in-memory). Для RedisDialogManager
+        выбросит TypeError — используйте async API (trim_list + save_history).
+        """
+        dm = self._dialog_manager
+        if not hasattr(dm, "trim"):
+            msg = (
+                f"{type(dm).__name__} не поддерживает sync trim(). "
+                "Используйте async API: trim_list() + save_history()."
+            )
+            raise TypeError(msg)
+        dm.trim(user_id)
 
     async def reset_conversation(self, user_id: int) -> None:
         """Сбросить историю диалога (async, работает с любым бэкендом)."""
         await self._dialog_manager.areset(user_id)
-
-    # ---- Делегаты для обратной совместимости (тесты вызывают напрямую) ----
-
-    _parse_preferences = staticmethod(ToolExecutor._parse_preferences)
-    _apply_preferences_to_query = staticmethod(ToolExecutor._apply_preferences_to_query)
-    _parse_tool_arguments = staticmethod(ToolExecutor.parse_arguments)
-    _append_assistant_message = staticmethod(ToolExecutor.build_assistant_message)
-    _enrich_with_kg = staticmethod(RecipeService._enrich_with_kg)
-    _format_recipe_result = staticmethod(RecipeService._format_result)
-    _parse_json_from_llm = staticmethod(RecipeService._parse_json)
-
-    def _preprocess_tool_args(self, tool_name: str, args: dict, user_prefs: dict[str, str]) -> dict:
-        return self._tool_executor.preprocess_args(tool_name, args, user_prefs)
-
-    def _is_duplicate_call(
-        self, tool_name: str, args: dict,
-        call_counts: dict[str, int], call_results: dict[str, str],
-        history: list[Messages],
-    ) -> bool:
-        """Обёртка: старый API (call_counts/call_results) для совместимости с тестами."""
-        call_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-        call_counts[call_key] = call_counts.get(call_key, 0) + 1
-        from vkuswill_bot.services.tool_executor import MAX_IDENTICAL_TOOL_CALLS as _MAX
-        if call_counts[call_key] >= _MAX:
-            cached = call_results.get(call_key, json.dumps({"ok": True, "data": {}}, ensure_ascii=False))
-            history.append(Messages(role=MessagesRole.FUNCTION, content=cached, name=tool_name))
-            return True
-        return False
-
-    async def _execute_tool(self, tool_name: str, args: dict, user_id: int) -> str:
-        if tool_name == "recipe_ingredients" and self._recipe_service is not None:
-            return await self._recipe_service.get_ingredients(args)
-        return await self._tool_executor.execute(tool_name, args, user_id)
-
-    def _postprocess_tool_result(
-        self, tool_name: str, args: dict, result: str,
-        user_prefs: dict[str, str], search_log: dict[str, set[int]],
-    ) -> str:
-        return self._tool_executor.postprocess_result(tool_name, args, result, user_prefs, search_log)
-
-    async def _call_local_tool(self, tool_name: str, args: dict, user_id: int) -> str:
-        if tool_name == "recipe_ingredients":
-            return await self._handle_recipe_ingredients(args)
-        return await self._tool_executor._call_local_tool(tool_name, args, user_id)
 
     async def _handle_recipe_ingredients(self, args: dict) -> str:
         if self._recipe_service is not None:
@@ -301,7 +285,7 @@ class GigaChatService:
             args = te.parse_arguments(msg.function_call.arguments)
             logger.info("Вызов: %s(%s)", tool_name, json.dumps(args, ensure_ascii=False))
 
-            args = te.preprocess_args(tool_name, args, user_prefs)
+            args = await te.preprocess_args(tool_name, args, user_prefs)
             if te.is_duplicate_call(tool_name, args, call_tracker, history):
                 continue
             real_calls += 1
@@ -312,7 +296,9 @@ class GigaChatService:
                 result = await te.execute(tool_name, args, user_id)
             logger.info("Результат %s: %s", tool_name, result[:MAX_RESULT_LOG_LENGTH])
 
-            result = te.postprocess_result(tool_name, args, result, user_prefs, search_log)
+            result = await te.postprocess_result(
+                tool_name, args, result, user_prefs, search_log, user_id=user_id,
+            )
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
 
