@@ -37,8 +37,13 @@ class Config(BaseSettings):
     # Redis
     redis_url: str = ""
 
-    # PostgreSQL
+    # PostgreSQL (управление пользователями)
     database_url: str = ""
+    db_pool_min: int = 2
+    db_pool_max: int = 10
+
+    # Администраторы (Telegram user IDs через запятую)
+    admin_user_ids: list[int] = []
 
     # Webhook
     use_webhook: bool = False

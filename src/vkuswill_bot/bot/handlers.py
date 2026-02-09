@@ -1,8 +1,11 @@
 """Обработчики команд и сообщений Telegram-бота."""
 
+from __future__ import annotations
+
 import asyncio
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
@@ -10,6 +13,9 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from vkuswill_bot.services.gigachat_service import GigaChatService
+
+if TYPE_CHECKING:
+    from vkuswill_bot.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +79,7 @@ def _sanitize_telegram_html(text: str) -> str:
     return _TAG_RE.sub(_check_tag, text)
 
 router = Router()
+admin_router = Router()
 
 
 @router.message(CommandStart())
@@ -208,3 +215,192 @@ def _split_message(text: str, max_length: int) -> list[str]:
         text = text[split_pos:].lstrip()
 
     return chunks
+
+
+# ---------------------------------------------------------------------------
+# Админ-команды (admin_router)
+# ---------------------------------------------------------------------------
+
+
+async def _check_admin(message: Message) -> UserStore | None:
+    """Проверить, что отправитель — администратор.
+
+    Returns:
+        UserStore если проверка пройдена, None если нет прав.
+    """
+    if not message.from_user:
+        return None
+
+    # user_store инжектируется через UserMiddleware → data
+    # Для admin_router он передаётся через dp["user_store"]
+    # и доступен как keyword-аргумент
+    return None  # pragma: no cover — заглушка, реальная проверка ниже
+
+
+@admin_router.message(Command("admin_block"))
+async def cmd_admin_block(
+    message: Message,
+    user_store: UserStore,
+    db_user: dict | None = None,
+) -> None:
+    """Заблокировать пользователя: /admin_block <user_id> <причина>."""
+    if not message.from_user:
+        return
+
+    # Проверка прав администратора
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    if not message.text:
+        return
+
+    parts = message.text.split(maxsplit=2)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /admin_block &lt;user_id&gt; [причина]"
+        )
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+
+    reason = parts[2] if len(parts) > 2 else ""
+
+    # Нельзя заблокировать самого себя
+    if target_id == message.from_user.id:
+        await message.answer("Нельзя заблокировать самого себя.")
+        return
+
+    success = await user_store.block(target_id, reason)
+    if success:
+        await message.answer(f"Пользователь {target_id} заблокирован.")
+    else:
+        await message.answer(f"Пользователь {target_id} не найден.")
+
+
+@admin_router.message(Command("admin_unblock"))
+async def cmd_admin_unblock(
+    message: Message,
+    user_store: UserStore,
+    db_user: dict | None = None,
+) -> None:
+    """Разблокировать пользователя: /admin_unblock <user_id>."""
+    if not message.from_user:
+        return
+
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    if not message.text:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /admin_unblock &lt;user_id&gt;"
+        )
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+
+    success = await user_store.unblock(target_id)
+    if success:
+        await message.answer(f"Пользователь {target_id} разблокирован.")
+    else:
+        await message.answer(f"Пользователь {target_id} не найден.")
+
+
+@admin_router.message(Command("admin_stats"))
+async def cmd_admin_stats(
+    message: Message,
+    user_store: UserStore,
+    db_user: dict | None = None,
+) -> None:
+    """Общая статистика бота: /admin_stats."""
+    if not message.from_user:
+        return
+
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    total = await user_store.count_users()
+    active_today = await user_store.count_active_today()
+
+    await message.answer(
+        "<b>Статистика бота</b>\n\n"
+        f"Всего пользователей: <b>{total}</b>\n"
+        f"Активных сегодня (DAU): <b>{active_today}</b>"
+    )
+
+
+@admin_router.message(Command("admin_user"))
+async def cmd_admin_user(
+    message: Message,
+    user_store: UserStore,
+    db_user: dict | None = None,
+) -> None:
+    """Информация о пользователе: /admin_user <user_id>."""
+    if not message.from_user:
+        return
+
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+
+    if not message.text:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer(
+            "Использование: /admin_user &lt;user_id&gt;"
+        )
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+
+    target = await user_store.get(target_id)
+    if not target:
+        await message.answer(f"Пользователь {target_id} не найден.")
+        return
+
+    username = target.get("username") or "—"
+    first_name = target.get("first_name") or "—"
+    last_name = target.get("last_name") or "—"
+    role = target.get("role", "user")
+    status = target.get("status", "active")
+    msg_count = target.get("message_count", 0)
+    created = target.get("created_at", "—")
+    last_msg = target.get("last_message_at") or "—"
+    blocked_reason = target.get("blocked_reason") or "—"
+
+    text = (
+        f"<b>Пользователь {target_id}</b>\n\n"
+        f"Username: @{username}\n"
+        f"Имя: {first_name} {last_name}\n"
+        f"Роль: <b>{role}</b>\n"
+        f"Статус: <b>{status}</b>\n"
+    )
+    if status == "blocked":
+        text += f"Причина блокировки: {blocked_reason}\n"
+    text += (
+        f"\nСообщений: {msg_count}\n"
+        f"Зарегистрирован: {created}\n"
+        f"Последнее сообщение: {last_msg}"
+    )
+
+    await message.answer(text)

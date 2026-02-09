@@ -5,12 +5,13 @@ import logging
 import signal
 from concurrent.futures import ThreadPoolExecutor
 
+import asyncpg
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 
-from vkuswill_bot.bot.handlers import router
-from vkuswill_bot.bot.middlewares import ThrottlingMiddleware
+from vkuswill_bot.bot.handlers import admin_router, router
+from vkuswill_bot.bot.middlewares import ThrottlingMiddleware, UserMiddleware
 from vkuswill_bot.config import config
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.dialog_manager import DialogManager
@@ -22,6 +23,7 @@ from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import ToolExecutor
+from vkuswill_bot.services.user_store import UserStore
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_FILE = "bot.log"
@@ -52,9 +54,47 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dp = Dispatcher()
+    dp.include_router(admin_router)
     dp.include_router(router)
 
+    # ------------------------------------------------------------------
+    # PostgreSQL: пул соединений + UserStore
+    # ------------------------------------------------------------------
+    pg_pool: asyncpg.Pool | None = None
+    user_store: UserStore | None = None
+
+    if config.database_url:
+        try:
+            pg_pool = await asyncpg.create_pool(
+                dsn=config.database_url,
+                min_size=config.db_pool_min,
+                max_size=config.db_pool_max,
+            )
+            user_store = UserStore(pg_pool)
+            await user_store.ensure_schema()
+
+            # Установить начальных админов из .env
+            if config.admin_user_ids:
+                await user_store.ensure_admins(config.admin_user_ids)
+
+            # Мидлварь: UserMiddleware → ThrottlingMiddleware (порядок важен!)
+            dp.message.middleware(UserMiddleware(user_store))
+            logger.info(
+                "PostgreSQL подключён, UserStore готов (pool %d-%d)",
+                config.db_pool_min,
+                config.db_pool_max,
+            )
+        except Exception as e:
+            logger.warning(
+                "PostgreSQL недоступен (%s), UserMiddleware отключён", e,
+            )
+            pg_pool = None
+            user_store = None
+    else:
+        logger.info("DATABASE_URL не задан — UserStore отключён")
+
     # Rate-limiting: 5 сообщений / 60 секунд на пользователя
+    # (ThrottlingMiddleware идёт ПОСЛЕ UserMiddleware)
     dp.message.middleware(ThrottlingMiddleware(rate_limit=5, period=60.0))
 
     # MCP-клиент для ВкусВилл
@@ -142,6 +182,8 @@ async def main() -> None:
 
     # Передаём сервисы в хендлеры через DI
     dp["gigachat_service"] = gigachat_service
+    if user_store is not None:
+        dp["user_store"] = user_store
 
     # Graceful shutdown: обработка SIGTERM / SIGINT
     shutdown_event = asyncio.Event()
@@ -181,6 +223,9 @@ async def main() -> None:
         await prefs_store.close()
         await close_redis_client(redis_client)
         await mcp_client.close()
+        if pg_pool is not None:
+            await pg_pool.close()
+            logger.info("PostgreSQL pool закрыт")
         await bot.session.close()
         logger.info("Бот остановлен.")
 
