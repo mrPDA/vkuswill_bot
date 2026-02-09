@@ -109,7 +109,7 @@ class SearchProcessor:
         data_field["items"] = trimmed_items
         return json.dumps(data, ensure_ascii=False)
 
-    def cache_prices(self, result_text: str) -> None:
+    async def cache_prices(self, result_text: str) -> None:
         """Извлечь цены из результата vkusvill_products_search и закешировать."""
         parsed = self.parse_search_items(result_text)
         if parsed is None:
@@ -122,7 +122,7 @@ class SearchProcessor:
                 continue
             price = price_info.get("current")
             if xml_id is not None and price is not None:
-                self.price_cache.set(
+                await self.price_cache.set(
                     xml_id,
                     name=item.get("name", ""),
                     price=price,

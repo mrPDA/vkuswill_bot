@@ -17,7 +17,7 @@ from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.gigachat_service import GigaChatService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
-from vkuswill_bot.services.price_cache import PriceCache
+from vkuswill_bot.services.price_cache import PriceCache, TwoLevelPriceCache
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
@@ -66,17 +66,14 @@ async def main() -> None:
     # Кеш рецептов (SQLite, отдельная БД — исключает конфликты блокировок)
     recipe_store = RecipeStore(config.recipe_database_path)
 
-    # Кэш цен (единственный владелец данных о ценах)
-    price_cache = PriceCache()
-
-    # Процессоры: поиск и корзина (получают PriceCache через DI)
-    search_processor = SearchProcessor(price_cache)
-    cart_processor = CartProcessor(price_cache)
-
-    # Менеджер диалогов: Redis (персистентный) или in-memory (fallback)
+    # Менеджер диалогов, кэш цен, снимок корзины: Redis или in-memory
     redis_client = None
+    cart_snapshot_store = None
     if config.storage_backend == "redis" and config.redis_url:
         try:
+            from vkuswill_bot.services.cart_snapshot_store import (
+                CartSnapshotStore,
+            )
             from vkuswill_bot.services.redis_dialog_manager import (
                 RedisDialogManager,
             )
@@ -86,18 +83,30 @@ async def main() -> None:
                 redis=redis_client,
                 max_history=config.max_history_messages,
             )
-            logger.info("Менеджер диалогов: Redis (персистентный)")
+            # Двухуровневый кэш цен: L1 (in-memory) + L2 (Redis)
+            price_cache = TwoLevelPriceCache(redis=redis_client)
+            # Снимок корзины в Redis (24h TTL)
+            cart_snapshot_store = CartSnapshotStore(redis=redis_client)
+            logger.info(
+                "Redis-бэкенд: диалоги, кэш цен (L1+L2), снимки корзины",
+            )
         except Exception as e:
             logger.warning(
                 "Redis недоступен (%s), fallback на in-memory", e,
             )
+            price_cache = PriceCache()
             dialog_manager = DialogManager(
                 max_history=config.max_history_messages,
             )
     else:
+        price_cache = PriceCache()
         dialog_manager = DialogManager(
             max_history=config.max_history_messages,
         )
+
+    # Процессоры: поиск и корзина (получают PriceCache через DI)
+    search_processor = SearchProcessor(price_cache)
+    cart_processor = CartProcessor(price_cache)
 
     # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
     tool_executor = ToolExecutor(
@@ -105,6 +114,7 @@ async def main() -> None:
         search_processor=search_processor,
         cart_processor=cart_processor,
         preferences_store=prefs_store,
+        cart_snapshot_store=cart_snapshot_store,
     )
 
     # GigaChat-сервис — все зависимости инжектируются явно

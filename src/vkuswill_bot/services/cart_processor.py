@@ -99,7 +99,7 @@ class CartProcessor:
 
         return arguments
 
-    def fix_unit_quantities(self, args: dict) -> dict:
+    async def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров.
 
         GigaChat иногда ставит дробное q для товаров в штуках
@@ -116,7 +116,7 @@ class CartProcessor:
                 continue
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             if cached and cached.unit in self._DISCRETE_UNITS:
                 rounded = math.ceil(q)
                 if rounded != q:
@@ -132,7 +132,7 @@ class CartProcessor:
 
         return args
 
-    def calc_total(self, args: dict, result_text: str) -> str:
+    async def calc_total(self, args: dict, result_text: str) -> str:
         """Рассчитать стоимость корзины и дополнить результат.
 
         Берёт xml_id и q из аргументов, цены из кеша.
@@ -157,7 +157,7 @@ class CartProcessor:
         for item in products:
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             if cached:
                 subtotal = cached.price * q
                 total += subtotal
@@ -188,7 +188,7 @@ class CartProcessor:
         data["price_summary"] = summary
         return json.dumps(result_data, ensure_ascii=False, indent=4)
 
-    def verify_cart(
+    async def verify_cart(
         self,
         cart_args: dict,
         search_log: dict[str, set[int]],
@@ -219,7 +219,7 @@ class CartProcessor:
         queries_with_match: set[str] = set()
 
         for xml_id in cart_xml_ids:
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             name = cached.name if cached else f"xml_id={xml_id}"
             queries = xml_to_queries.get(xml_id, [])
             if queries:
@@ -267,7 +267,7 @@ class CartProcessor:
 
         return report
 
-    def add_verification(
+    async def add_verification(
         self,
         args: dict,
         result: str,
@@ -278,7 +278,7 @@ class CartProcessor:
         Сопоставляет содержимое корзины с поисковыми запросами
         и добавляет поле verification в data.
         """
-        verification = self.verify_cart(args, search_log)
+        verification = await self.verify_cart(args, search_log)
         try:
             result_data = json.loads(result)
             data = result_data.get("data")
