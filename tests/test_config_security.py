@@ -167,6 +167,30 @@ class TestDefaultValues:
             f"должен быть в [1, 100]"
         )
 
+    def test_db_pool_min_default(self):
+        """db_pool_min по умолчанию — 2."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_min == 2
+
+    def test_db_pool_max_default(self):
+        """db_pool_max по умолчанию — 10."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_max == 10
+
+    def test_db_pool_min_max_reasonable(self):
+        """Размеры пула разумные: 1 <= min <= max <= 100."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 1 <= cfg.db_pool_min <= cfg.db_pool_max <= 100
+
+    def test_admin_user_ids_default_empty(self):
+        """admin_user_ids по умолчанию — пустой список."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == []
+
 
 # ============================================================================
 # Защита секретов
@@ -250,6 +274,28 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.gigachat_max_concurrent == 30
+
+    def test_db_pool_customizable(self):
+        """db_pool_min/max настраиваются через переменные окружения."""
+        custom_env = {**MINIMAL_ENV, "DB_POOL_MIN": "5", "DB_POOL_MAX": "20"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_min == 5
+        assert cfg.db_pool_max == 20
+
+    def test_admin_user_ids_customizable(self):
+        """admin_user_ids настраивается через переменную окружения."""
+        custom_env = {**MINIMAL_ENV, "ADMIN_USER_IDS": "[111, 222, 333]"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == [111, 222, 333]
+
+    def test_database_url_customizable(self):
+        """database_url (PostgreSQL) настраивается через env."""
+        custom_env = {**MINIMAL_ENV, "DATABASE_URL": "postgresql://user:pass@localhost:5432/bot"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.database_url == "postgresql://user:pass@localhost:5432/bot"
 
 
 # ============================================================================

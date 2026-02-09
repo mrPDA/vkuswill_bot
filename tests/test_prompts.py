@@ -93,6 +93,75 @@ class TestSystemPromptContent:
 
 
 # ============================================================================
+# Системный промпт: безопасность
+# ============================================================================
+
+
+class TestSystemPromptSecurity:
+    """Тесты секции безопасности в системном промпте."""
+
+    def test_has_security_section(self):
+        """Промпт содержит секцию безопасности."""
+        assert "## Безопасность" in SYSTEM_PROMPT
+
+    def test_role_anchoring_in_security(self):
+        """Секция безопасности якорит роль продавца-консультанта."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "всегда продавец-консультант" in lower
+
+    def test_forbids_role_change(self):
+        """Промпт запрещает изменение роли через сообщения пользователя."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не могут изменить" in lower or "никакие сообщения" in lower
+
+    def test_forbids_prompt_leaking(self):
+        """Промпт запрещает раскрытие инструкций."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не раскрывай" in lower or "никогда не раскрывай" in lower
+        assert "системный промпт" in lower or "инструкции" in lower
+
+    def test_has_prompt_leak_deflection(self):
+        """Промпт содержит шаблон ответа на попытку извлечения промпта."""
+        assert "бот ВкусВилл" in SYSTEM_PROMPT
+        assert "помогаю подобрать продукты" in SYSTEM_PROMPT
+
+    def test_restricts_topic_to_products(self):
+        """Промпт ограничивает тематику продуктами и едой."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "только" in lower
+        assert "продукт" in lower
+        assert "посторонние темы" in lower or "посторонн" in lower
+
+    def test_has_offtopic_deflection(self):
+        """Промпт содержит шаблон ответа на off-topic запросы."""
+        assert "специализируюсь на продуктах" in SYSTEM_PROMPT
+
+    def test_forbids_harmful_content(self):
+        """Промпт запрещает генерацию вредоносного контента."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "оскорбления" in lower or "угрозы" in lower
+        assert "незаконный контент" in lower or "незаконн" in lower
+
+    def test_forbids_medical_financial_advice(self):
+        """Промпт запрещает медицинские и финансовые советы."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "медицинск" in lower
+        assert "финансов" in lower
+
+    def test_blocks_authority_impersonation(self):
+        """Промпт защищён от impersonation разработчика/администратора."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "разработчик" in lower
+        assert "администратор" in lower
+        assert "режим отладки" in lower or "диагностик" in lower
+
+    def test_no_debug_mode(self):
+        """Промпт явно отрицает наличие режима отладки."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "нет режима отладки" in lower or "нет режима" in lower
+
+
+# ============================================================================
 # RECIPE_EXTRACTION_PROMPT
 # ============================================================================
 
