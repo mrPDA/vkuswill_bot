@@ -2633,6 +2633,11 @@ test = [
     { name = "respx" },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "ruff" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "aiogram", specifier = ">=3.15" },
@@ -2653,6 +2658,9 @@ requires-dist = [
     { name = "telethon", marker = "extra == 'loadtest'", specifier = ">=1.36" },
 ]
 provides-extras = ["test", "dev", "loadtest"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "ruff", specifier = ">=0.15.0" }]
 
 [[package]]
 name = "websocket-client"
