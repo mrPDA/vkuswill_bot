@@ -108,7 +108,7 @@ class TestUnicodeAttacks:
 
         assert isinstance(result, str)
         assert len(result) > 0
-        service.reset_conversation(1)
+        await service.reset_conversation(1)
 
     @pytest.mark.parametrize("payload", UNICODE_ATTACK_PAYLOADS)
     async def test_unicode_in_handler(self, payload: str):
@@ -154,7 +154,7 @@ class TestXSSPayloads:
             result = await service.process_message(user_id=1, text=payload)
 
         assert isinstance(result, str)
-        service.reset_conversation(1)
+        await service.reset_conversation(1)
 
     @pytest.mark.parametrize("payload", XSS_PAYLOADS)
     async def test_xss_in_handler(self, payload: str):
@@ -498,7 +498,7 @@ class TestSpecialCharacters:
         ):
             result = await service.process_message(user_id=1, text=payload)
         assert isinstance(result, str)
-        service.reset_conversation(1)
+        await service.reset_conversation(1)
 
     @pytest.mark.parametrize("payload", SPECIAL_CHAR_PAYLOADS)
     async def test_special_chars_dont_crash_handler(self, payload: str):
