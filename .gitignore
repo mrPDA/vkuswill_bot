@@ -49,7 +49,16 @@ loadtests/*.session
 #развитие
 HABR_STRATEGY.md
 articles/
-dosc/
+docs/
 
-#sh
-*.sh
+# Shell-скрипты (локальные)
+run.sh
+stop.sh
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfvars
+!infra/terraform.tfvars.example
+infra/backend.conf
+infra/*.json
