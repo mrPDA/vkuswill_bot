@@ -1,10 +1,11 @@
-"""Тесты CartSnapshotStore.
+"""Тесты CartSnapshotStore и InMemoryCartSnapshotStore.
 
 Тестируем:
 - Сохранение снимка корзины в Redis (mock)
 - Чтение снимка корзины
 - Удаление снимка корзины
 - Graceful error handling
+- InMemoryCartSnapshotStore (fallback без Redis)
 """
 
 import json
@@ -15,6 +16,7 @@ import pytest
 from vkuswill_bot.services.cart_snapshot_store import (
     CART_SNAPSHOT_TTL,
     CartSnapshotStore,
+    InMemoryCartSnapshotStore,
 )
 
 
@@ -134,3 +136,60 @@ class TestCustomTTL:
         store = CartSnapshotStore(redis=redis, ttl=3600)
         await store.save(user_id=1, products=[], link="", total=None)
         assert redis.set.call_args[1]["ex"] == 3600
+
+
+# ============================================================================
+# InMemoryCartSnapshotStore
+# ============================================================================
+
+
+class TestInMemoryCartSnapshotStore:
+    """Тесты InMemoryCartSnapshotStore: in-memory fallback без Redis."""
+
+    @pytest.fixture
+    def mem_store(self) -> InMemoryCartSnapshotStore:
+        return InMemoryCartSnapshotStore()
+
+    async def test_save_and_get(self, mem_store):
+        """Сохранение и чтение снимка."""
+        products = [{"xml_id": 100, "q": 2}]
+        await mem_store.save(user_id=42, products=products, link="https://link", total=200.0)
+
+        result = await mem_store.get(user_id=42)
+        assert result is not None
+        assert result["products"] == products
+        assert result["link"] == "https://link"
+        assert result["total"] == 200.0
+        assert "created_at" in result
+
+    async def test_get_missing_returns_none(self, mem_store):
+        """Чтение несуществующего снимка → None."""
+        result = await mem_store.get(user_id=999)
+        assert result is None
+
+    async def test_delete(self, mem_store):
+        """Удаление снимка."""
+        await mem_store.save(user_id=42, products=[], link="", total=None)
+        assert await mem_store.get(user_id=42) is not None
+
+        await mem_store.delete(user_id=42)
+        assert await mem_store.get(user_id=42) is None
+
+    async def test_overwrites_previous(self, mem_store):
+        """Повторное сохранение перезаписывает предыдущий снимок."""
+        await mem_store.save(user_id=42, products=[{"xml_id": 1}], link="old", total=100.0)
+        await mem_store.save(user_id=42, products=[{"xml_id": 2}], link="new", total=200.0)
+
+        result = await mem_store.get(user_id=42)
+        assert result["link"] == "new"
+        assert result["total"] == 200.0
+
+    async def test_isolates_users(self, mem_store):
+        """Снимки разных пользователей не пересекаются."""
+        await mem_store.save(user_id=1, products=[{"xml_id": 10}], link="a", total=10.0)
+        await mem_store.save(user_id=2, products=[{"xml_id": 20}], link="b", total=20.0)
+
+        r1 = await mem_store.get(user_id=1)
+        r2 = await mem_store.get(user_id=2)
+        assert r1["products"][0]["xml_id"] == 10
+        assert r2["products"][0]["xml_id"] == 20

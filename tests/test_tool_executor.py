@@ -1020,3 +1020,102 @@ class TestSaveCartSnapshot:
 
         call_kwargs = mock_snapshot_store.save.call_args.kwargs
         assert call_kwargs["total"] is None
+
+
+# ============================================================================
+# get_previous_cart
+# ============================================================================
+
+
+class TestGetPreviousCart:
+    """Тесты get_previous_cart: получение предыдущей корзины."""
+
+    @pytest.fixture
+    def mock_snapshot_store(self):
+        """Мок CartSnapshotStore."""
+        store = AsyncMock()
+        store.get = AsyncMock(return_value=None)
+        return store
+
+    @pytest.fixture
+    def executor_with_cart(
+        self, mock_mcp_client, search_processor, cart_processor, mock_snapshot_store,
+    ):
+        """ToolExecutor с CartSnapshotStore."""
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            cart_snapshot_store=mock_snapshot_store,
+        )
+
+    async def test_returns_no_cart_when_store_none(self, executor):
+        """Без cart_snapshot_store — возвращает 'недоступна'."""
+        result = await executor._get_previous_cart(user_id=42)
+        data = json.loads(result)
+        assert data["ok"] is False
+        assert "недоступна" in data["message"]
+
+    async def test_returns_no_cart_when_empty(
+        self, executor_with_cart, mock_snapshot_store,
+    ):
+        """Если корзины нет — возвращает 'нет предыдущей корзины'."""
+        mock_snapshot_store.get.return_value = None
+        result = await executor_with_cart._get_previous_cart(user_id=42)
+        data = json.loads(result)
+        assert data["ok"] is True
+        assert "нет предыдущей корзины" in data["message"]
+
+    async def test_returns_previous_cart(
+        self, executor_with_cart, mock_snapshot_store, search_processor,
+    ):
+        """Возвращает снимок корзины с обогащёнными данными."""
+        # Добавляем цены в кеш
+        search_processor.price_cache._set_sync(100, "Молоко", 89.0, "шт")
+        mock_snapshot_store.get.return_value = {
+            "products": [{"xml_id": 100, "q": 2}],
+            "link": "https://vkusvill.ru/?share_basket=123",
+            "total": 178.0,
+            "created_at": "2026-02-10T12:00:00+00:00",
+        }
+
+        result = await executor_with_cart._get_previous_cart(user_id=42)
+        data = json.loads(result)
+
+        assert data["ok"] is True
+        assert len(data["products"]) == 1
+        assert data["products"][0]["xml_id"] == 100
+        assert data["products"][0]["q"] == 2
+        assert data["products"][0]["name"] == "Молоко"
+        assert data["products"][0]["price"] == 89.0
+        assert data["link"] == "https://vkusvill.ru/?share_basket=123"
+        assert data["total"] == 178.0
+
+    async def test_enriches_products_without_cache(
+        self, executor_with_cart, mock_snapshot_store,
+    ):
+        """Товары без кеша цен — возвращает xml_id и q без name/price."""
+        mock_snapshot_store.get.return_value = {
+            "products": [{"xml_id": 999, "q": 1}],
+            "link": "",
+            "total": None,
+            "created_at": "",
+        }
+
+        result = await executor_with_cart._get_previous_cart(user_id=42)
+        data = json.loads(result)
+
+        assert data["ok"] is True
+        assert data["products"][0]["xml_id"] == 999
+        assert "name" not in data["products"][0]
+
+    async def test_routes_via_call_local_tool(
+        self, executor_with_cart,
+    ):
+        """get_previous_cart маршрутизируется через _call_local_tool."""
+        result = await executor_with_cart._call_local_tool(
+            "get_previous_cart", {}, user_id=42,
+        )
+        data = json.loads(result)
+        assert data["ok"] is True
+        assert "нет предыдущей корзины" in data["message"]

@@ -4,6 +4,7 @@
 - Кеширование цен из результатов поиска
 - Обрезку тяжёлых полей из результатов поиска
 - Извлечение xml_id из результатов поиска
+- Проверку релевантности результатов поиска запросу
 """
 
 import json
@@ -14,6 +15,8 @@ from vkuswill_bot.services.price_cache import MAX_PRICE_CACHE_SIZE
 from vkuswill_bot.services.search_processor import (
     SEARCH_LIMIT,
     SearchProcessor,
+    _MIN_RELEVANCE_WORD_LEN,
+    _STOP_WORDS,
 )
 
 
@@ -531,3 +534,226 @@ class TestCleanSearchQuery:
     def test_search_limit_constant(self):
         """SEARCH_LIMIT экспортируется и равен 5."""
         assert SEARCH_LIMIT == 5
+
+
+# ============================================================================
+# Проверка релевантности (check_relevance)
+# ============================================================================
+
+
+class TestCheckRelevance:
+    """Тесты SearchProcessor.check_relevance: проверка соответствия запроса результатам."""
+
+    def test_all_terms_found(self):
+        """Все слова запроса найдены в названиях — пустой список."""
+        items = [
+            {"name": "Стейк говяжий охл."},
+            {"name": "Стейк из говядины"},
+        ]
+        assert SearchProcessor.check_relevance("стейк говяжий", items) == []
+
+    def test_missing_term_detected(self):
+        """Слово «вагю» отсутствует в результатах — возвращается в списке."""
+        items = [
+            {"name": "Форель стейк охл., вес"},
+            {"name": "Стейк Мачете из мраморной говядины"},
+        ]
+        missing = SearchProcessor.check_relevance("стейк вагю", items)
+        assert missing == ["вагю"]
+
+    def test_multiple_missing_terms(self):
+        """Несколько пропущенных слов."""
+        items = [{"name": "Молоко 3,2%"}]
+        missing = SearchProcessor.check_relevance("фуа-гра утиная", items)
+        assert "фуа-гра" in missing
+        assert "утиная" in missing
+
+    def test_case_insensitive(self):
+        """Проверка нечувствительна к регистру."""
+        items = [{"name": "СТЕЙК ВАГЮ премиум"}]
+        assert SearchProcessor.check_relevance("Стейк Вагю", items) == []
+
+    def test_empty_query_returns_empty(self):
+        """Пустой запрос → пустой список."""
+        items = [{"name": "Товар"}]
+        assert SearchProcessor.check_relevance("", items) == []
+
+    def test_empty_items_returns_empty(self):
+        """Пустой список товаров → пустой список."""
+        assert SearchProcessor.check_relevance("стейк вагю", []) == []
+
+    def test_short_words_ignored(self):
+        """Слова короче _MIN_RELEVANCE_WORD_LEN (3) не проверяются."""
+        items = [{"name": "Чай зелёный"}]
+        # "на" — 2 символа, должно игнорироваться
+        assert SearchProcessor.check_relevance("чай на травах", items) == ["травах"]
+
+    def test_stop_words_ignored(self):
+        """Русские стоп-слова не проверяются."""
+        items = [{"name": "Молоко пастеризованное"}]
+        # "без", "для" — стоп-слова
+        assert SearchProcessor.check_relevance("молоко без лактозы", items) == ["лактозы"]
+
+    def test_partial_match_in_name(self):
+        """Подстрока «форел» найдена в «Форель» — считается совпадением."""
+        items = [{"name": "Форель стейк охл."}]
+        assert SearchProcessor.check_relevance("форель", items) == []
+
+    def test_non_dict_items_skipped(self):
+        """Не-dict элементы в items не ломают проверку."""
+        items = ["not_dict", 42, {"name": "Стейк из говядины"}]
+        assert SearchProcessor.check_relevance("стейк говядины", items) == []
+
+    def test_items_without_name_skipped(self):
+        """Элементы без ключа name обрабатываются корректно."""
+        items = [{"xml_id": 1}, {"name": "Товар вагю"}]
+        assert SearchProcessor.check_relevance("вагю", items) == []
+
+    def test_real_wagyu_case(self):
+        """Реальный кейс: запрос «стейк вагю», результат — форель."""
+        items = [
+            {"name": "Форель стейк охл., вес"},
+            {"name": "Кета стейк охл., вес"},
+            {"name": "Стейк Мачете из мраморной говядины"},
+            {"name": "Стейк из говядины «Денвер»"},
+            {"name": "Стейк из свинины"},
+        ]
+        missing = SearchProcessor.check_relevance("стейк вагю", items)
+        assert missing == ["вагю"]
+
+    def test_all_words_present_in_different_items(self):
+        """Каждое слово найдено хотя бы в одном товаре (но в разных)."""
+        items = [
+            {"name": "Соус устричный"},
+            {"name": "Масло оливковое"},
+        ]
+        # "соус" в первом, "оливковое" во втором
+        assert SearchProcessor.check_relevance("соус оливковое", items) == []
+
+    def test_constants_exported(self):
+        """Константы _MIN_RELEVANCE_WORD_LEN и _STOP_WORDS экспортируются."""
+        assert _MIN_RELEVANCE_WORD_LEN == 3
+        assert isinstance(_STOP_WORDS, frozenset)
+        assert "без" in _STOP_WORDS
+        assert "для" in _STOP_WORDS
+
+
+# ============================================================================
+# Интеграция: relevance_warning в trim_search_result
+# ============================================================================
+
+
+class TestTrimSearchResultRelevance:
+    """Тесты: trim_search_result добавляет relevance_warning при несоответствии."""
+
+    def test_adds_warning_when_term_missing(self, processor):
+        """Добавляет relevance_warning если слово не найдено в товарах."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "meta": {"q": "стейк вагю", "total": 53},
+                "items": [
+                    {
+                        "xml_id": 32976,
+                        "name": "Форель стейк охл., вес",
+                        "price": {"current": 2235},
+                        "unit": "кг",
+                    },
+                ],
+            },
+        })
+        result = json.loads(processor.trim_search_result(search_result))
+        warning = result["data"].get("relevance_warning", "")
+        assert "вагю" in warning
+        assert "не найдено" in warning
+
+    def test_no_warning_when_all_terms_match(self, processor):
+        """Не добавляет warning если все слова запроса найдены."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "meta": {"q": "молоко", "total": 10},
+                "items": [
+                    {
+                        "xml_id": 1,
+                        "name": "Молоко 3,2%",
+                        "price": {"current": 79},
+                        "unit": "шт",
+                    },
+                ],
+            },
+        })
+        result = json.loads(processor.trim_search_result(search_result))
+        assert "relevance_warning" not in result["data"]
+
+    def test_no_warning_without_meta(self, processor):
+        """Без meta.q — warning не добавляется."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "items": [
+                    {
+                        "xml_id": 1,
+                        "name": "Товар",
+                        "price": {"current": 50},
+                        "unit": "шт",
+                    },
+                ],
+            },
+        })
+        result = json.loads(processor.trim_search_result(search_result))
+        assert "relevance_warning" not in result["data"]
+
+    def test_warning_contains_query(self, processor):
+        """Warning содержит оригинальный запрос."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "meta": {"q": "фуа-гра", "total": 5},
+                "items": [
+                    {
+                        "xml_id": 1,
+                        "name": "Паштет куриный",
+                        "price": {"current": 200},
+                        "unit": "шт",
+                    },
+                ],
+            },
+        })
+        result = json.loads(processor.trim_search_result(search_result))
+        warning = result["data"]["relevance_warning"]
+        assert "фуа-гра" in warning
+        assert "альтернатив" in warning
+
+    def test_no_warning_on_empty_items(self, processor):
+        """Нет warning если items пуст (trim возвращает оригинал)."""
+        raw = json.dumps({"ok": True, "data": {"meta": {"q": "вагю"}, "items": []}})
+        # parse_search_items вернёт None → trim вернёт оригинал без warning
+        result = processor.trim_search_result(raw)
+        assert result == raw
+
+    def test_warning_on_exotic_product(self, processor):
+        """Проверка: экзотический товар «трюфель белый» → warning на «белый»."""
+        search_result = json.dumps({
+            "ok": True,
+            "data": {
+                "meta": {"q": "трюфель белый", "total": 20},
+                "items": [
+                    {
+                        "xml_id": 1,
+                        "name": "Масло трюфельное",
+                        "price": {"current": 500},
+                        "unit": "шт",
+                    },
+                    {
+                        "xml_id": 2,
+                        "name": "Чипсы со вкусом трюфеля",
+                        "price": {"current": 150},
+                        "unit": "шт",
+                    },
+                ],
+            },
+        })
+        result = json.loads(processor.trim_search_result(search_result))
+        warning = result["data"].get("relevance_warning", "")
+        assert "белый" in warning
