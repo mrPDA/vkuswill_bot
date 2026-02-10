@@ -4,10 +4,17 @@ import copy
 import json
 import logging
 import math
+import re
 
 from vkuswill_bot.services.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
+
+# Минимум совпадающих слов в названиях для определения дубля
+_MIN_NAME_OVERLAP = 2
+
+# Минимальная длина слова для сравнения названий
+_MIN_WORD_LEN = 3
 
 
 class CartProcessor:
@@ -266,6 +273,86 @@ class CartProcessor:
             report["ok"] = True
 
         return report
+
+    async def detect_similar_items(
+        self,
+        args: dict,
+    ) -> list[tuple[str, str]]:
+        """Обнаружить похожие товары в корзине.
+
+        Сравнивает названия товаров попарно. Если два товара имеют
+        >= _MIN_NAME_OVERLAP общих значимых слов — считаем их похожими.
+
+        Пример: «Форель радужная стейк охл.» и «Форель радужная стейк зам.»
+        имеют 3 общих слова → дубль.
+
+        Returns:
+            Список пар (name1, name2) похожих товаров.
+        """
+        products = args.get("products", [])
+        if len(products) < 2:
+            return []
+
+        # Собираем (xml_id, name, значимые_слова)
+        items_info: list[tuple[int, str, frozenset[str]]] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            cached = await self._price_cache.get(xml_id)
+            if cached:
+                name = cached.name
+                words = frozenset(
+                    w for w in re.findall(r"\w+", name.lower())
+                    if len(w) >= _MIN_WORD_LEN
+                )
+                items_info.append((xml_id, name, words))
+
+        # Попарное сравнение
+        duplicates: list[tuple[str, str]] = []
+        for i in range(len(items_info)):
+            for j in range(i + 1, len(items_info)):
+                _, name1, words1 = items_info[i]
+                _, name2, words2 = items_info[j]
+                overlap = words1 & words2
+                if len(overlap) >= _MIN_NAME_OVERLAP:
+                    duplicates.append((name1, name2))
+
+        return duplicates
+
+    async def add_duplicate_warning(
+        self,
+        args: dict,
+        result: str,
+    ) -> str:
+        """Добавить предупреждение о похожих товарах в результат корзины.
+
+        Если в корзине обнаружены товары с похожими названиями
+        (например, охлаждённый и замороженный стейк форели),
+        добавляет поле ``duplicate_warning`` в data.
+        """
+        duplicates = await self.detect_similar_items(args)
+        if not duplicates:
+            return result
+
+        try:
+            result_data = json.loads(result)
+            data = result_data.get("data")
+            if isinstance(data, dict):
+                pairs = [f"«{n1}» и «{n2}»" for n1, n2 in duplicates]
+                data["duplicate_warning"] = (
+                    "В корзине обнаружены похожие товары: "
+                    + "; ".join(pairs) + ". "
+                    "Возможно, это дубли одной позиции. "
+                    "Проверь и оставь только ОДИН вариант."
+                )
+                logger.warning("Дубли в корзине: %s", pairs)
+                return json.dumps(
+                    result_data, ensure_ascii=False, indent=4,
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return result
 
     async def add_verification(
         self,

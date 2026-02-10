@@ -11,6 +11,24 @@ logger = logging.getLogger(__name__)
 # Максимум товаров в результатах поиска (экономия токенов)
 SEARCH_LIMIT = 5
 
+# Минимальная длина слова для проверки релевантности
+_MIN_RELEVANCE_WORD_LEN = 3
+
+# Русские стоп-слова (не учитываются при проверке релевантности)
+_STOP_WORDS: frozenset[str] = frozenset({
+    "без", "более", "бы", "был", "была", "были", "было",
+    "быть", "вам", "вас", "весь", "вот", "все", "всё",
+    "всех", "вся", "где", "для", "его", "еда", "еды",
+    "если", "есть", "ещё", "жир", "или", "ими", "как",
+    "кое", "мне", "мой", "моя", "моё", "мои", "над",
+    "нам", "нас", "наш", "наша", "наше", "наши",
+    "них", "она", "они", "оно", "при", "про",
+    "сам", "сама", "само", "сами", "свой", "своя",
+    "своё", "свои", "так", "тебе", "тебя", "тем",
+    "тех", "что", "чем", "чей", "чья", "чьё",
+    "чьи", "эта", "эти", "это", "этих", "этой", "этом",
+})
+
 
 class SearchProcessor:
     """Обработка результатов поиска ВкусВилл и кеширование цен.
@@ -77,12 +95,53 @@ class SearchProcessor:
             return None
         return data, items
 
+    @staticmethod
+    def check_relevance(query: str, items: list[dict]) -> list[str]:
+        """Проверить, содержат ли результаты поиска все слова запроса.
+
+        Токенизирует запрос на значимые слова (длиннее 2 символов, не стоп-слова)
+        и проверяет, встречается ли каждое слово хотя бы в одном названии товара.
+
+        Args:
+            query: Поисковый запрос пользователя.
+            items: Список товаров (dict с ключом ``name``).
+
+        Returns:
+            Список слов из запроса, которые НЕ найдены ни в одном названии товара.
+            Пустой список означает полное соответствие.
+        """
+        if not query or not items:
+            return []
+
+        # Токенизация: значимые слова (>= _MIN_RELEVANCE_WORD_LEN, не стоп-слова)
+        words = [
+            w.lower()
+            for w in query.split()
+            if len(w) >= _MIN_RELEVANCE_WORD_LEN and w.lower() not in _STOP_WORDS
+        ]
+        if not words:
+            return []
+
+        # Собираем все названия товаров в одну строку (lower)
+        all_names = " ".join(
+            item.get("name", "").lower()
+            for item in items
+            if isinstance(item, dict)
+        )
+
+        # Проверяем каждое слово: есть ли оно (как подстрока) хотя бы в одном названии
+        return [word for word in words if word not in all_names]
+
     def trim_search_result(self, result_text: str) -> str:
         """Обрезать результат поиска, оставив только нужные поля.
 
         Убирает description, images, slug и другие тяжёлые поля,
         чтобы не раздувать контекстное окно GigaChat.
         Кеширование цен делается ДО обрезки (в cache_prices).
+
+        Если значимые слова из запроса не найдены ни в одном товаре,
+        добавляет ``relevance_warning`` — сигнал для GigaChat, что товар
+        может отсутствовать в каталоге.
         """
         parsed = self.parse_search_items(result_text)
         if parsed is None:
@@ -107,6 +166,26 @@ class SearchProcessor:
             trimmed_items.append(trimmed)
 
         data_field["items"] = trimmed_items
+
+        # ---- Проверка релевантности ----
+        meta = data_field.get("meta", {})
+        query = meta.get("q", "") if isinstance(meta, dict) else ""
+        if query and trimmed_items:
+            missing = self.check_relevance(query, trimmed_items)
+            if missing:
+                terms_str = ", ".join(f"«{t}»" for t in missing)
+                data_field["relevance_warning"] = (
+                    f"По запросу «{query}» не найдено товаров, содержащих: "
+                    f"{terms_str}. Возможно, этот товар отсутствует в каталоге "
+                    f"ВкусВилл. Сообщи пользователю и спроси, "
+                    f"подойдёт ли альтернатива из результатов."
+                )
+                logger.info(
+                    "Релевантность: запрос %r, не найдены термины: %s",
+                    query,
+                    missing,
+                )
+
         return json.dumps(data, ensure_ascii=False)
 
     async def cache_prices(self, result_text: str) -> None:

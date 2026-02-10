@@ -15,6 +15,7 @@ from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.prompts import (
+    CART_PREVIOUS_TOOL,
     ERROR_GIGACHAT,
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
@@ -46,6 +47,9 @@ DEFAULT_GIGACHAT_MAX_CONCURRENT = 15
 # Макс. количество retry при 429 от GigaChat
 GIGACHAT_MAX_RETRIES = 3
 
+# Лимит количества поисковых запросов в search_log на пользователя
+MAX_SEARCH_LOG_QUERIES = 100
+
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat и MCP-инструментами.
@@ -58,6 +62,7 @@ class GigaChatService:
     # Описания инструментов (определены в prompts.py)
     _RECIPE_TOOL = RECIPE_TOOL
     _LOCAL_TOOLS = LOCAL_TOOLS
+    _CART_PREVIOUS_TOOL = CART_PREVIOUS_TOOL
 
     def __init__(
         self,
@@ -94,6 +99,7 @@ class GigaChatService:
         self._conversations = getattr(self._dialog_manager, "conversations", {})  # обратная совместимость
 
         self._functions: list[dict] | None = None
+        self._search_logs: dict[int, dict[str, set[int]]] = {}
         self._search_processor = SearchProcessor()  # создаёт PriceCache внутри
         self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
@@ -129,6 +135,8 @@ class GigaChatService:
             self._functions.extend(self._LOCAL_TOOLS)
         if self._recipe_store is not None:
             self._functions.append(self._RECIPE_TOOL)
+        # Инструмент получения предыдущей корзины (всегда доступен)
+        self._functions.append(self._CART_PREVIOUS_TOOL)
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
 
@@ -165,8 +173,29 @@ class GigaChatService:
         dm.trim(user_id)
 
     async def reset_conversation(self, user_id: int) -> None:
-        """Сбросить историю диалога (async, работает с любым бэкендом)."""
+        """Сбросить историю диалога и search_log (async, работает с любым бэкендом)."""
         await self._dialog_manager.areset(user_id)
+        self._search_logs.pop(user_id, None)
+
+    # ---- Session-level search_log ----
+
+    def _get_search_log(self, user_id: int) -> dict[str, set[int]]:
+        """Получить search_log для пользователя (накопленный за сессию).
+
+        search_log хранит маппинг: поисковый запрос → множество xml_id,
+        найденных по этому запросу. Используется верификацией корзины.
+        """
+        return self._search_logs.get(user_id, {})
+
+    def _save_search_log(
+        self, user_id: int, search_log: dict[str, set[int]],
+    ) -> None:
+        """Сохранить search_log для пользователя с лимитом размера."""
+        if len(search_log) > MAX_SEARCH_LOG_QUERIES:
+            keys = list(search_log.keys())
+            for key in keys[: len(keys) - MAX_SEARCH_LOG_QUERIES]:
+                del search_log[key]
+        self._search_logs[user_id] = search_log
 
     async def _handle_recipe_ingredients(self, args: dict) -> str:
         if self._recipe_service is not None:
@@ -255,7 +284,8 @@ class GigaChatService:
         history.append(Messages(role=MessagesRole.USER, content=text))
         functions = await self._get_functions()
         call_tracker = CallTracker()
-        search_log: dict[str, set[int]] = {}
+        # Загружаем накопленный search_log из сессии (не пустой dict!)
+        search_log = self._get_search_log(user_id)
         user_prefs: dict[str, str] = {}
         te = self._tool_executor
 
@@ -277,6 +307,7 @@ class GigaChatService:
             te.build_assistant_message(history, msg)
 
             if not msg.function_call:
+                self._save_search_log(user_id, search_log)
                 history = dm.trim_list(history)
                 await dm.save_history(user_id, history)
                 return msg.content or "Не удалось получить ответ."
@@ -302,6 +333,7 @@ class GigaChatService:
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
 
+        self._save_search_log(user_id, search_log)
         history = dm.trim_list(history)
         await dm.save_history(user_id, history)
         return ERROR_TOO_MANY_STEPS

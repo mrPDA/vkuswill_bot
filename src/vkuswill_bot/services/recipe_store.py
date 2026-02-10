@@ -122,6 +122,23 @@ class RecipeStore:
             len(ingredients),
         )
 
+    async def delete(self, dish_name: str) -> bool:
+        """Удалить рецепт из кеша.
+
+        Returns:
+            True если рецепт был удалён, False если не найден.
+        """
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "DELETE FROM recipes WHERE dish_name = ?",
+            (self.normalize_dish_name(dish_name),),
+        )
+        await db.commit()
+        deleted = cursor.rowcount > 0
+        if deleted:
+            logger.info("Рецепт удалён из кеша: %s", dish_name)
+        return deleted
+
     async def close(self) -> None:
         """Закрыть соединение с БД."""
         if self._db is not None:
