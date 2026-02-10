@@ -36,6 +36,7 @@ LOCAL_TOOL_NAMES = frozenset({
     "user_preferences_set",
     "user_preferences_delete",
     "recipe_ingredients",
+    "get_previous_cart",
 })
 
 
@@ -273,6 +274,9 @@ class ToolExecutor:
 
         elif tool_name == "vkusvill_cart_link_create":
             result = await self._cart_processor.calc_total(args, result)
+            result = await self._cart_processor.add_duplicate_warning(
+                args, result,
+            )
             if search_log:
                 result = await self._cart_processor.add_verification(
                     args, result, search_log,
@@ -319,7 +323,7 @@ class ToolExecutor:
     async def _call_local_tool(
         self, tool_name: str, args: dict, user_id: int,
     ) -> str:
-        """Выполнить локальный инструмент (предпочтения).
+        """Выполнить локальный инструмент (предпочтения, корзина).
 
         Рецепты обрабатываются через RecipeService (вне ToolExecutor).
         """
@@ -330,6 +334,9 @@ class ToolExecutor:
                 {"ok": False, "error": "Кеш рецептов не настроен"},
                 ensure_ascii=False,
             )
+
+        if tool_name == "get_previous_cart":
+            return await self._get_previous_cart(user_id)
 
         if self._prefs_store is None:
             return json.dumps(
@@ -361,6 +368,45 @@ class ToolExecutor:
                 {"ok": False, "error": f"Неизвестный локальный инструмент: {tool_name}"},
                 ensure_ascii=False,
             )
+
+    async def _get_previous_cart(self, user_id: int) -> str:
+        """Получить содержимое предыдущей корзины пользователя.
+
+        Возвращает JSON с products, link, total — или сообщение
+        что корзины нет.
+        """
+        if self._cart_snapshot_store is None:
+            return json.dumps(
+                {"ok": False, "message": "Предыдущая корзина недоступна"},
+                ensure_ascii=False,
+            )
+        snapshot = await self._cart_snapshot_store.get(user_id)
+        if snapshot is None:
+            return json.dumps(
+                {"ok": True, "message": "У пользователя нет предыдущей корзины"},
+                ensure_ascii=False,
+            )
+        # Обогащаем снимок именами товаров из кеша цен
+        products = snapshot.get("products", [])
+        enriched_products = []
+        for item in products:
+            xml_id = item.get("xml_id")
+            q = item.get("q", 1)
+            cached = await self._cart_processor._price_cache.get(xml_id)
+            product_info: dict = {"xml_id": xml_id, "q": q}
+            if cached:
+                product_info["name"] = cached.name
+                product_info["price"] = cached.price
+                product_info["unit"] = cached.unit
+            enriched_products.append(product_info)
+        result: dict = {
+            "ok": True,
+            "products": enriched_products,
+            "link": snapshot.get("link", ""),
+            "total": snapshot.get("total"),
+            "created_at": snapshot.get("created_at", ""),
+        }
+        return json.dumps(result, ensure_ascii=False)
 
     # ---- Вспомогательные статические методы ----
 

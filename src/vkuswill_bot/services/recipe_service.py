@@ -20,6 +20,21 @@ from vkuswill_bot.services.recipe_store import RecipeStore
 
 logger = logging.getLogger(__name__)
 
+# ---- Ферментированные / консервированные продукты ----
+# Эти продукты НЕЛЬЗЯ разбирать на сырые ингредиенты,
+# их приготовление занимает дни/недели. Бот должен искать готовые.
+FERMENTED_KEYWORDS: frozenset[str] = frozenset({
+    "квашеная", "квашеный", "квашеное", "квашеные",
+    "солёная", "солёный", "солёное", "солёные",
+    "соленая", "соленый", "соленое", "соленые",
+    "маринованная", "маринованный", "маринованное", "маринованные",
+    "мочёная", "мочёный", "мочёное", "мочёные",
+    "моченая", "моченый", "моченое", "моченые",
+    "кимчи",
+    "аджика", "ткемали", "горчица",
+    "варенье", "джем", "повидло", "конфитюр",
+})
+
 # Приблизительный вес 1 штуки в кг для овощей/фруктов
 PIECE_WEIGHT_KG: dict[str, float] = {
     "картофель": 0.15, "картошка": 0.15,
@@ -47,6 +62,16 @@ class RecipeService:
         self._client = gigachat_client
         self._recipe_store = recipe_store
 
+    @staticmethod
+    def is_fermented_product(dish: str) -> bool:
+        """Проверить, является ли блюдо ферментированным/консервированным.
+
+        Такие продукты нельзя разбирать на сырые ингредиенты —
+        их приготовление занимает дни и недели.
+        """
+        words = dish.lower().split()
+        return any(word in FERMENTED_KEYWORDS for word in words)
+
     async def get_ingredients(self, args: dict) -> str:
         """Обработать вызов recipe_ingredients: кеш → LLM-fallback → кеш.
 
@@ -63,9 +88,29 @@ class RecipeService:
                 ensure_ascii=False,
             )
 
-        servings = args.get("servings", 4)
+        # Блокируем ферментированные/консервированные продукты
+        if self.is_fermented_product(dish):
+            logger.info(
+                "Блокировка рецепта для ферментированного продукта: %r",
+                dish,
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "error": (
+                        f"«{dish}» — это готовый ферментированный/консервированный "
+                        "продукт. Его нельзя приготовить за вечер! "
+                        "Ищи его как ГОТОВЫЙ ТОВАР через "
+                        f'vkusvill_products_search(q="{dish}"). '
+                        "НЕ разбирай на сырые ингредиенты."
+                    ),
+                },
+                ensure_ascii=False,
+            )
+
+        servings = args.get("servings", 2)
         if not isinstance(servings, int) or servings <= 0:
-            servings = 4
+            servings = 2
 
         # 1. Проверяем кеш
         cached = await self._recipe_store.get(dish)

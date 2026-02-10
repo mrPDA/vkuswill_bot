@@ -26,6 +26,45 @@ CART_SNAPSHOT_TTL = 86400
 _KEY_PREFIX = "cart:"
 
 
+class InMemoryCartSnapshotStore:
+    """In-memory fallback для хранения снимков корзины (без Redis).
+
+    Хранит последний снимок корзины каждого пользователя в памяти.
+    При рестарте бота данные теряются.
+    """
+
+    def __init__(self, ttl: int = CART_SNAPSHOT_TTL) -> None:
+        self._ttl = ttl
+        self._data: dict[int, dict] = {}
+
+    async def save(
+        self,
+        user_id: int,
+        products: list[dict],
+        link: str,
+        total: float | None = None,
+    ) -> None:
+        """Сохранить снимок корзины в памяти."""
+        self._data[user_id] = {
+            "products": products,
+            "link": link,
+            "total": total,
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+        logger.debug(
+            "Снимок корзины сохранён (in-memory): user=%d, products=%d",
+            user_id, len(products),
+        )
+
+    async def get(self, user_id: int) -> dict | None:
+        """Получить последний снимок корзины пользователя."""
+        return self._data.get(user_id)
+
+    async def delete(self, user_id: int) -> None:
+        """Удалить снимок корзины пользователя."""
+        self._data.pop(user_id, None)
+
+
 class CartSnapshotStore:
     """Сохранение и получение последней корзины пользователя из Redis."""
 
