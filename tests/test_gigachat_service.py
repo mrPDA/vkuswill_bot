@@ -30,6 +30,7 @@ from vkuswill_bot.services.gigachat_service import (
     GIGACHAT_MAX_RETRIES,
     GigaChatService,
     MAX_CONVERSATIONS,
+    MAX_SEARCH_LOG_QUERIES,
     MAX_USER_MESSAGE_LENGTH,
 )
 from helpers import make_text_response, make_function_call_response
@@ -503,11 +504,12 @@ class TestGetFunctions:
     """Тесты _get_functions: загрузка описаний функций для GigaChat."""
 
     async def test_loads_from_mcp(self, service, mock_mcp_client):
-        """Загружает функции из MCP-клиента."""
+        """Загружает функции из MCP-клиента + get_previous_cart."""
         functions = await service._get_functions()
+        names = [f["name"] for f in functions]
 
-        assert len(functions) == 1
-        assert functions[0]["name"] == "vkusvill_products_search"
+        assert "vkusvill_products_search" in names
+        assert "get_previous_cart" in names
         mock_mcp_client.get_tools.assert_called_once()
 
     async def test_caches_result(self, service, mock_mcp_client):
@@ -1014,10 +1016,10 @@ class TestHandleRecipeIngredients:
     async def test_default_servings(
         self, service_with_recipes, mock_recipe_store,
     ):
-        """Без параметра servings используется 4 по умолчанию."""
+        """Без параметра servings используется 2 по умолчанию."""
         mock_recipe_store.get.return_value = {
             "dish_name": "борщ",
-            "servings": 4,
+            "servings": 2,
             "ingredients": [{"name": "свёкла", "quantity": 0.5}],
         }
 
@@ -1026,16 +1028,16 @@ class TestHandleRecipeIngredients:
         )
         parsed = json.loads(result)
 
-        assert parsed["servings"] == 4
+        assert parsed["servings"] == 2
         assert parsed["ok"] is True
 
-    async def test_invalid_servings_defaults_to_4(
+    async def test_invalid_servings_defaults_to_2(
         self, service_with_recipes, mock_recipe_store,
     ):
-        """Некорректный servings заменяется на 4."""
+        """Некорректный servings заменяется на 2."""
         mock_recipe_store.get.return_value = {
             "dish_name": "борщ",
-            "servings": 4,
+            "servings": 2,
             "ingredients": [{"name": "свёкла", "quantity": 0.5}],
         }
 
@@ -1043,7 +1045,7 @@ class TestHandleRecipeIngredients:
             {"dish": "борщ", "servings": -1},
         )
         parsed = json.loads(result)
-        assert parsed["servings"] == 4
+        assert parsed["servings"] == 2
 
     async def test_cache_miss_with_markdown_response(
         self, service_with_recipes, mock_recipe_store,
@@ -1257,13 +1259,13 @@ class TestHandleRecipeIngredientsEdgeCases:
         parsed = json.loads(result)
         assert parsed["ok"] is False
 
-    async def test_servings_string_defaults_to_4(
+    async def test_servings_string_defaults_to_2(
         self, service_with_recipes, mock_recipe_store,
     ):
-        """servings="два" (строка) → заменяется на 4."""
+        """servings="два" (строка) → заменяется на 2."""
         mock_recipe_store.get.return_value = {
             "dish_name": "борщ",
-            "servings": 4,
+            "servings": 2,
             "ingredients": [{"name": "свёкла", "quantity": 0.5}],
         }
 
@@ -1271,15 +1273,15 @@ class TestHandleRecipeIngredientsEdgeCases:
             {"dish": "борщ", "servings": "два"},
         )
         parsed = json.loads(result)
-        assert parsed["servings"] == 4
+        assert parsed["servings"] == 2
 
-    async def test_servings_zero_defaults_to_4(
+    async def test_servings_zero_defaults_to_2(
         self, service_with_recipes, mock_recipe_store,
     ):
-        """servings=0 → заменяется на 4."""
+        """servings=0 → заменяется на 2."""
         mock_recipe_store.get.return_value = {
             "dish_name": "борщ",
-            "servings": 4,
+            "servings": 2,
             "ingredients": [{"name": "свёкла", "quantity": 0.5}],
         }
 
@@ -1287,7 +1289,7 @@ class TestHandleRecipeIngredientsEdgeCases:
             {"dish": "борщ", "servings": 0},
         )
         parsed = json.loads(result)
-        assert parsed["servings"] == 4
+        assert parsed["servings"] == 2
 
     async def test_dish_with_whitespace_only(
         self, service_with_recipes,
@@ -1612,3 +1614,87 @@ class TestSyncDelegatesWithRedisBackend:
     def test_conversations_fallback_to_empty_dict(self, service_with_redis):
         """_conversations = {} когда у бэкенда нет свойства conversations."""
         assert service_with_redis._conversations == {}
+
+
+# ============================================================================
+# Session-level search_log (Phase A)
+# ============================================================================
+
+
+class TestSessionSearchLog:
+    """Тесты персистентного search_log на уровне сессии.
+
+    search_log накапливается между сообщениями пользователя
+    и очищается при /reset.
+    """
+
+    @pytest.fixture
+    def service(self, mock_mcp_client):
+        """GigaChatService для тестов search_log."""
+        return GigaChatService(
+            credentials="test-creds",
+            model="GigaChat",
+            scope="GIGACHAT_API_PERS",
+            mcp_client=mock_mcp_client,
+        )
+
+    def test_get_search_log_empty_by_default(self, service):
+        """Новый пользователь — пустой search_log."""
+        log = service._get_search_log(user_id=42)
+        assert log == {}
+
+    def test_save_and_get_search_log(self, service):
+        """Сохранение и загрузка search_log."""
+        log = {"молоко": {100, 200}, "хлеб": {300}}
+        service._save_search_log(user_id=42, search_log=log)
+
+        loaded = service._get_search_log(user_id=42)
+        assert loaded == log
+        assert loaded["молоко"] == {100, 200}
+
+    def test_search_log_persists_across_calls(self, service):
+        """search_log сохраняется между вызовами."""
+        service._save_search_log(42, {"q1": {1, 2}})
+        service._save_search_log(42, {"q1": {1, 2}, "q2": {3}})
+
+        log = service._get_search_log(42)
+        assert "q1" in log
+        assert "q2" in log
+
+    def test_search_log_isolates_users(self, service):
+        """search_log не пересекается между пользователями."""
+        service._save_search_log(1, {"a": {10}})
+        service._save_search_log(2, {"b": {20}})
+
+        assert service._get_search_log(1) == {"a": {10}}
+        assert service._get_search_log(2) == {"b": {20}}
+
+    async def test_reset_clears_search_log(self, service):
+        """reset_conversation очищает search_log пользователя."""
+        service._save_search_log(42, {"q": {1}})
+        assert service._get_search_log(42) != {}
+
+        await service.reset_conversation(42)
+        assert service._get_search_log(42) == {}
+
+    def test_search_log_size_limit(self, service):
+        """search_log обрезается при превышении MAX_SEARCH_LOG_QUERIES."""
+        big_log = {f"query_{i}": {i} for i in range(MAX_SEARCH_LOG_QUERIES + 50)}
+        service._save_search_log(42, big_log)
+
+        saved = service._get_search_log(42)
+        assert len(saved) <= MAX_SEARCH_LOG_QUERIES
+
+    def test_max_search_log_queries_value(self):
+        """MAX_SEARCH_LOG_QUERIES имеет разумное значение."""
+        assert 10 <= MAX_SEARCH_LOG_QUERIES <= 500
+
+
+class TestGetPreviousCartTool:
+    """Тесты: get_previous_cart включён в функции GigaChat."""
+
+    async def test_always_included(self, service):
+        """get_previous_cart всегда в списке функций."""
+        functions = await service._get_functions()
+        names = [f["name"] for f in functions]
+        assert "get_previous_cart" in names

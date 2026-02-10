@@ -290,3 +290,43 @@ class TestWALMode:
             row = await cursor.fetchone()
             assert row[0] == "wal"
         await store.close()
+
+
+# ============================================================================
+# Delete — удаление рецептов из кеша
+# ============================================================================
+
+
+class TestDeleteRecipe:
+    """Тесты метода RecipeStore.delete."""
+
+    async def test_delete_existing_recipe(self, tmp_path):
+        """Удаление существующего рецепта возвращает True."""
+        store = RecipeStore(str(tmp_path / "del.db"))
+        await store.save("квашеная капуста", 4, [{"name": "капуста"}])
+        assert await store.get("квашеная капуста") is not None
+
+        result = await store.delete("квашеная капуста")
+        assert result is True
+        assert await store.get("квашеная капуста") is None
+        await store.close()
+
+    async def test_delete_nonexistent_recipe(self, tmp_path):
+        """Удаление несуществующего рецепта возвращает False."""
+        store = RecipeStore(str(tmp_path / "del2.db"))
+        # Инициализируем БД
+        await store.save("борщ", 4, [{"name": "свёкла"}])
+
+        result = await store.delete("несуществующий рецепт")
+        assert result is False
+        await store.close()
+
+    async def test_delete_normalizes_name(self, tmp_path):
+        """Delete нормализует имя (регистр)."""
+        store = RecipeStore(str(tmp_path / "del3.db"))
+        await store.save("Кимчи", 4, [{"name": "капуста пекинская"}])
+
+        result = await store.delete("КИМЧИ")
+        assert result is True
+        assert await store.get("кимчи") is None
+        await store.close()

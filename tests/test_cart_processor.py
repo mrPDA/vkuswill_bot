@@ -5,13 +5,18 @@
 - Округление q до целого для штучных товаров
 - Расчёт стоимости корзины
 - Верификацию корзины (сопоставление с поисковыми запросами)
+- Детекцию похожих товаров (дубли в корзине)
 """
 
 import json
 
 import pytest
 
-from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.cart_processor import (
+    CartProcessor,
+    _MIN_NAME_OVERLAP,
+    _MIN_WORD_LEN,
+)
 from vkuswill_bot.services.price_cache import PriceCache
 
 
@@ -537,3 +542,145 @@ class TestAddVerification:
             {"products": []}, None, {}
         )
         assert result is None
+
+
+# ============================================================================
+# Детекция похожих товаров (дубли в корзине)
+# ============================================================================
+
+
+class TestDetectSimilarItems:
+    """Тесты detect_similar_items: обнаружение дублей в корзине."""
+
+    async def test_real_case_fresh_and_frozen_trout(self, processor, price_cache):
+        """Реальный кейс: охл. и зам. стейк форели → дубль."""
+        await price_cache.set(32976, name="Форель радужная стейк охл., 450 г", price=1240, unit="шт")
+        await price_cache.set(45678, name="Форель радужная стейк зам., 500 г", price=1187, unit="шт")
+
+        args = {"products": [
+            {"xml_id": 32976, "q": 4},
+            {"xml_id": 45678, "q": 4},
+        ]}
+        duplicates = await processor.detect_similar_items(args)
+
+        assert len(duplicates) == 1
+        name1, name2 = duplicates[0]
+        assert "Форель" in name1 or "Форель" in name2
+
+    async def test_no_duplicates_different_products(self, processor, price_cache):
+        """Разные продукты → нет дублей."""
+        await price_cache.set(1, name="Молоко 3,2%", price=79, unit="шт")
+        await price_cache.set(2, name="Хлеб ржаной", price=50, unit="шт")
+        await price_cache.set(3, name="Масло сливочное 82,5%", price=282, unit="шт")
+
+        args = {"products": [
+            {"xml_id": 1, "q": 1},
+            {"xml_id": 2, "q": 1},
+            {"xml_id": 3, "q": 1},
+        ]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_different_butter_types_no_duplicate(self, processor, price_cache):
+        """Оливковое и сливочное масло — НЕ дубли (1 общее слово 'масло')."""
+        await price_cache.set(1, name="Масло оливковое Extra Virgin", price=650, unit="шт")
+        await price_cache.set(2, name="Масло сливочное 82,5%", price=282, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_single_item_no_duplicates(self, processor, price_cache):
+        """Один товар — нет дублей."""
+        await price_cache.set(1, name="Молоко", price=79, unit="шт")
+        args = {"products": [{"xml_id": 1, "q": 1}]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_empty_cart(self, processor):
+        """Пустая корзина → пустой список."""
+        duplicates = await processor.detect_similar_items({"products": []})
+        assert duplicates == []
+
+    async def test_no_products_key(self, processor):
+        """Без ключа products → пустой список."""
+        duplicates = await processor.detect_similar_items({})
+        assert duplicates == []
+
+    async def test_item_not_in_cache_skipped(self, processor, price_cache):
+        """Товар не в кеше — не ломает проверку."""
+        await price_cache.set(1, name="Форель радужная стейк охл.", price=1240, unit="шт")
+
+        args = {"products": [
+            {"xml_id": 1, "q": 1},
+            {"xml_id": 999, "q": 1},  # нет в кеше
+        ]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_non_dict_items_skipped(self, processor, price_cache):
+        """Не-dict элементы в products не ломают проверку."""
+        await price_cache.set(1, name="Товар один", price=100, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, "not_dict", 42]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_constants_exported(self):
+        """Константы экспортируются и имеют ожидаемые значения."""
+        assert _MIN_NAME_OVERLAP == 2
+        assert _MIN_WORD_LEN == 3
+
+
+class TestAddDuplicateWarning:
+    """Тесты add_duplicate_warning: предупреждение о дублях в результате корзины."""
+
+    async def test_adds_warning_on_duplicates(self, processor, price_cache):
+        """Добавляет duplicate_warning при обнаружении дублей."""
+        await price_cache.set(1, name="Форель радужная стейк охл., 450 г", price=1240, unit="шт")
+        await price_cache.set(2, name="Форель радужная стейк зам., 500 г", price=1187, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 4}, {"xml_id": 2, "q": 4}]}
+        result_text = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        parsed = json.loads(result)
+
+        assert "duplicate_warning" in parsed["data"]
+        assert "Форель" in parsed["data"]["duplicate_warning"]
+
+    async def test_no_warning_when_no_duplicates(self, processor, price_cache):
+        """Не добавляет warning при отсутствии дублей."""
+        await price_cache.set(1, name="Молоко 3,2%", price=79, unit="шт")
+        await price_cache.set(2, name="Хлеб ржаной", price=50, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        result_text = json.dumps({
+            "ok": True,
+            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+        })
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        parsed = json.loads(result)
+        assert "duplicate_warning" not in parsed["data"]
+
+    async def test_invalid_json_passthrough(self, processor):
+        """Невалидный JSON — возвращает как есть."""
+        result = await processor.add_duplicate_warning(
+            {"products": []}, "not json"
+        )
+        assert result == "not json"
+
+    async def test_data_not_dict_passthrough(self, processor, price_cache):
+        """data — не dict → возвращаем оригинал."""
+        await price_cache.set(1, name="Форель радужная стейк охл.", price=1240, unit="шт")
+        await price_cache.set(2, name="Форель радужная стейк зам.", price=1187, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        result_text = json.dumps({"ok": True, "data": "string"})
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        assert result == result_text
