@@ -75,8 +75,10 @@ ensure_yc_cli() {
 ensure_yc_cli
 
 # ─── 1. Авторизация в Container Registry ────────────────────
-log "Авторизация в Yandex Container Registry..."
-yc container registry configure-docker 2>/dev/null || true
+# Docker login выполняется в CD pipeline (json_key).
+# НЕ вызываем yc container registry configure-docker —
+# он перезаписывает Docker credential helper, требуя профиль yc.
+log "Docker auth: используется существующий docker login"
 
 # ─── 2. Загрузка секретов из Lockbox ────────────────────────
 load_lockbox_secrets() {
