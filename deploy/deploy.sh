@@ -44,6 +44,28 @@ log() { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err() { echo -e "${RED}[deploy]${NC} $*"; }
 
+# ─── 0. Установка yc CLI (если отсутствует) ────────────────────
+ensure_yc_cli() {
+  if command -v yc &>/dev/null; then
+    return
+  fi
+
+  log "Установка Yandex Cloud CLI..."
+  curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | \
+    bash -s -- -i /opt/yandex-cloud -n 2>/dev/null
+
+  # Добавить в PATH текущей сессии
+  export PATH="/opt/yandex-cloud/bin:$PATH"
+
+  if command -v yc &>/dev/null; then
+    log "yc CLI установлен: $(yc version 2>/dev/null || echo 'OK')"
+  else
+    warn "Не удалось установить yc CLI, продолжаем без Lockbox"
+  fi
+}
+
+ensure_yc_cli
+
 # ─── 1. Авторизация в Container Registry ────────────────────
 log "Авторизация в Yandex Container Registry..."
 yc container registry configure-docker 2>/dev/null || true
@@ -79,18 +101,18 @@ load_lockbox_secrets() {
     return
   fi
 
+  # Lockbox — основной источник секретов, перезаписывает .env
   echo "$LOCKBOX_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for entry in data.get('entries', []):
     key = entry['key']
-    # text_value или binary_value (base64)
     value = entry.get('text_value', '')
     print(f'{key}={value}')
 " > "$ENV_FILE"
 
   chmod 600 "$ENV_FILE"
-  log "Секреты загружены в ${ENV_FILE}"
+  log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей)"
 }
 
 # ─── 3. Pull нового образа ──────────────────────────────────

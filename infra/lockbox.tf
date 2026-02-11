@@ -42,6 +42,27 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.admin_user_ids
   }
 
+  # Webhook / Runtime
+  entries {
+    key        = "GIGACHAT_MODEL"
+    text_value = var.gigachat_model
+  }
+
+  entries {
+    key        = "USE_WEBHOOK"
+    text_value = "true"
+  }
+
+  entries {
+    key        = "WEBHOOK_HOST"
+    text_value = var.webhook_host
+  }
+
+  entries {
+    key        = "WEBHOOK_PORT"
+    text_value = "8080"
+  }
+
   # Langfuse (LLM-observability, self-hosted на VM)
   entries {
     key        = "LANGFUSE_ENABLED"
@@ -55,7 +76,7 @@ resource "yandex_lockbox_secret_version" "bot" {
 
   entries {
     key = "LANGFUSE_DATABASE_URL"
-    text_value = "postgresql://langfuse:${var.langfuse_pg_password}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse"
+    text_value = "postgresql://langfuse:${urlencode(var.langfuse_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse?sslmode=require"
   }
 
   entries {
