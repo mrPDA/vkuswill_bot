@@ -101,6 +101,14 @@ if [[ -f "$ENV_FILE" ]]; then
   ENV_FLAG="--env-file ${ENV_FILE}"
 fi
 
+# Проверить, что WEBHOOK_HOST задан в .env (необходим для регистрации webhook в Telegram)
+if [[ -f "$ENV_FILE" ]]; then
+  if ! grep -q '^WEBHOOK_HOST=.\+' "$ENV_FILE"; then
+    err "WEBHOOK_HOST не задан в ${ENV_FILE}. Укажите внешний домен/IP для webhook (например, bot.example.com)"
+    exit 1
+  fi
+fi
+
 # Директория для persistent-данных (SQLite preferences)
 DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
@@ -112,7 +120,6 @@ docker run -d \
   $ENV_FLAG \
   -v "${DATA_DIR}:/app/data" \
   -e "USE_WEBHOOK=true" \
-  -e "WEBHOOK_HOST=0.0.0.0" \
   -e "WEBHOOK_PORT=${HEALTH_PORT}" \
   --health-cmd "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${HEALTH_PORT}/health')\" 2>/dev/null || exit 1" \
   --health-interval=30s \
