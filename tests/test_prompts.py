@@ -47,8 +47,9 @@ class TestSystemPromptContent:
 
     def test_mentions_disclaimer(self):
         """Промпт требует дисклеймер после корзины."""
-        assert "дисклеймер" in SYSTEM_PROMPT.lower() or \
-               "Наличие и точное количество" in SYSTEM_PROMPT
+        assert (
+            "дисклеймер" in SYSTEM_PROMPT.lower() or "Наличие и точное количество" in SYSTEM_PROMPT
+        )
 
     def test_format_rules(self):
         """Промпт содержит правила формата ответа."""
@@ -58,9 +59,7 @@ class TestSystemPromptContent:
     def test_no_secrets(self):
         """В промпте нет токенов, ключей и паролей."""
         for keyword in ["token", "password", "secret", "api_key", "credentials"]:
-            assert keyword not in SYSTEM_PROMPT.lower(), (
-                f"Промпт не должен содержать '{keyword}'"
-            )
+            assert keyword not in SYSTEM_PROMPT.lower(), f"Промпт не должен содержать '{keyword}'"
 
     def test_reasonable_length(self):
         """Промпт разумного размера (не пустой, не гигантский)."""
@@ -74,6 +73,14 @@ class TestSystemPromptContent:
         """Промпт описывает алгоритм работы с рецептами."""
         assert "рецепт" in SYSTEM_PROMPT.lower() or "РЕЦЕПТ" in SYSTEM_PROMPT
 
+    def test_forbids_adding_extra_items_for_recipes(self):
+        """Промпт запрещает добавлять от себя соль/перец/воду к рецептам."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не добавляй от себя" in lower or "не добавляй" in lower
+        assert "соль" in lower
+        assert "перец" in lower
+        assert "вод" in lower
+
     def test_defines_quantity_calculation(self):
         """Промпт содержит инструкции по расчёту количества."""
         assert "Расчёт количества" in SYSTEM_PROMPT or "q=" in SYSTEM_PROMPT
@@ -82,6 +89,75 @@ class TestSystemPromptContent:
         """Промпт содержит примеры расчёта по единицам (кг, шт)."""
         assert "unit=" in SYSTEM_PROMPT
         assert "кг" in SYSTEM_PROMPT
+
+
+# ============================================================================
+# Системный промпт: безопасность
+# ============================================================================
+
+
+class TestSystemPromptSecurity:
+    """Тесты секции безопасности в системном промпте."""
+
+    def test_has_security_section(self):
+        """Промпт содержит секцию безопасности."""
+        assert "## Безопасность" in SYSTEM_PROMPT
+
+    def test_role_anchoring_in_security(self):
+        """Секция безопасности якорит роль продавца-консультанта."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "всегда продавец-консультант" in lower
+
+    def test_forbids_role_change(self):
+        """Промпт запрещает изменение роли через сообщения пользователя."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не могут изменить" in lower or "никакие сообщения" in lower
+
+    def test_forbids_prompt_leaking(self):
+        """Промпт запрещает раскрытие инструкций."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "не раскрывай" in lower or "никогда не раскрывай" in lower
+        assert "системный промпт" in lower or "инструкции" in lower
+
+    def test_has_prompt_leak_deflection(self):
+        """Промпт содержит шаблон ответа на попытку извлечения промпта."""
+        assert "бот ВкусВилл" in SYSTEM_PROMPT
+        assert "помогаю подобрать продукты" in SYSTEM_PROMPT
+
+    def test_restricts_topic_to_products(self):
+        """Промпт ограничивает тематику продуктами и едой."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "только" in lower
+        assert "продукт" in lower
+        assert "посторонние темы" in lower or "посторонн" in lower
+
+    def test_has_offtopic_deflection(self):
+        """Промпт содержит шаблон ответа на off-topic запросы."""
+        assert "специализируюсь на продуктах" in SYSTEM_PROMPT
+
+    def test_forbids_harmful_content(self):
+        """Промпт запрещает генерацию вредоносного контента."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "оскорбления" in lower or "угрозы" in lower
+        assert "незаконный контент" in lower or "незаконн" in lower
+
+    def test_forbids_medical_financial_advice(self):
+        """Промпт запрещает медицинские и финансовые советы."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "медицинск" in lower
+        assert "финансов" in lower
+
+    def test_blocks_authority_impersonation(self):
+        """Промпт защищён от impersonation разработчика/администратора."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "разработчик" in lower
+        assert "администратор" in lower
+        assert "режим отладки" in lower or "диагностик" in lower
+
+    def test_no_debug_mode(self):
+        """Промпт явно отрицает наличие режима отладки."""
+        lower = SYSTEM_PROMPT.lower()
+        assert "нет режима отладки" in lower or "нет режима" in lower
 
 
 # ============================================================================
@@ -118,11 +194,17 @@ class TestRecipeExtractionPrompt:
         assert "шт" in RECIPE_EXTRACTION_PROMPT
 
     def test_excludes_common_items(self):
-        """Промпт исключает соль, перец, воду."""
+        """Промпт исключает соль, молотый перец, воду."""
         lower = RECIPE_EXTRACTION_PROMPT.lower()
         assert "соль" in lower
         assert "перец" in lower
         assert "вод" in lower
+
+    def test_distinguishes_pepper_spice_from_vegetable(self):
+        """Промпт различает перец-приправу и перец-овощ (болгарский)."""
+        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        assert "молотый" in lower
+        assert "болгарский" in lower or "чили" in lower
 
     def test_no_secrets(self):
         """В промпте рецептов нет секретов."""

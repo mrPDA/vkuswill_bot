@@ -42,4 +42,23 @@ Archive/
 # Cursor IDE
 .cursor/
 
+# Нагрузочное тестирование (сессии Telethon содержат токены)
+loadtests/sessions/
+loadtests/*.session
+
+#развитие
 HABR_STRATEGY.md
+articles/
+docs/
+
+# Shell-скрипты (локальные)
+run.sh
+stop.sh
+
+# Terraform
+infra/.terraform/
+infra/*.tfstate*
+infra/*.tfvars
+!infra/terraform.tfvars.example
+infra/backend.conf
+infra/*.json

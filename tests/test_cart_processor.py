@@ -5,13 +5,18 @@
 - Округление q до целого для штучных товаров
 - Расчёт стоимости корзины
 - Верификацию корзины (сопоставление с поисковыми запросами)
+- Детекцию похожих товаров (дубли в корзине)
 """
 
 import json
 
 import pytest
 
-from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.cart_processor import (
+    CartProcessor,
+    _MIN_NAME_OVERLAP,
+    _MIN_WORD_LEN,
+)
 from vkuswill_bot.services.price_cache import PriceCache
 
 
@@ -95,47 +100,47 @@ class TestEnhanceCartSchema:
 class TestFixUnitQuantities:
     """Тесты fix_unit_quantities: округление q для штучных товаров."""
 
-    def test_rounds_up_for_sht(self, processor, price_cache):
+    async def test_rounds_up_for_sht(self, processor, price_cache):
         """Округляет q вверх для товаров в штуках."""
         price_cache[100] = {"name": "Огурцы", "price": 166, "unit": "шт"}
         args = {"products": [{"xml_id": 100, "q": 0.68}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 1
 
-    def test_rounds_up_for_up(self, processor, price_cache):
+    async def test_rounds_up_for_up(self, processor, price_cache):
         """Округляет q вверх для товаров в упаковках."""
         price_cache[200] = {"name": "Паста", "price": 90, "unit": "уп"}
         args = {"products": [{"xml_id": 200, "q": 1.3}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 2
 
-    def test_preserves_fractional_for_kg(self, processor, price_cache):
+    async def test_preserves_fractional_for_kg(self, processor, price_cache):
         """НЕ округляет для товаров в кг."""
         price_cache[300] = {"name": "Картофель", "price": 135, "unit": "кг"}
         args = {"products": [{"xml_id": 300, "q": 1.5}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 1.5
 
-    def test_preserves_integer_for_sht(self, processor, price_cache):
+    async def test_preserves_integer_for_sht(self, processor, price_cache):
         """Не изменяет уже целые значения для штучных."""
         price_cache[400] = {"name": "Молоко", "price": 79, "unit": "шт"}
         args = {"products": [{"xml_id": 400, "q": 3}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 3
 
-    def test_no_cache_entry(self, processor):
+    async def test_no_cache_entry(self, processor):
         """Не трогает товары, которых нет в кеше."""
         args = {"products": [{"xml_id": 999, "q": 0.5}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 0.5
 
-    def test_empty_products(self, processor):
+    async def test_empty_products(self, processor):
         """Обрабатывает пустые аргументы."""
         args = {"products": []}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"] == []
 
-    def test_multiple_products_mixed(self, processor, price_cache):
+    async def test_multiple_products_mixed(self, processor, price_cache):
         """Корректно обрабатывает смешанный набор товаров."""
         price_cache[100] = {"name": "Огурцы", "price": 166, "unit": "шт"}
         price_cache[200] = {"name": "Картофель", "price": 135, "unit": "кг"}
@@ -147,10 +152,10 @@ class TestFixUnitQuantities:
                 {"xml_id": 300, "q": 0.3},
             ]
         }
-        result = processor.fix_unit_quantities(args)
-        assert result["products"][0]["q"] == 1    # шт → округлено
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1  # шт → округлено
         assert result["products"][1]["q"] == 1.5  # кг → не тронуто
-        assert result["products"][2]["q"] == 1    # шт → округлено
+        assert result["products"][2]["q"] == 1  # шт → округлено
 
 
 # ============================================================================
@@ -161,7 +166,7 @@ class TestFixUnitQuantities:
 class TestCalcCartTotal:
     """Тесты calc_total: расчёт стоимости корзины."""
 
-    def test_calculates_total(self, processor, price_cache):
+    async def test_calculates_total(self, processor, price_cache):
         """Считает стоимость по кешу цен."""
         price_cache[41728] = {"name": "Картофель", "price": 135, "unit": "кг"}
         price_cache[103297] = {"name": "Молоко", "price": 79, "unit": "шт"}
@@ -171,12 +176,14 @@ class TestCalcCartTotal:
                 {"xml_id": 103297, "q": 4},
             ]
         }
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         parsed = json.loads(result)
 
         assert "price_summary" in parsed["data"]
@@ -186,35 +193,39 @@ class TestCalcCartTotal:
         assert "518.50" in summary["total_text"]
         assert len(summary["items"]) == 2
 
-    def test_fractional_quantity(self, processor, price_cache):
+    async def test_fractional_quantity(self, processor, price_cache):
         """Корректно считает дробные количества."""
         price_cache[41728] = {"name": "Картофель", "price": 135, "unit": "кг"}
         args = {"products": [{"xml_id": 41728, "q": 0.5}]}
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=456"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=456"},
+            }
+        )
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         parsed = json.loads(result)
         # 135 * 0.5 = 67.5
         assert parsed["data"]["price_summary"]["total"] == 67.5
 
-    def test_unknown_price(self, processor):
+    async def test_unknown_price(self, processor):
         """Если цена неизвестна — total не вычисляется."""
         args = {"products": [{"xml_id": 999, "q": 1}]}
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=789"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=789"},
+            }
+        )
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         parsed = json.loads(result)
         summary = parsed["data"]["price_summary"]
         assert "total" not in summary
         assert "не удалось" in summary["total_text"]
 
-    def test_partial_unknown_prices(self, processor, price_cache):
+    async def test_partial_unknown_prices(self, processor, price_cache):
         """Если часть цен неизвестна — total не вычисляется."""
         price_cache[41728] = {"name": "Картофель", "price": 135, "unit": "кг"}
         args = {
@@ -223,67 +234,73 @@ class TestCalcCartTotal:
                 {"xml_id": 999, "q": 1},
             ]
         }
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=101"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=101"},
+            }
+        )
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         parsed = json.loads(result)
         assert "total" not in parsed["data"]["price_summary"]
 
-    def test_error_result_passthrough(self, processor):
+    async def test_error_result_passthrough(self, processor):
         """Если результат — ошибка, возвращаем как есть."""
         args = {"products": [{"xml_id": 1, "q": 1}]}
         result_text = json.dumps({"ok": False, "error": "invalid"})
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         assert result == result_text
 
-    def test_invalid_json_passthrough(self, processor):
+    async def test_invalid_json_passthrough(self, processor):
         """Невалидный JSON — возвращаем как есть."""
-        result = processor.calc_total({}, "not json")
+        result = await processor.calc_total({}, "not json")
         assert result == "not json"
 
-    def test_empty_products(self, processor):
+    async def test_empty_products(self, processor):
         """Пустой список продуктов — не модифицируем результат."""
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=000"},
-        })
-        result = processor.calc_total({"products": []}, result_text)
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=000"},
+            }
+        )
+        result = await processor.calc_total({"products": []}, result_text)
         assert result == result_text
 
-    def test_default_q_is_one(self, processor, price_cache):
+    async def test_default_q_is_one(self, processor, price_cache):
         """Если q не указан — используется 1."""
         price_cache[50] = {"name": "Товар", "price": 200, "unit": "шт"}
         args = {"products": [{"xml_id": 50}]}
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=222"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=222"},
+            }
+        )
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         parsed = json.loads(result)
         assert parsed["data"]["price_summary"]["total"] == 200.0
 
-    def test_missing_data_key(self, processor, price_cache):
+    async def test_missing_data_key(self, processor, price_cache):
         """Ответ {"ok": true} без "data" — не падает, возвращает оригинал."""
         price_cache[50] = {"name": "Товар", "price": 200, "unit": "шт"}
         args = {"products": [{"xml_id": 50}]}
         result_text = json.dumps({"ok": True})
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         # Возвращён оригинальный текст без изменений
         assert result == result_text
 
-    def test_data_not_dict(self, processor, price_cache):
+    async def test_data_not_dict(self, processor, price_cache):
         """Если data — не словарь, не падает."""
         price_cache[50] = {"name": "Товар", "price": 200, "unit": "шт"}
         args = {"products": [{"xml_id": 50}]}
         result_text = json.dumps({"ok": True, "data": "just a string"})
 
-        result = processor.calc_total(args, result_text)
+        result = await processor.calc_total(args, result_text)
         assert result == result_text
 
 
@@ -295,7 +312,7 @@ class TestCalcCartTotal:
 class TestVerifyCart:
     """Тесты verify_cart: сопоставление корзины с поисковыми запросами."""
 
-    def test_all_matched(self, processor, price_cache):
+    async def test_all_matched(self, processor, price_cache):
         """Все товары в корзине соответствуют поискам — всё ok."""
         price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
         price_cache[200] = {"name": "Хлеб", "price": 50, "unit": "шт"}
@@ -305,14 +322,14 @@ class TestVerifyCart:
         }
         args = {"products": [{"xml_id": 100, "q": 4}, {"xml_id": 200, "q": 1}]}
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         assert report.get("ok") is True
         assert len(report["matched"]) == 2
         assert report["missing_queries"] == []
         assert report["unmatched_items"] == []
 
-    def test_missing_query(self, processor, price_cache):
+    async def test_missing_query(self, processor, price_cache):
         """Поиск \"вареники\" выполнен, но в корзине нет товара из этого поиска."""
         price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
         search_log = {
@@ -321,7 +338,7 @@ class TestVerifyCart:
         }
         args = {"products": [{"xml_id": 100, "q": 4}]}
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         assert "ok" not in report
         assert "вареники" in report["missing_queries"]
@@ -329,7 +346,7 @@ class TestVerifyCart:
         assert "action_required" in report
         assert any("вареники" in issue for issue in report["issues"])
 
-    def test_unmatched_item(self, processor, price_cache):
+    async def test_unmatched_item(self, processor, price_cache):
         """Товар в корзине не найден ни в одном поиске."""
         price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
         price_cache[999] = {"name": "Непонятный товар", "price": 50, "unit": "шт"}
@@ -343,13 +360,13 @@ class TestVerifyCart:
             ]
         }
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         assert "ok" not in report
         assert len(report["unmatched_items"]) == 1
         assert report["unmatched_items"][0]["name"] == "Непонятный товар"
 
-    def test_real_case_milk_vs_icecream(self, processor, price_cache):
+    async def test_real_case_milk_vs_icecream(self, processor, price_cache):
         """Реальный кейс: молоко заменено мороженым, вареники пропущены."""
         price_cache[100] = {"name": "Творог 5%", "price": 198, "unit": "шт"}
         price_cache[200] = {"name": "Хлеб дворянский", "price": 117, "unit": "шт"}
@@ -360,9 +377,9 @@ class TestVerifyCart:
             "творог": {100},
             "хлеб темный": {200, 500},
             "тунец": {300},
-            "молоко": {600, 601},       # молоко НЕ в корзине!
-            "мороженое": {400, 402},     # мороженое присвоено неверно
-            "вареники": {700, 701},      # вареники НЕ в корзине!
+            "молоко": {600, 601},  # молоко НЕ в корзине!
+            "мороженое": {400, 402},  # мороженое присвоено неверно
+            "вареники": {700, 701},  # вареники НЕ в корзине!
         }
         args = {
             "products": [
@@ -374,7 +391,7 @@ class TestVerifyCart:
             ]
         }
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         # Молоко и вареники пропущены
         assert "молоко" in report["missing_queries"]
@@ -382,39 +399,39 @@ class TestVerifyCart:
         assert "action_required" in report
         assert len(report["issues"]) >= 2
 
-    def test_empty_search_log(self, processor, price_cache):
+    async def test_empty_search_log(self, processor, price_cache):
         """Пустой лог поисков — все товары не опознаны."""
         price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
         args = {"products": [{"xml_id": 100, "q": 1}]}
 
-        report = processor.verify_cart(args, {})
+        report = await processor.verify_cart(args, {})
 
         assert len(report["unmatched_items"]) == 1
 
-    def test_empty_cart(self, processor):
+    async def test_empty_cart(self, processor):
         """Пустая корзина — все запросы пропущены."""
         search_log = {"молоко": {100}, "хлеб": {200}}
         args = {"products": []}
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         assert "молоко" in report["missing_queries"]
         assert "хлеб" in report["missing_queries"]
 
-    def test_item_not_in_cache(self, processor):
+    async def test_item_not_in_cache(self, processor):
         """xml_id без записи в кеше — показывает xml_id в имени."""
         search_log: dict[str, set[int]] = {}
         args = {"products": [{"xml_id": 777, "q": 1}]}
 
-        report = processor.verify_cart(args, search_log)
+        report = await processor.verify_cart(args, search_log)
 
         assert len(report["unmatched_items"]) == 1
         assert "xml_id=777" in report["unmatched_items"][0]["name"]
 
-    def test_none_xml_id_skipped(self, processor):
+    async def test_none_xml_id_skipped(self, processor):
         """xml_id=None пропускается при сборе id корзины."""
         args = {"products": [{"xml_id": None, "q": 1}]}
-        report = processor.verify_cart(args, {})
+        report = await processor.verify_cart(args, {})
         assert len(report["matched"]) == 0
         assert len(report["unmatched_items"]) == 0
 
@@ -427,7 +444,7 @@ class TestVerifyCart:
 class TestFixUnitQuantitiesEdgeCases:
     """Дополнительные тесты fix_unit_quantities."""
 
-    def test_non_dict_items_skipped(self, processor, price_cache):
+    async def test_non_dict_items_skipped(self, processor, price_cache):
         """Не-dict элементы в products пропускаются (не крашат)."""
         price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
         args = {
@@ -438,42 +455,42 @@ class TestFixUnitQuantitiesEdgeCases:
                 {"xml_id": 100, "q": 0.5},
             ]
         }
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         # Последний элемент округлён
         assert result["products"][3]["q"] == 1
 
-    def test_no_products_key(self, processor):
+    async def test_no_products_key(self, processor):
         """Без ключа 'products' — возвращаем args как есть."""
         args = {"something": "else"}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result == args
 
-    def test_products_not_list(self, processor):
+    async def test_products_not_list(self, processor):
         """products — не список → возвращаем без изменений."""
         args = {"products": "not-a-list"}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"] == "not-a-list"
 
     @pytest.mark.parametrize("unit", ["шт", "уп", "пач", "бут", "бан", "пак"])
-    def test_all_discrete_units(self, processor, price_cache, unit):
+    async def test_all_discrete_units(self, processor, price_cache, unit):
         """Все дискретные единицы округляются вверх."""
         price_cache[100] = {"name": "Товар", "price": 50, "unit": unit}
         args = {"products": [{"xml_id": 100, "q": 0.3}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 1
 
-    def test_default_unit_sht_rounds(self, processor, price_cache):
+    async def test_default_unit_sht_rounds(self, processor, price_cache):
         """Если unit не указан в кеше — по умолчанию 'шт', округляется."""
         price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
         args = {"products": [{"xml_id": 100, "q": 1.1}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0]["q"] == 2
 
-    def test_missing_q_defaults_to_one(self, processor, price_cache):
+    async def test_missing_q_defaults_to_one(self, processor, price_cache):
         """Если q отсутствует — по умолчанию 1, целое, не округляется."""
         price_cache[100] = {"name": "Товар", "price": 50, "unit": "шт"}
         args = {"products": [{"xml_id": 100}]}
-        result = processor.fix_unit_quantities(args)
+        result = await processor.fix_unit_quantities(args)
         assert result["products"][0].get("q", 1) == 1
 
 
@@ -485,55 +502,207 @@ class TestFixUnitQuantitiesEdgeCases:
 class TestAddVerification:
     """Тесты add_verification: добавление отчёта верификации в результат."""
 
-    def test_adds_verification_to_result(self, processor, price_cache):
+    async def test_adds_verification_to_result(self, processor, price_cache):
         """Добавляет verification в data результата."""
         price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
         args = {"products": [{"xml_id": 100, "q": 1}]}
         search_log = {"молоко": {100}}
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
 
-        result = processor.add_verification(args, result_text, search_log)
+        result = await processor.add_verification(args, result_text, search_log)
         parsed = json.loads(result)
 
         assert "verification" in parsed["data"]
         assert parsed["data"]["verification"]["ok"] is True
 
-    def test_verification_with_missing_query(self, processor, price_cache):
+    async def test_verification_with_missing_query(self, processor, price_cache):
         """Verification показывает missing_queries при пропущенном товаре."""
         price_cache[100] = {"name": "Молоко", "price": 79, "unit": "шт"}
         args = {"products": [{"xml_id": 100, "q": 1}]}
         search_log = {"молоко": {100}, "хлеб": {200}}
-        result_text = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
-        })
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
 
-        result = processor.add_verification(args, result_text, search_log)
+        result = await processor.add_verification(args, result_text, search_log)
         parsed = json.loads(result)
 
         assert "хлеб" in parsed["data"]["verification"]["missing_queries"]
 
-    def test_invalid_json_passthrough(self, processor):
+    async def test_invalid_json_passthrough(self, processor):
         """Невалидный JSON — возвращаем как есть."""
-        result = processor.add_verification(
-            {"products": []}, "not json", {}
-        )
+        result = await processor.add_verification({"products": []}, "not json", {})
         assert result == "not json"
 
-    def test_data_not_dict_passthrough(self, processor):
+    async def test_data_not_dict_passthrough(self, processor):
         """data — не dict → возвращаем оригинал."""
         result_text = json.dumps({"ok": True, "data": "string"})
-        result = processor.add_verification(
-            {"products": []}, result_text, {}
-        )
+        result = await processor.add_verification({"products": []}, result_text, {})
         assert result == result_text
 
-    def test_none_result_text(self, processor):
+    async def test_none_result_text(self, processor):
         """None вместо текста — не крашит."""
-        result = processor.add_verification(
-            {"products": []}, None, {}
-        )
+        result = await processor.add_verification({"products": []}, None, {})
         assert result is None
+
+
+# ============================================================================
+# Детекция похожих товаров (дубли в корзине)
+# ============================================================================
+
+
+class TestDetectSimilarItems:
+    """Тесты detect_similar_items: обнаружение дублей в корзине."""
+
+    async def test_real_case_fresh_and_frozen_trout(self, processor, price_cache):
+        """Реальный кейс: охл. и зам. стейк форели → дубль."""
+        await price_cache.set(
+            32976, name="Форель радужная стейк охл., 450 г", price=1240, unit="шт"
+        )
+        await price_cache.set(
+            45678, name="Форель радужная стейк зам., 500 г", price=1187, unit="шт"
+        )
+
+        args = {
+            "products": [
+                {"xml_id": 32976, "q": 4},
+                {"xml_id": 45678, "q": 4},
+            ]
+        }
+        duplicates = await processor.detect_similar_items(args)
+
+        assert len(duplicates) == 1
+        name1, name2 = duplicates[0]
+        assert "Форель" in name1 or "Форель" in name2
+
+    async def test_no_duplicates_different_products(self, processor, price_cache):
+        """Разные продукты → нет дублей."""
+        await price_cache.set(1, name="Молоко 3,2%", price=79, unit="шт")
+        await price_cache.set(2, name="Хлеб ржаной", price=50, unit="шт")
+        await price_cache.set(3, name="Масло сливочное 82,5%", price=282, unit="шт")
+
+        args = {
+            "products": [
+                {"xml_id": 1, "q": 1},
+                {"xml_id": 2, "q": 1},
+                {"xml_id": 3, "q": 1},
+            ]
+        }
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_different_butter_types_no_duplicate(self, processor, price_cache):
+        """Оливковое и сливочное масло — НЕ дубли (1 общее слово 'масло')."""
+        await price_cache.set(1, name="Масло оливковое Extra Virgin", price=650, unit="шт")
+        await price_cache.set(2, name="Масло сливочное 82,5%", price=282, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_single_item_no_duplicates(self, processor, price_cache):
+        """Один товар — нет дублей."""
+        await price_cache.set(1, name="Молоко", price=79, unit="шт")
+        args = {"products": [{"xml_id": 1, "q": 1}]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_empty_cart(self, processor):
+        """Пустая корзина → пустой список."""
+        duplicates = await processor.detect_similar_items({"products": []})
+        assert duplicates == []
+
+    async def test_no_products_key(self, processor):
+        """Без ключа products → пустой список."""
+        duplicates = await processor.detect_similar_items({})
+        assert duplicates == []
+
+    async def test_item_not_in_cache_skipped(self, processor, price_cache):
+        """Товар не в кеше — не ломает проверку."""
+        await price_cache.set(1, name="Форель радужная стейк охл.", price=1240, unit="шт")
+
+        args = {
+            "products": [
+                {"xml_id": 1, "q": 1},
+                {"xml_id": 999, "q": 1},  # нет в кеше
+            ]
+        }
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_non_dict_items_skipped(self, processor, price_cache):
+        """Не-dict элементы в products не ломают проверку."""
+        await price_cache.set(1, name="Товар один", price=100, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, "not_dict", 42]}
+        duplicates = await processor.detect_similar_items(args)
+        assert duplicates == []
+
+    async def test_constants_exported(self):
+        """Константы экспортируются и имеют ожидаемые значения."""
+        assert _MIN_NAME_OVERLAP == 2
+        assert _MIN_WORD_LEN == 3
+
+
+class TestAddDuplicateWarning:
+    """Тесты add_duplicate_warning: предупреждение о дублях в результате корзины."""
+
+    async def test_adds_warning_on_duplicates(self, processor, price_cache):
+        """Добавляет duplicate_warning при обнаружении дублей."""
+        await price_cache.set(1, name="Форель радужная стейк охл., 450 г", price=1240, unit="шт")
+        await price_cache.set(2, name="Форель радужная стейк зам., 500 г", price=1187, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 4}, {"xml_id": 2, "q": 4}]}
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        parsed = json.loads(result)
+
+        assert "duplicate_warning" in parsed["data"]
+        assert "Форель" in parsed["data"]["duplicate_warning"]
+
+    async def test_no_warning_when_no_duplicates(self, processor, price_cache):
+        """Не добавляет warning при отсутствии дублей."""
+        await price_cache.set(1, name="Молоко 3,2%", price=79, unit="шт")
+        await price_cache.set(2, name="Хлеб ржаной", price=50, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        parsed = json.loads(result)
+        assert "duplicate_warning" not in parsed["data"]
+
+    async def test_invalid_json_passthrough(self, processor):
+        """Невалидный JSON — возвращает как есть."""
+        result = await processor.add_duplicate_warning({"products": []}, "not json")
+        assert result == "not json"
+
+    async def test_data_not_dict_passthrough(self, processor, price_cache):
+        """data — не dict → возвращаем оригинал."""
+        await price_cache.set(1, name="Форель радужная стейк охл.", price=1240, unit="шт")
+        await price_cache.set(2, name="Форель радужная стейк зам.", price=1187, unit="шт")
+
+        args = {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]}
+        result_text = json.dumps({"ok": True, "data": "string"})
+
+        result = await processor.add_duplicate_warning(args, result_text)
+        assert result == result_text

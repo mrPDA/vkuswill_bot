@@ -58,8 +58,7 @@ class PreferencesStore:
         """
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT category, preference FROM preferences "
-            "WHERE user_id = ? ORDER BY category",
+            "SELECT category, preference FROM preferences WHERE user_id = ? ORDER BY category",
             (user_id,),
         )
         rows = await cursor.fetchall()
@@ -120,7 +119,9 @@ class PreferencesStore:
         if not existing and count >= MAX_PREFERENCES_PER_USER:
             logger.warning(
                 "Лимит предпочтений: user=%d, count=%d, max=%d",
-                user_id, count, MAX_PREFERENCES_PER_USER,
+                user_id,
+                count,
+                MAX_PREFERENCES_PER_USER,
             )
             return json.dumps(
                 {
@@ -132,8 +133,7 @@ class PreferencesStore:
             )
 
         await db.execute(
-            "INSERT OR REPLACE INTO preferences (user_id, category, preference) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
             (user_id, category, preference),
         )
         await db.commit()
@@ -165,7 +165,9 @@ class PreferencesStore:
         await db.commit()
         if cursor.rowcount > 0:
             logger.info(
-                "Предпочтение удалено: user=%d, %s", user_id, category,
+                "Предпочтение удалено: user=%d, %s",
+                user_id,
+                category,
             )
             return json.dumps(
                 {"ok": True, "message": f"Предпочтение «{category}» удалено."},
