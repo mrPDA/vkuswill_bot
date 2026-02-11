@@ -51,6 +51,14 @@ resource "yandex_vpc_security_group" "bot" {
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Langfuse UI (self-hosted, временный прямой доступ)
+  ingress {
+    description    = "Langfuse UI"
+    protocol       = "TCP"
+    port           = 3000
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Внутренний трафик (Redis, PG)
   ingress {
     description       = "Internal: all within SG"

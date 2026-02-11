@@ -122,6 +122,19 @@ variable "admin_user_ids" {
   default     = "[]"
 }
 
+# ─── Webhook / Runtime ────────────────────────────────────────
+
+variable "gigachat_model" {
+  description = "GigaChat model name"
+  type        = string
+  default     = "GigaChat"
+}
+
+variable "webhook_host" {
+  description = "External hostname/IP for Telegram webhook (e.g. YOUR_SERVER_IP)"
+  type        = string
+}
+
 # ─── Langfuse ─────────────────────────────────────────────────
 
 variable "langfuse_pg_password" {

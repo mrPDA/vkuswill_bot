@@ -113,46 +113,21 @@ jobs:
         run: |
           echo '${{ secrets.YC_CR_KEY_SECRET }}' | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "docker login cr.yandex --username json_key --password-stdin"
 
-      - name: Prepare .env on VM
+      - name: Prepare fallback .env on VM
         env:
           _BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           _GIGACHAT_CRED: ${{ secrets.GIGACHAT_CREDENTIALS }}
-          _GIGACHAT_MODEL: ${{ secrets.GIGACHAT_MODEL }}
           _WEBHOOK_HOST: ${{ secrets.WEBHOOK_HOST || secrets.VM_HOST }}
-          _S3_LOG_BUCKET: ${{ secrets.S3_LOG_BUCKET }}
-          _S3_LOG_ACCESS_KEY: ${{ secrets.S3_LOG_ACCESS_KEY }}
-          _S3_LOG_SECRET_KEY: ${{ secrets.S3_LOG_SECRET_KEY }}
-          _LANGFUSE_ENABLED: ${{ secrets.LANGFUSE_ENABLED }}
-          _LANGFUSE_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
-          _LANGFUSE_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
-          _LANGFUSE_DATABASE_URL: ${{ secrets.LANGFUSE_DATABASE_URL }}
-          _LANGFUSE_NEXTAUTH_SECRET: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
-          _LANGFUSE_SALT: ${{ secrets.LANGFUSE_SALT }}
         run: |
+          # Фоллбэк: минимальный .env на случай если yc CLI / Lockbox недоступны.
+          # deploy.sh перезапишет .env из Lockbox, если yc CLI установлен.
           {
             echo "BOT_TOKEN=${_BOT_TOKEN}"
             echo "GIGACHAT_CREDENTIALS=${_GIGACHAT_CRED}"
-            echo "GIGACHAT_MODEL=${_GIGACHAT_MODEL:-GigaChat}"
+            echo "GIGACHAT_MODEL=GigaChat"
             echo "WEBHOOK_HOST=${_WEBHOOK_HOST}"
             echo "USE_WEBHOOK=true"
             echo "WEBHOOK_PORT=8080"
-            # S3 логирование
-            if [ -n "$_S3_LOG_BUCKET" ]; then
-              echo "S3_LOG_ENABLED=true"
-              echo "S3_LOG_BUCKET=${_S3_LOG_BUCKET}"
-              echo "S3_LOG_ACCESS_KEY=${_S3_LOG_ACCESS_KEY}"
-              echo "S3_LOG_SECRET_KEY=${_S3_LOG_SECRET_KEY}"
-            fi
-            # Langfuse (self-hosted)
-            if [ -n "$_LANGFUSE_ENABLED" ]; then
-              echo "LANGFUSE_ENABLED=${_LANGFUSE_ENABLED}"
-              echo "LANGFUSE_HOST=http://localhost:3000"
-              echo "LANGFUSE_PUBLIC_KEY=${_LANGFUSE_PUBLIC_KEY}"
-              echo "LANGFUSE_SECRET_KEY=${_LANGFUSE_SECRET_KEY}"
-              echo "LANGFUSE_DATABASE_URL=${_LANGFUSE_DATABASE_URL}"
-              echo "LANGFUSE_NEXTAUTH_SECRET=${_LANGFUSE_NEXTAUTH_SECRET}"
-              echo "LANGFUSE_SALT=${_LANGFUSE_SALT}"
-            fi
           } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 
