@@ -104,8 +104,13 @@ class TestEmit:
     def test_extra_fields_user_id(self, handler):
         """Extra-поле user_id включается в запись."""
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="msg", args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="msg",
+            args=None,
+            exc_info=None,
         )
         record.user_id = 42  # type: ignore[attr-defined]
         handler.emit(record)
@@ -115,8 +120,13 @@ class TestEmit:
     def test_extra_fields_chat_id(self, handler):
         """Extra-поле chat_id включается в запись."""
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="msg", args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="msg",
+            args=None,
+            exc_info=None,
         )
         record.chat_id = 100  # type: ignore[attr-defined]
         handler.emit(record)
@@ -126,8 +136,13 @@ class TestEmit:
     def test_extra_fields_request_id(self, handler):
         """Extra-поле request_id включается в запись."""
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="msg", args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="msg",
+            args=None,
+            exc_info=None,
         )
         record.request_id = "req-abc"  # type: ignore[attr-defined]
         handler.emit(record)
@@ -148,10 +163,15 @@ class TestEmit:
             raise ValueError("test error")
         except ValueError:
             import sys
+
             record = logging.LogRecord(
-                name="test", level=logging.ERROR,
-                pathname="", lineno=0, msg="error",
-                args=None, exc_info=sys.exc_info(),
+                name="test",
+                level=logging.ERROR,
+                pathname="",
+                lineno=0,
+                msg="error",
+                args=None,
+                exc_info=sys.exc_info(),
             )
         handler.emit(record)
         entry = json.loads(handler._buffer[0])
@@ -163,9 +183,13 @@ class TestEmit:
         """Несколько записей накапливаются в буфере."""
         for i in range(3):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
         assert len(handler._buffer) == 3
@@ -183,9 +207,13 @@ class TestFlushOnSize:
         """Буфер сбрасывается при достижении flush_size (5)."""
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -198,9 +226,13 @@ class TestFlushOnSize:
         """Загружаемое содержимое — NDJSON (каждая строка — JSON)."""
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -216,9 +248,13 @@ class TestFlushOnSize:
         """ContentType загрузки — application/x-ndjson."""
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -229,9 +265,13 @@ class TestFlushOnSize:
         """Загрузка идёт в правильный бакет."""
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -242,9 +282,13 @@ class TestFlushOnSize:
         """S3-ключ имеет формат: prefix/YYYY/MM/DD/HH-MM-SS-uuid.jsonl."""
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -269,9 +313,13 @@ class TestFlush:
         """flush загружает накопленные записи."""
         for i in range(3):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -312,9 +360,13 @@ class TestBufferOverflow:
 
         # Добавляем ещё одну запись
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="overflow",
-            args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="overflow",
+            args=None,
+            exc_info=None,
         )
         h.emit(record)
 
@@ -338,9 +390,13 @@ class TestS3UploadError:
 
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
@@ -354,17 +410,25 @@ class TestS3UploadError:
         # Заполняем до порога
         for i in range(5):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
         # Можно продолжать писать
         record = logging.LogRecord(
-            name="test", level=logging.INFO,
-            pathname="", lineno=0, msg="after error",
-            args=None, exc_info=None,
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="after error",
+            args=None,
+            exc_info=None,
         )
         handler.emit(record)
         assert len(handler._buffer) >= 1
@@ -382,9 +446,13 @@ class TestClose:
         """close сбрасывает оставшийся буфер."""
         for i in range(3):
             record = logging.LogRecord(
-                name="test", level=logging.INFO,
-                pathname="", lineno=0, msg=f"msg {i}",
-                args=None, exc_info=None,
+                name="test",
+                level=logging.INFO,
+                pathname="",
+                lineno=0,
+                msg=f"msg {i}",
+                args=None,
+                exc_info=None,
             )
             handler.emit(record)
 
