@@ -134,12 +134,26 @@ fi
 DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
 
+# SSL-сертификат для самоподписанного webhook
+SSL_DIR="/opt/vkuswill-bot/ssl"
+SSL_MOUNT=""
+SSL_ENV=""
+if [[ -f "${SSL_DIR}/cert.pem" ]]; then
+  SSL_MOUNT="-v ${SSL_DIR}/cert.pem:/app/ssl/cert.pem:ro"
+  SSL_ENV="-e WEBHOOK_CERT_PATH=/app/ssl/cert.pem"
+  log "Найден SSL-сертификат: ${SSL_DIR}/cert.pem"
+else
+  warn "SSL-сертификат не найден в ${SSL_DIR}/cert.pem — webhook без сертификата"
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --network host \
   $ENV_FLAG \
   -v "${DATA_DIR}:/app/data" \
+  $SSL_MOUNT \
+  $SSL_ENV \
   -e "USE_WEBHOOK=true" \
   -e "WEBHOOK_PORT=${HEALTH_PORT}" \
   --health-cmd "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${HEALTH_PORT}/health')\" 2>/dev/null || exit 1" \
