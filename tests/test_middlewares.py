@@ -10,9 +10,8 @@
 """
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware
 
@@ -271,9 +270,113 @@ class TestDDoSProtection:
             await mw(handler, event, {})
             # Устариваем сразу
             if uid in mw._user_timestamps:
-                mw._user_timestamps[uid] = [
-                    t - 1.0 for t in mw._user_timestamps[uid]
-                ]
+                mw._user_timestamps[uid] = [t - 1.0 for t in mw._user_timestamps[uid]]
 
         # Размер не может превышать max_tracked_users
         assert len(mw._user_timestamps) <= 50
+
+
+# ============================================================================
+# Персональные лимиты (user_limits из UserMiddleware)
+# ============================================================================
+
+
+class TestPersonalLimits:
+    """Тесты персональных лимитов через data['user_limits']."""
+
+    async def test_personal_limit_override_allows_more(self):
+        """Персональный лимит (10) позволяет больше сообщений, чем дефолтный (2)."""
+        mw = ThrottlingMiddleware(rate_limit=2, period=60.0)
+        handler = AsyncMock(return_value="ok")
+
+        # С персональным лимитом 10 — 5 сообщений проходят
+        for _ in range(5):
+            event = _make_message_event(user_id=1)
+            data = {"user_limits": {"rate_limit": 10, "rate_period": 60.0}}
+            result = await mw(handler, event, data)
+            assert result == "ok"
+
+        assert handler.call_count == 5
+
+    async def test_personal_limit_override_blocks_at_limit(self):
+        """Персональный лимит (3) блокирует при превышении."""
+        mw = ThrottlingMiddleware(rate_limit=10, period=60.0)
+        handler = AsyncMock(return_value="ok")
+
+        # Исчерпываем персональный лимит 3
+        for _ in range(3):
+            event = _make_message_event(user_id=1)
+            data = {"user_limits": {"rate_limit": 3, "rate_period": 60.0}}
+            await mw(handler, event, data)
+
+        assert handler.call_count == 3
+
+        # 4-е сообщение с тем же лимитом — блокируется
+        event = _make_message_event(user_id=1)
+        data = {"user_limits": {"rate_limit": 3, "rate_period": 60.0}}
+        result = await mw(handler, event, data)
+
+        assert result is None
+        event.answer.assert_called_once()
+
+    async def test_no_user_limits_uses_default(self):
+        """Без user_limits в data — используется дефолтный лимит."""
+        mw = ThrottlingMiddleware(rate_limit=2, period=60.0)
+        handler = AsyncMock(return_value="ok")
+
+        for _ in range(2):
+            event = _make_message_event(user_id=1)
+            await mw(handler, event, {})
+
+        # 3-е сообщение — блокировка по дефолтному лимиту
+        event = _make_message_event(user_id=1)
+        result = await mw(handler, event, {})
+        assert result is None
+
+    async def test_personal_period_override(self):
+        """Персональный период влияет на сообщение при блокировке."""
+        mw = ThrottlingMiddleware(rate_limit=1, period=60.0)
+        handler = AsyncMock(return_value="ok")
+
+        # Первое сообщение проходит
+        event = _make_message_event(user_id=1)
+        data = {"user_limits": {"rate_limit": 1, "rate_period": 120.0}}
+        await mw(handler, event, data)
+
+        # Второе — блокировка, период 120 секунд в ответе
+        event = _make_message_event(user_id=1)
+        data = {"user_limits": {"rate_limit": 1, "rate_period": 120.0}}
+        result = await mw(handler, event, data)
+
+        assert result is None
+        answer_text = event.answer.call_args[0][0]
+        assert "120" in answer_text
+
+    async def test_partial_user_limits_only_rate_limit(self):
+        """user_limits только с rate_limit (без rate_period) — period дефолтный."""
+        mw = ThrottlingMiddleware(rate_limit=10, period=60.0)
+        handler = AsyncMock(return_value="ok")
+
+        for _ in range(3):
+            event = _make_message_event(user_id=1)
+            data = {"user_limits": {"rate_limit": 3}}
+            await mw(handler, event, data)
+
+        # 4-е — блокировка
+        event = _make_message_event(user_id=1)
+        data = {"user_limits": {"rate_limit": 3}}
+        result = await mw(handler, event, data)
+        assert result is None
+
+    async def test_is_rate_limited_with_overrides(self):
+        """_is_rate_limited корректно использует limit_override/period_override."""
+        mw = ThrottlingMiddleware(rate_limit=10, period=60.0)
+
+        # Записываем 2 timestamps для user 1
+        mw._user_timestamps[1] = [time.monotonic(), time.monotonic()]
+
+        # Дефолтный лимит 10 → не превышен
+        assert mw._is_rate_limited(1) is False
+
+        # Персональный лимит 2 → превышен
+        assert mw._is_rate_limited(1, limit_override=2) is True

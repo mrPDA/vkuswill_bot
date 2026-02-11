@@ -143,9 +143,7 @@ class TestTrim:
         history = manager.get_history(user_id=1)
         # Добавляем 15 сообщений (1 системный + 15 = 16 всего)
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         manager.trim(user_id=1)
 
@@ -171,9 +169,7 @@ class TestTrim:
         """После обрезки системный промпт всегда первый."""
         history = manager.get_history(user_id=1)
         for i in range(20):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         manager.trim(user_id=1)
 
@@ -317,9 +313,7 @@ class TestSaveHistory:
         """save_history после trim_list обновляет историю корректно."""
         history = await manager.aget_history(user_id=1)
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         trimmed = manager.trim_list(history)
         await manager.save_history(user_id=1, history=trimmed)
@@ -347,13 +341,9 @@ class TestTrimList:
 
     def test_trims_long_history(self, manager):
         """Длинная история обрезается до max_history."""
-        history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
-        ]
+        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
 
@@ -373,13 +363,9 @@ class TestTrimList:
 
     def test_returns_new_list_when_trimmed(self, manager):
         """При обрезке возвращается НОВЫЙ список (не мутирует оригинал)."""
-        history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
-        ]
+        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         original_len = len(history)
         result = manager.trim_list(history)
@@ -389,13 +375,9 @@ class TestTrimList:
 
     def test_preserves_system_prompt(self, manager):
         """Системный промпт всегда первый после обрезки."""
-        history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
-        ]
+        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(20):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
         assert result[0].role == MessagesRole.SYSTEM
@@ -403,13 +385,9 @@ class TestTrimList:
 
     def test_exact_max_history_noop(self, manager):
         """Ровно max_history элементов — не обрезается."""
-        history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
-        ]
+        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(9):  # 1 + 9 = 10 = max_history
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
         assert result is history

@@ -189,11 +189,7 @@ class TestParseSSEResponse:
         assert result == {"tools": []}
 
     def test_parses_multiple_data_lines(self):
-        raw = (
-            "event: message\n"
-            'data: {"jsonrpc":"2.0","id":1,"result":{"value":42}}\n'
-            "\n"
-        )
+        raw = 'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"value":42}}\n\n'
         result = VkusvillMCPClient._parse_sse_response(raw)
         assert result == {"value": 42}
 
@@ -203,12 +199,12 @@ class TestParseSSEResponse:
             VkusvillMCPClient._parse_sse_response(raw)
 
     def test_empty_data_line_ignored(self):
-        raw = "data: \n\ndata: {\"result\": {\"ok\": true}}\n"
+        raw = 'data: \n\ndata: {"result": {"ok": true}}\n'
         result = VkusvillMCPClient._parse_sse_response(raw)
         assert result == {"ok": True}
 
     def test_invalid_json_ignored(self):
-        raw = "data: not-json\ndata: {\"result\": {\"ok\": true}}\n"
+        raw = 'data: not-json\ndata: {"result": {"ok": true}}\n'
         result = VkusvillMCPClient._parse_sse_response(raw)
         assert result == {"ok": True}
 
@@ -356,9 +352,7 @@ class TestCallTool:
             return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
         )
 
-        result = await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "молоко"}
-        )
+        result = await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
 
         assert "Спагетти" in result
         assert "89" in result
@@ -402,9 +396,7 @@ class TestCallTool:
             return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
         )
 
-        await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "молоко"}
-        )
+        await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]
@@ -421,9 +413,7 @@ class TestCallTool:
             return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
         )
 
-        await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "молоко", "limit": 20}
-        )
+        await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко", "limit": 20})
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]
@@ -477,9 +467,7 @@ class TestCallTool:
             ]
         )
 
-        result = await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "хлеб"}
-        )
+        result = await mcp_client.call_tool("vkusvill_products_search", {"q": "хлеб"})
 
         assert "Спагетти" in result
 
@@ -501,9 +489,7 @@ class TestCallTool:
             ),
         )
 
-        result = await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "тест"}
-        )
+        result = await mcp_client.call_tool("vkusvill_products_search", {"q": "тест"})
 
         assert result == "SSE result"
         await mcp_client.close()
@@ -518,9 +504,7 @@ class TestCallTool:
             return_value=httpx.Response(202),
         )
 
-        result = await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "тест"}
-        )
+        result = await mcp_client.call_tool("vkusvill_products_search", {"q": "тест"})
 
         assert result == ""
         await mcp_client.close()
@@ -571,9 +555,7 @@ class TestRpcCallErrors:
         )
 
         with pytest.raises(RuntimeError, match="Method not found"):
-            await mcp_client._rpc_call(
-                mcp_client._client, "nonexistent/method"
-            )
+            await mcp_client._rpc_call(mcp_client._client, "nonexistent/method")
         await mcp_client.close()
 
     @respx.mock
@@ -607,9 +589,7 @@ class TestRpcCallErrors:
         )
 
         with pytest.raises(httpx.HTTPStatusError):
-            await mcp_client._rpc_notify(
-                mcp_client._client, "notifications/test"
-            )
+            await mcp_client._rpc_notify(mcp_client._client, "notifications/test")
         await mcp_client.close()
 
     @respx.mock
@@ -631,17 +611,13 @@ class TestRpcCallErrors:
         response = {
             "jsonrpc": "2.0",
             "id": 1,
-            "result": {
-                "content": [{"type": "image", "data": "base64..."}]
-            },
+            "result": {"content": [{"type": "image", "data": "base64..."}]},
         }
         respx.post(MCP_URL).mock(
             return_value=httpx.Response(200, json=response),
         )
 
-        result = await mcp_client.call_tool(
-            "vkusvill_product_details", {"xml_id": 123}
-        )
+        result = await mcp_client.call_tool("vkusvill_product_details", {"xml_id": 123})
 
         # Нет text-элементов → json.dumps(result)
         assert "content" in result
@@ -691,9 +667,7 @@ class TestSearchQueryCleaningInCallTool:
             return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
         )
 
-        await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "Творог 5% 400 гр"}
-        )
+        await mcp_client.call_tool("vkusvill_products_search", {"q": "Творог 5% 400 гр"})
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]
@@ -711,9 +685,7 @@ class TestSearchQueryCleaningInCallTool:
             return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
         )
 
-        await mcp_client.call_tool(
-            "vkusvill_products_search", {"q": "молоко"}
-        )
+        await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
 
         request_body = json.loads(respx.calls.last.request.content)
         args = request_body["params"]["arguments"]

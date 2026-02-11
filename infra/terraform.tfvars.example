@@ -1,0 +1,24 @@
+# ============================================================
+# Пример переменных — скопировать в terraform.tfvars
+# terraform.tfvars НЕ коммитить в git!
+# ============================================================
+
+# Yandex Cloud
+cloud_id    = "b1ge6d4nfcu57u4f46hi"
+folder_id   = "b1gjj3po03aa3m4j8ps5"
+sa_key_file = "~/.yc-keys/vkuswill-tf-admin.json"
+
+# VM SSH
+vm_ssh_key_path = "~/.ssh/id_rsa.pub"
+
+# PostgreSQL
+pg_password = "CHANGE_ME_strong_password_here"
+
+# Redis
+redis_password = "CHANGE_ME_strong_password_here"
+
+# Lockbox secrets
+bot_token            = "123456:ABC-DEF..."
+gigachat_credentials = "your_gigachat_auth_key"
+mcp_server_url       = "https://mcp001.vkusvill.ru/mcp"
+admin_user_ids       = "[123456789]"

@@ -7,7 +7,7 @@
 - check_redis_health: проверка доступности Redis
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from redis.exceptions import RedisError
@@ -120,12 +120,14 @@ class TestCreateRedisClient:
         mock_redis = AsyncMock()
         mock_redis.ping.side_effect = RedisError("Connection refused")
 
-        with patch(
-            "vkuswill_bot.services.redis_client.Redis.from_url",
-            return_value=mock_redis,
+        with (
+            patch(
+                "vkuswill_bot.services.redis_client.Redis.from_url",
+                return_value=mock_redis,
+            ),
+            pytest.raises(RedisError, match="Connection refused"),
         ):
-            with pytest.raises(RedisError, match="Connection refused"):
-                await create_redis_client("redis://localhost:6379/0")
+            await create_redis_client("redis://localhost:6379/0")
 
     async def test_default_timeouts(self):
         """По умолчанию таймауты 5 секунд."""

@@ -1,6 +1,12 @@
 """Общие фикстуры для тестов."""
 
 import os
+
+# Устанавливаем минимальные env-переменные ДО импорта модулей приложения,
+# чтобы config = Config() на уровне модуля config.py не падал в CI.
+os.environ.setdefault("BOT_TOKEN", "test-token-for-ci-000000000")
+os.environ.setdefault("GIGACHAT_CREDENTIALS", "test-credentials-for-ci")
+
 from unittest.mock import patch
 
 import pytest

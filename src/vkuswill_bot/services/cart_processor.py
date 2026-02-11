@@ -4,10 +4,17 @@ import copy
 import json
 import logging
 import math
+import re
 
 from vkuswill_bot.services.price_cache import PriceCache
 
 logger = logging.getLogger(__name__)
+
+# Минимум совпадающих слов в названиях для определения дубля
+_MIN_NAME_OVERLAP = 2
+
+# Минимальная длина слова для сравнения названий
+_MIN_WORD_LEN = 3
 
 
 class CartProcessor:
@@ -31,11 +38,7 @@ class CartProcessor:
         чтобы GigaChat корректно генерировал аргументы.
         """
         params = copy.deepcopy(params)
-        items_schema = (
-            params.get("properties", {})
-            .get("products", {})
-            .get("items", {})
-        )
+        items_schema = params.get("properties", {}).get("products", {}).get("items", {})
         if not items_schema:
             return params
 
@@ -51,7 +54,7 @@ class CartProcessor:
         # Сделать q обязательным
         required = items_schema.get("required", [])
         if "q" not in required:
-            items_schema["required"] = list(required) + ["q"]
+            items_schema["required"] = [*list(required), "q"]
 
         return params
 
@@ -93,13 +96,11 @@ class CartProcessor:
                 order.append(xml_id)
 
         if merged:
-            arguments["products"] = [
-                {"xml_id": xid, "q": merged[xid]} for xid in order
-            ]
+            arguments["products"] = [{"xml_id": xid, "q": merged[xid]} for xid in order]
 
         return arguments
 
-    def fix_unit_quantities(self, args: dict) -> dict:
+    async def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров.
 
         GigaChat иногда ставит дробное q для товаров в штуках
@@ -116,13 +117,16 @@ class CartProcessor:
                 continue
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             if cached and cached.unit in self._DISCRETE_UNITS:
                 rounded = math.ceil(q)
                 if rounded != q:
                     logger.info(
                         "Округление q: xml_id=%s, unit=%s, %s → %s",
-                        xml_id, cached.unit, q, rounded,
+                        xml_id,
+                        cached.unit,
+                        q,
+                        rounded,
                     )
                     item["q"] = rounded
                     changed = True
@@ -132,7 +136,7 @@ class CartProcessor:
 
         return args
 
-    def calc_total(self, args: dict, result_text: str) -> str:
+    async def calc_total(self, args: dict, result_text: str) -> str:
         """Рассчитать стоимость корзины и дополнить результат.
 
         Берёт xml_id и q из аргументов, цены из кеша.
@@ -157,7 +161,7 @@ class CartProcessor:
         for item in products:
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             if cached:
                 subtotal = cached.price * q
                 total += subtotal
@@ -175,20 +179,19 @@ class CartProcessor:
             summary["total"] = round(total, 2)
             summary["total_text"] = f"Итого: {total:.2f} руб"
         else:
-            summary["total_text"] = (
-                "Итого: не удалось рассчитать (не все цены известны)"
-            )
+            summary["total_text"] = "Итого: не удалось рассчитать (не все цены известны)"
 
         data = result_data.get("data")
         if not isinstance(data, dict):
             logger.warning(
-                "Результат корзины без поля 'data': %s", result_text[:200],
+                "Результат корзины без поля 'data': %s",
+                result_text[:200],
             )
             return result_text
         data["price_summary"] = summary
         return json.dumps(result_data, ensure_ascii=False, indent=4)
 
-    def verify_cart(
+    async def verify_cart(
         self,
         cart_args: dict,
         search_log: dict[str, set[int]],
@@ -219,23 +222,23 @@ class CartProcessor:
         queries_with_match: set[str] = set()
 
         for xml_id in cart_xml_ids:
-            cached = self._price_cache.get(xml_id)
+            cached = await self._price_cache.get(xml_id)
             name = cached.name if cached else f"xml_id={xml_id}"
             queries = xml_to_queries.get(xml_id, [])
             if queries:
-                matched.append({
-                    "query": queries[0],
-                    "name": name,
-                    "xml_id": xml_id,
-                })
+                matched.append(
+                    {
+                        "query": queries[0],
+                        "name": name,
+                        "xml_id": xml_id,
+                    }
+                )
                 queries_with_match.update(queries)
             else:
                 unmatched_items.append({"name": name, "xml_id": xml_id})
 
         # Запросы, по которым ничего не попало в корзину
-        missing_queries = [
-            q for q in search_log if q not in queries_with_match
-        ]
+        missing_queries = [q for q in search_log if q not in queries_with_match]
 
         report: dict = {
             "matched": matched,
@@ -246,10 +249,7 @@ class CartProcessor:
         if missing_queries or unmatched_items:
             issues = []
             for q in missing_queries:
-                issues.append(
-                    f'Поиск "{q}" не имеет соответствия в корзине — '
-                    "товар пропущен!"
-                )
+                issues.append(f'Поиск "{q}" не имеет соответствия в корзине — товар пропущен!')
             for item in unmatched_items:
                 issues.append(
                     f'Товар "{item["name"]}" в корзине не соответствует '
@@ -267,7 +267,87 @@ class CartProcessor:
 
         return report
 
-    def add_verification(
+    async def detect_similar_items(
+        self,
+        args: dict,
+    ) -> list[tuple[str, str]]:
+        """Обнаружить похожие товары в корзине.
+
+        Сравнивает названия товаров попарно. Если два товара имеют
+        >= _MIN_NAME_OVERLAP общих значимых слов — считаем их похожими.
+
+        Пример: «Форель радужная стейк охл.» и «Форель радужная стейк зам.»
+        имеют 3 общих слова → дубль.
+
+        Returns:
+            Список пар (name1, name2) похожих товаров.
+        """
+        products = args.get("products", [])
+        if len(products) < 2:
+            return []
+
+        # Собираем (xml_id, name, значимые_слова)
+        items_info: list[tuple[int, str, frozenset[str]]] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            cached = await self._price_cache.get(xml_id)
+            if cached:
+                name = cached.name
+                words = frozenset(
+                    w for w in re.findall(r"\w+", name.lower()) if len(w) >= _MIN_WORD_LEN
+                )
+                items_info.append((xml_id, name, words))
+
+        # Попарное сравнение
+        duplicates: list[tuple[str, str]] = []
+        for i in range(len(items_info)):
+            for j in range(i + 1, len(items_info)):
+                _, name1, words1 = items_info[i]
+                _, name2, words2 = items_info[j]
+                overlap = words1 & words2
+                if len(overlap) >= _MIN_NAME_OVERLAP:
+                    duplicates.append((name1, name2))
+
+        return duplicates
+
+    async def add_duplicate_warning(
+        self,
+        args: dict,
+        result: str,
+    ) -> str:
+        """Добавить предупреждение о похожих товарах в результат корзины.
+
+        Если в корзине обнаружены товары с похожими названиями
+        (например, охлаждённый и замороженный стейк форели),
+        добавляет поле ``duplicate_warning`` в data.
+        """
+        duplicates = await self.detect_similar_items(args)
+        if not duplicates:
+            return result
+
+        try:
+            result_data = json.loads(result)
+            data = result_data.get("data")
+            if isinstance(data, dict):
+                pairs = [f"«{n1}» и «{n2}»" for n1, n2 in duplicates]
+                data["duplicate_warning"] = (
+                    "В корзине обнаружены похожие товары: " + "; ".join(pairs) + ". "
+                    "Возможно, это дубли одной позиции. "
+                    "Проверь и оставь только ОДИН вариант."
+                )
+                logger.warning("Дубли в корзине: %s", pairs)
+                return json.dumps(
+                    result_data,
+                    ensure_ascii=False,
+                    indent=4,
+                )
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return result
+
+    async def add_verification(
         self,
         args: dict,
         result: str,
@@ -278,14 +358,16 @@ class CartProcessor:
         Сопоставляет содержимое корзины с поисковыми запросами
         и добавляет поле verification в data.
         """
-        verification = self.verify_cart(args, search_log)
+        verification = await self.verify_cart(args, search_log)
         try:
             result_data = json.loads(result)
             data = result_data.get("data")
             if isinstance(data, dict):
                 data["verification"] = verification
                 return json.dumps(
-                    result_data, ensure_ascii=False, indent=4,
+                    result_data,
+                    ensure_ascii=False,
+                    indent=4,
                 )
         except (json.JSONDecodeError, TypeError):
             pass

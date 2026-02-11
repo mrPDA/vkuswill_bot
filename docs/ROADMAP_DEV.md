@@ -842,3 +842,150 @@ src/vkuswill_bot/
 3. **Обратная совместимость.** Существующие тесты не должны меняться (только импорты).
 4. **Инкрементально.** Каждый коммит — рабочее состояние, `pytest` зелёный.
 5. **Не абстрагируй преждевременно.** Если паттерн встречается дважды — терпи. Трижды — рефактори.
+
+---
+
+## Спринт 4 — Управление пользователями (PostgreSQL)
+
+> Дата: 2026-02-09 | Статус: реализовано | Ветка: feature/async-cart-and-cleanup
+
+### Проблема
+
+Пользователи существовали **неявно** — только через `user_id` из Telegram. Данные были разбросаны по 4 хранилищам (SQLite, Redis, in-memory), без единой таблицы, метаданных, ролей и блокировки.
+
+### Решение
+
+PostgreSQL (asyncpg) + `UserStore` + `UserMiddleware` + admin-команды.
+
+### Схема данных
+
+```sql
+-- Таблица пользователей
+CREATE TABLE users (
+    user_id         BIGINT      PRIMARY KEY,   -- Telegram user ID
+    username        TEXT,                        -- @username (nullable)
+    first_name      TEXT        NOT NULL DEFAULT '',
+    last_name       TEXT,
+    language_code   TEXT        DEFAULT 'ru',
+    role            TEXT        NOT NULL DEFAULT 'user'
+                    CHECK (role IN ('user', 'admin')),
+    status          TEXT        NOT NULL DEFAULT 'active'
+                    CHECK (status IN ('active', 'blocked', 'limited')),
+    blocked_reason  TEXT,
+    blocked_at      TIMESTAMPTZ,
+    rate_limit      INTEGER,    -- персональные лимиты (NULL = дефолтные)
+    rate_period     REAL,
+    message_count   INTEGER     NOT NULL DEFAULT 0,
+    last_message_at TIMESTAMPTZ,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- Лог событий (для аналитики)
+CREATE TABLE user_events (
+    id          BIGSERIAL   PRIMARY KEY,
+    user_id     BIGINT      NOT NULL REFERENCES users(user_id) ON DELETE CASCADE,
+    event_type  TEXT        NOT NULL,
+    metadata    JSONB,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+```
+
+### Потоки данных
+
+```
+Telegram → UserMiddleware → ThrottlingMiddleware → Handler
+              │                    │
+              ├─ upsert user       ├─ per-user лимиты
+              ├─ проверка блокировки│  из data["user_limits"]
+              ├─ data["db_user"]   │
+              ├─ data["user_store"]│
+              └─ инкремент счётчика│
+```
+
+**Жизненный цикл пользователя:**
+
+1. Первое сообщение → `INSERT ... ON CONFLICT UPDATE` (неявная регистрация)
+2. Каждое сообщение → обновление username/first_name/last_name + `message_count++`
+3. Блокировка → `status = 'blocked'` → middleware отсекает до handler
+4. Персональные лимиты → `rate_limit`/`rate_period` → ThrottlingMiddleware
+5. PostgreSQL недоступен → middleware пропускает, бот работает без user management
+
+### Реализованные модули
+
+| Файл | Назначение | Строк |
+|------|-----------|-------|
+| `services/user_store.py` | UserStore (asyncpg, CRUD, блокировка, роли, лимиты, события) | 290 |
+| `migrations/001_create_users.sql` | Схема users + user_events + индексы | 44 |
+| `bot/middlewares.py` | + UserMiddleware (upsert, блокировка, инъекция user в data) | 265 |
+| `bot/handlers.py` | + admin_router (/admin_block, /admin_unblock, /admin_stats, /admin_user) | 370 |
+| `__main__.py` | + asyncpg pool, UserStore init, middleware регистрация | 195 |
+| `config.py` | + database_url, admin_user_ids, db_pool_min/max | 56 |
+
+### Admin-команды
+
+| Команда | Пример | Назначение |
+|---------|--------|-----------|
+| `/admin_block` | `/admin_block 999 спам` | Заблокировать пользователя |
+| `/admin_unblock` | `/admin_unblock 999` | Разблокировать |
+| `/admin_stats` | `/admin_stats` | DAU, total users |
+| `/admin_user` | `/admin_user 999` | Карточка пользователя |
+
+Доступ: `role == 'admin'`. Начальные админы: `ADMIN_USER_IDS` в `.env`.
+
+### Правила управления пользователями
+
+1. **Регистрация** — неявная, при первом сообщении боту (upsert)
+2. **Метаданные** — обновляются при каждом сообщении (username может измениться)
+3. **Блокировка** — мгновенная, middleware отсекает до обработки сообщения
+4. **Роли** — `user` (по умолчанию), `admin` (из env или через БД)
+5. **Лимиты** — по умолчанию из config, персональные override из БД
+6. **События** — логируются в `user_events` для аналитики
+7. **Отказоустойчивость** — при недоступности PostgreSQL бот работает без user management
+
+### Конфигурация (.env)
+
+```env
+DATABASE_URL=postgresql://user:password@host:5432/vkuswill
+DB_POOL_MIN=2
+DB_POOL_MAX=10
+ADMIN_USER_IDS=[123456,789012]
+```
+
+### Тесты
+
+| Файл | Тестов | Покрытие |
+|------|--------|----------|
+| `test_user_store.py` | 38 | 100% |
+| `test_user_middleware.py` | 9 | UserMiddleware — полное |
+| `test_admin_commands.py` | 20 | Все 4 команды + проверка ролей |
+
+### Trade-offs
+
+| Решение | Обоснование |
+|---------|-------------|
+| asyncpg + raw SQL (не SQLAlchemy) | Совместимость со стилем проекта (`preferences_store.py`), минимум зависимостей |
+| `CREATE TABLE IF NOT EXISTS` (не Alembic) | Пока таблиц мало; при 10+ таблиц → мигрировать на Alembic |
+| Upsert при каждом сообщении | Telegram-данные (username) могут меняться; один запрос вместо SELECT + UPDATE |
+| Middleware (не decorator) | Единая точка входа, не нужно добавлять проверки в каждый handler |
+
+### Распределение хранилищ (итоговое)
+
+```
+PostgreSQL (users)              Redis/Memory           SQLite
+┌──────────────────┐     ┌─────────────────┐    ┌──────────────────┐
+│ users            │     │ dialog:{uid}    │    │ preferences      │
+│ user_events      │     │ cart:{uid}      │    │ recipes          │
+│                  │     │ price_cache:*   │    │                  │
+└──────────────────┘     └─────────────────┘    └──────────────────┘
+ Пользователи,            Горячее состояние      Legacy-хранилища
+ аналитика                (диалоги, корзина)      (предпочтения,
+                                                   рецепты)
+```
+
+### Следующие шаги
+
+- [ ] Подключить `log_event()` в `tool_executor` (события: search, cart, order)
+- [ ] Команда `/delete_my_data` — GDPR-совместимость
+- [ ] Миграция `preferences` из SQLite в PostgreSQL (единая БД)
+- [ ] Дашборд `/admin_dashboard` — топ пользователей, активность по дням

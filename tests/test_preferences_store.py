@@ -269,14 +269,14 @@ class TestSQLInjection:
     поэтому инъекции не должны работать.
     """
 
-    SQL_INJECTION_PAYLOADS = [
+    SQL_INJECTION_PAYLOADS = [  # noqa: RUF012
         "'; DROP TABLE preferences; --",
         "1' OR '1'='1",
         "' UNION SELECT * FROM sqlite_master --",
         "Robert'); DROP TABLE preferences;--",
         "' OR 1=1 --",
         "'; DELETE FROM preferences WHERE '1'='1",
-        "test\"; DROP TABLE preferences; --",
+        'test"; DROP TABLE preferences; --',
         "1; SELECT sql FROM sqlite_master",
     ]
 

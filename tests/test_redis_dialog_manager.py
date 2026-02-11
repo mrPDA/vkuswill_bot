@@ -11,7 +11,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from gigachat.models import FunctionCall, Messages, MessagesRole
@@ -245,9 +245,7 @@ class TestTrimList:
         """Длинная история обрезается до max_history."""
         history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
 
@@ -269,9 +267,7 @@ class TestTrimList:
         """При обрезке возвращается новый список."""
         history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
         assert result is not history
@@ -283,15 +279,13 @@ class TestTrimList:
         dm = DialogManager(max_history=10)
         history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
         for i in range(15):
-            history.append(
-                Messages(role=MessagesRole.USER, content=f"msg-{i}")
-            )
+            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         redis_result = manager.trim_list(list(history))
         memory_result = dm.trim_list(list(history))
 
         assert len(redis_result) == len(memory_result)
-        for r, m in zip(redis_result, memory_result):
+        for r, m in zip(redis_result, memory_result, strict=False):
             assert r.content == m.content
             assert r.role == m.role
 
@@ -419,11 +413,13 @@ class TestDeserialize:
 
     def test_basic_messages(self):
         """Базовые сообщения десериализуются корректно."""
-        raw = json.dumps([
-            {"role": "system", "content": "Промпт"},
-            {"role": "user", "content": "Привет"},
-            {"role": "assistant", "content": "Ответ"},
-        ])
+        raw = json.dumps(
+            [
+                {"role": "system", "content": "Промпт"},
+                {"role": "user", "content": "Привет"},
+                {"role": "assistant", "content": "Ответ"},
+            ]
+        )
 
         messages = _deserialize(raw)
 
@@ -435,9 +431,11 @@ class TestDeserialize:
 
     def test_function_message(self):
         """FUNCTION-сообщение с name."""
-        raw = json.dumps([
-            {"role": "function", "content": '{"ok": true}', "name": "search"},
-        ])
+        raw = json.dumps(
+            [
+                {"role": "function", "content": '{"ok": true}', "name": "search"},
+            ]
+        )
 
         messages = _deserialize(raw)
 
@@ -446,16 +444,18 @@ class TestDeserialize:
 
     def test_function_call(self):
         """function_call десериализуется с FunctionCall."""
-        raw = json.dumps([
-            {
-                "role": "assistant",
-                "content": "",
-                "function_call": {
-                    "name": "vkusvill_products_search",
-                    "arguments": '{"q": "молоко"}',
+        raw = json.dumps(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "function_call": {
+                        "name": "vkusvill_products_search",
+                        "arguments": '{"q": "молоко"}',
+                    },
                 },
-            },
-        ])
+            ]
+        )
 
         messages = _deserialize(raw)
 
@@ -465,22 +465,26 @@ class TestDeserialize:
 
     def test_functions_state_id(self):
         """functions_state_id восстанавливается."""
-        raw = json.dumps([
-            {
-                "role": "assistant",
-                "content": "",
-                "functions_state_id": "state-123",
-            },
-        ])
+        raw = json.dumps(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "functions_state_id": "state-123",
+                },
+            ]
+        )
 
         messages = _deserialize(raw)
         assert messages[0].functions_state_id == "state-123"
 
     def test_bytes_input(self):
         """Принимает bytes (как из Redis без decode_responses)."""
-        raw_bytes = json.dumps([
-            {"role": "user", "content": "тест"},
-        ]).encode("utf-8")
+        raw_bytes = json.dumps(
+            [
+                {"role": "user", "content": "тест"},
+            ]
+        ).encode("utf-8")
 
         messages = _deserialize(raw_bytes)
         assert messages[0].content == "тест"
@@ -498,16 +502,18 @@ class TestDeserialize:
 
     def test_function_call_invalid_args(self):
         """Невалидные arguments в function_call → None."""
-        raw = json.dumps([
-            {
-                "role": "assistant",
-                "content": "",
-                "function_call": {
-                    "name": "test",
-                    "arguments": "not valid json {",
+        raw = json.dumps(
+            [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "function_call": {
+                        "name": "test",
+                        "arguments": "not valid json {",
+                    },
                 },
-            },
-        ])
+            ]
+        )
 
         messages = _deserialize(raw)
         assert messages[0].function_call.arguments is None
@@ -533,7 +539,7 @@ class TestSerializeDeserializeRoundTrip:
         restored = _deserialize(raw)
 
         assert len(restored) == 3
-        for original, restored_msg in zip(history, restored):
+        for original, restored_msg in zip(history, restored, strict=False):
             assert original.role == restored_msg.role
             assert original.content == restored_msg.content
 
@@ -592,9 +598,7 @@ class TestSerializeDeserializeRoundTrip:
         history.append(func_msg)
 
         # Final assistant response
-        history.append(
-            Messages(role=MessagesRole.ASSISTANT, content="Молоко за 79 руб!")
-        )
+        history.append(Messages(role=MessagesRole.ASSISTANT, content="Молоко за 79 руб!"))
 
         raw = _serialize(history)
         restored = _deserialize(raw)

@@ -11,7 +11,6 @@
 - Автосоздание директории
 """
 
-import json
 import os
 
 import pytest
@@ -20,6 +19,7 @@ from vkuswill_bot.services.recipe_store import RecipeStore
 
 
 # ---- Фикстуры ----
+
 
 @pytest.fixture
 async def store(tmp_path):
@@ -167,9 +167,7 @@ class TestScaling:
 
     def test_preserves_other_fields(self):
         """Масштабирование не теряет другие поля."""
-        ingredients = [
-            {"name": "мясо", "quantity": 1.0, "unit": "кг", "search_query": "говядина"}
-        ]
+        ingredients = [{"name": "мясо", "quantity": 1.0, "unit": "кг", "search_query": "говядина"}]
         result = RecipeStore.scale_ingredients(ingredients, 4, 8)
         assert result[0]["name"] == "мясо"
         assert result[0]["unit"] == "кг"
@@ -257,8 +255,7 @@ class TestCorruptedData:
         # Вручную портим данные
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
-                "UPDATE recipes SET ingredients = 'not-valid-json' "
-                "WHERE dish_name = 'борщ'",
+                "UPDATE recipes SET ingredients = 'not-valid-json' WHERE dish_name = 'борщ'",
             )
             await db.commit()
 
@@ -289,4 +286,44 @@ class TestWALMode:
             cursor = await db.execute("PRAGMA journal_mode")
             row = await cursor.fetchone()
             assert row[0] == "wal"
+        await store.close()
+
+
+# ============================================================================
+# Delete — удаление рецептов из кеша
+# ============================================================================
+
+
+class TestDeleteRecipe:
+    """Тесты метода RecipeStore.delete."""
+
+    async def test_delete_existing_recipe(self, tmp_path):
+        """Удаление существующего рецепта возвращает True."""
+        store = RecipeStore(str(tmp_path / "del.db"))
+        await store.save("квашеная капуста", 4, [{"name": "капуста"}])
+        assert await store.get("квашеная капуста") is not None
+
+        result = await store.delete("квашеная капуста")
+        assert result is True
+        assert await store.get("квашеная капуста") is None
+        await store.close()
+
+    async def test_delete_nonexistent_recipe(self, tmp_path):
+        """Удаление несуществующего рецепта возвращает False."""
+        store = RecipeStore(str(tmp_path / "del2.db"))
+        # Инициализируем БД
+        await store.save("борщ", 4, [{"name": "свёкла"}])
+
+        result = await store.delete("несуществующий рецепт")
+        assert result is False
+        await store.close()
+
+    async def test_delete_normalizes_name(self, tmp_path):
+        """Delete нормализует имя (регистр)."""
+        store = RecipeStore(str(tmp_path / "del3.db"))
+        await store.save("Кимчи", 4, [{"name": "капуста пекинская"}])
+
+        result = await store.delete("КИМЧИ")
+        assert result is True
+        assert await store.get("кимчи") is None
         await store.close()

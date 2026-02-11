@@ -10,7 +10,6 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from vkuswill_bot.bot.handlers import (
     _sanitize_telegram_html,
@@ -256,9 +255,7 @@ class TestHandleText:
         """F-02: XSS через <script> экранируется."""
         msg = make_message("Запрос", user_id=1)
         mock_service = AsyncMock()
-        mock_service.process_message.return_value = (
-            '<script>alert("xss")</script>Текст'
-        )
+        mock_service.process_message.return_value = '<script>alert("xss")</script>Текст'
 
         await handle_text(msg, gigachat_service=mock_service)
 
@@ -270,9 +267,7 @@ class TestHandleText:
         """F-02: HTML-сущность &nbsp; в названиях товаров сохраняется."""
         msg = make_message("Запрос", user_id=1)
         mock_service = AsyncMock()
-        mock_service.process_message.return_value = (
-            "Томатная паста Помидорка 70&nbsp;г: 90 руб"
-        )
+        mock_service.process_message.return_value = "Томатная паста Помидорка 70&nbsp;г: 90 руб"
 
         await handle_text(msg, gigachat_service=mock_service)
 
@@ -326,12 +321,12 @@ class TestSanitizeTelegramHtml:
     # -- Опасные теги блокируются --
 
     def test_script_blocked(self):
-        result = _sanitize_telegram_html('<script>alert(1)</script>')
+        result = _sanitize_telegram_html("<script>alert(1)</script>")
         assert "<script>" not in result
         assert "&lt;script&gt;" in result
 
     def test_img_blocked(self):
-        result = _sanitize_telegram_html('<img src=x onerror=alert(1)>')
+        result = _sanitize_telegram_html("<img src=x onerror=alert(1)>")
         assert "<img" not in result
         assert "&lt;img" in result
 
@@ -352,7 +347,7 @@ class TestSanitizeTelegramHtml:
         result = _sanitize_telegram_html(html)
         # Тег экранирован — Telegram не отрендерит как ссылку
         assert "&lt;a" in result
-        assert '<a href=' not in result
+        assert "<a href=" not in result
 
     def test_onclick_on_link_blocked(self):
         html = '<a onclick="alert(1)" href="https://ok.com">click</a>'
@@ -394,7 +389,7 @@ class TestSanitizeTelegramHtml:
         """Реальный ответ бота с &nbsp; и ссылкой — всё сохраняется."""
         response = (
             "Томатная паста 70&nbsp;г: 90 руб\n"
-            'Итого: 984 руб\n'
+            "Итого: 984 руб\n"
             '<a href="https://vkusvill.ru/?share_basket=123">Открыть корзину</a>'
         )
         result = _sanitize_telegram_html(response)
@@ -428,7 +423,7 @@ class TestSendTypingPeriodically:
             call_count += 1
             # Первый вызов — TimeoutError (цикл продолжается)
             if call_count == 1:
-                raise asyncio.TimeoutError()
+                raise TimeoutError()
             # Второй вызов — устанавливаем событие и "завершаемся"
             stop_event.set()
             return
