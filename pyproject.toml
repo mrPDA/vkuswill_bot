@@ -12,6 +12,7 @@ dependencies = [
     "redis[hiredis]>=5.0",
     "asyncpg>=0.29",
     "boto3>=1.35",
+    "langfuse>=3.14.1",
 ]
 
 [project.optional-dependencies]

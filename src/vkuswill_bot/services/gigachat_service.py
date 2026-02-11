@@ -5,13 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from gigachat import GigaChat
 from gigachat.models import Chat, ChatCompletion, Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS, DialogManager
+from vkuswill_bot.services.langfuse_tracing import (
+    LangfuseService,
+    _messages_to_langfuse,
+)
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.prompts import (
@@ -74,6 +78,7 @@ class GigaChatService:
         tool_executor: ToolExecutor | None = None,
         recipe_service: RecipeService | None = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
+        langfuse_service: LangfuseService | None = None,
     ) -> None:
         # TODO: verify_ssl_certs=True + ca_bundle_file когда SDK поддержит CA Минцифры
         self._client = GigaChat(
@@ -83,6 +88,8 @@ class GigaChatService:
             verify_ssl_certs=False,
             timeout=60,
         )
+        self._model_name = model
+        self._langfuse = langfuse_service or LangfuseService(enabled=False)
         self._mcp_client = mcp_client
         self._prefs_store = preferences_store
         self._recipe_store = recipe_store
@@ -271,28 +278,75 @@ class GigaChatService:
         user_prefs: dict[str, str] = {}
         te = self._tool_executor
 
+        # ── Langfuse: создаём trace для всего сообщения ──
+        trace = self._langfuse.trace(
+            name="chat",
+            user_id=str(user_id),
+            session_id=str(user_id),
+            input=text,
+            tags=["gigachat", "telegram"],
+        )
+
         real_calls = 0
         total_steps = 0
         max_total_steps = self._max_tool_calls * 2
+        generation_idx = 0
 
         while real_calls < self._max_tool_calls and total_steps < max_total_steps:
             total_steps += 1
             logger.info("Шаг %d для user %d (вызовов: %d)", total_steps, user_id, real_calls)
 
+            # ── Langfuse: generation для каждого вызова LLM ──
+            generation_idx += 1
+            gen = trace.generation(
+                name=f"gigachat-{generation_idx}",
+                model=self._model_name,
+                input=_messages_to_langfuse(history),
+                model_parameters={"function_call": "auto"},
+                metadata={"step": total_steps, "real_calls": real_calls},
+            )
+
             try:
                 response = await self._call_gigachat(history, functions)
             except Exception as e:
                 logger.error("Ошибка GigaChat: %s", e, exc_info=True)
+                gen.end(
+                    output=str(e),
+                    level="ERROR",
+                    status_message="GigaChat API error",
+                )
+                trace.update(output=ERROR_GIGACHAT, metadata={"error": str(e)})
                 return ERROR_GIGACHAT
 
             msg = response.choices[0].message
+
+            # ── Langfuse: фиксируем output и usage generation ──
+            gen_output: dict[str, Any] = {}
+            if msg.content:
+                gen_output["content"] = msg.content
+            if msg.function_call:
+                gen_output["function_call"] = {
+                    "name": msg.function_call.name,
+                    "arguments": msg.function_call.arguments,
+                }
+            usage = self._extract_usage(response)
+            gen.end(output=gen_output, usage=usage)
+
             te.build_assistant_message(history, msg)
 
             if not msg.function_call:
+                final_text = msg.content or "Не удалось получить ответ."
                 self._save_search_log(user_id, search_log)
                 history = dm.trim_list(history)
                 await dm.save_history(user_id, history)
-                return msg.content or "Не удалось получить ответ."
+                trace.update(
+                    output=final_text,
+                    metadata={
+                        "total_steps": total_steps,
+                        "tool_calls": real_calls,
+                    },
+                )
+                return final_text
 
             tool_name = msg.function_call.name
             args = te.parse_arguments(msg.function_call.arguments)
@@ -302,6 +356,13 @@ class GigaChatService:
             if te.is_duplicate_call(tool_name, args, call_tracker, history):
                 continue
             real_calls += 1
+
+            # ── Langfuse: span для tool call ──
+            tool_span = trace.span(
+                name=f"tool:{tool_name}",
+                input=args,
+                metadata={"call_number": real_calls},
+            )
 
             if tool_name == "recipe_ingredients" and self._recipe_service is not None:
                 result = await self._recipe_service.get_ingredients(args)
@@ -317,10 +378,40 @@ class GigaChatService:
                 search_log,
                 user_id=user_id,
             )
+
+            tool_span.end(
+                output=result[:MAX_RESULT_LOG_LENGTH],
+                metadata={"full_length": len(result)},
+            )
+
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
 
         self._save_search_log(user_id, search_log)
         history = dm.trim_list(history)
         await dm.save_history(user_id, history)
+
+        trace.update(
+            output=ERROR_TOO_MANY_STEPS,
+            metadata={
+                "total_steps": total_steps,
+                "tool_calls": real_calls,
+                "error": "too_many_steps",
+            },
+        )
         return ERROR_TOO_MANY_STEPS
+
+    @staticmethod
+    def _extract_usage(response: ChatCompletion) -> dict[str, int] | None:
+        """Извлечь usage (токены) из ответа GigaChat, если доступно."""
+        usage = getattr(response, "usage", None)
+        if usage is None:
+            return None
+        result: dict[str, int] = {}
+        if hasattr(usage, "prompt_tokens") and usage.prompt_tokens is not None:
+            result["input"] = usage.prompt_tokens
+        if hasattr(usage, "completion_tokens") and usage.completion_tokens is not None:
+            result["output"] = usage.completion_tokens
+        if hasattr(usage, "total_tokens") and usage.total_tokens is not None:
+            result["total"] = usage.total_tokens
+        return result or None

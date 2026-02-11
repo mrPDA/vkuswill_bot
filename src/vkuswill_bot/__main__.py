@@ -39,6 +39,7 @@ from vkuswill_bot.services.price_cache import PriceCache, TwoLevelPriceCache
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
+from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.user_store import UserStore
 import contextlib
@@ -312,6 +313,15 @@ async def main() -> None:
         cart_snapshot_store=cart_snapshot_store,
     )
 
+    # Langfuse — LLM-observability (опционально)
+    langfuse_service = LangfuseService(
+        enabled=config.langfuse_enabled,
+        public_key=config.langfuse_public_key,
+        secret_key=config.langfuse_secret_key,
+        host=config.langfuse_host,
+        anonymize_messages=config.langfuse_anonymize_messages,
+    )
+
     # GigaChat-сервис — все зависимости инжектируются явно
     gigachat_service = GigaChatService(
         credentials=config.gigachat_credentials,
@@ -325,6 +335,7 @@ async def main() -> None:
         dialog_manager=dialog_manager,
         tool_executor=tool_executor,
         gigachat_max_concurrent=config.gigachat_max_concurrent,
+        langfuse_service=langfuse_service,
     )
 
     # Предзагрузка MCP-инструментов
@@ -355,6 +366,7 @@ async def main() -> None:
             await pg_pool.close()
             logger.info("PostgreSQL pool закрыт")
         await bot.session.close()
+        langfuse_service.shutdown()
         logger.info("Бот остановлен.")
 
         # Сбросить оставшиеся логи в S3 перед завершением
