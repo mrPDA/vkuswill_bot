@@ -153,13 +153,17 @@ jobs:
 
     steps:
       - name: Send Telegram notification
-        if: ${{ secrets.BOT_TOKEN != '' }}
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
           TAG: ${{ needs.build-and-push.outputs.image_tag }}
           DEPLOY_STATUS: ${{ needs.deploy.result }}
         run: |
+          if [ -z "$BOT_TOKEN" ]; then
+            echo "BOT_TOKEN не задан, пропускаем уведомление"
+            exit 0
+          fi
+
           if [ "$DEPLOY_STATUS" = "success" ]; then
             EMOJI="✅"
             TEXT="Деплой ${TAG} завершён успешно"
