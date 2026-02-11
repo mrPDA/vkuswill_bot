@@ -110,6 +110,58 @@ fi
 # ─── 5. Загрузка секретов ────────────────────────────────────
 load_lockbox_secrets
 
+# ─── 5b. Запуск Langfuse (self-hosted, если настроен) ────────
+deploy_langfuse() {
+  local LANGFUSE_NAME="vkuswill-langfuse"
+  local ENV_FILE="/opt/vkuswill-bot/.env"
+
+  # Проверяем, включён ли Langfuse
+  if [[ ! -f "$ENV_FILE" ]] || ! grep -q '^LANGFUSE_ENABLED=true' "$ENV_FILE"; then
+    log "Langfuse не включён (LANGFUSE_ENABLED!=true), пропускаем"
+    return
+  fi
+
+  # Извлекаем параметры из .env
+  local LF_DB_URL LF_AUTH_SECRET LF_SALT
+  LF_DB_URL=$(grep '^LANGFUSE_DATABASE_URL=' "$ENV_FILE" | cut -d'=' -f2- || echo "")
+  LF_AUTH_SECRET=$(grep '^LANGFUSE_NEXTAUTH_SECRET=' "$ENV_FILE" | cut -d'=' -f2- || echo "")
+  LF_SALT=$(grep '^LANGFUSE_SALT=' "$ENV_FILE" | cut -d'=' -f2- || echo "")
+
+  if [[ -z "$LF_DB_URL" ]]; then
+    warn "LANGFUSE_DATABASE_URL не задан, Langfuse пропущен"
+    return
+  fi
+
+  log "Обновление Langfuse..."
+  docker pull langfuse/langfuse:2 2>/dev/null || true
+
+  # Остановить предыдущий контейнер
+  if docker ps -q -f "name=${LANGFUSE_NAME}" | grep -q .; then
+    docker stop "$LANGFUSE_NAME" --time 10 2>/dev/null || true
+    docker rm "$LANGFUSE_NAME" 2>/dev/null || true
+  fi
+
+  docker run -d \
+    --name "$LANGFUSE_NAME" \
+    --restart unless-stopped \
+    --network host \
+    -e "DATABASE_URL=${LF_DB_URL}" \
+    -e "NEXTAUTH_URL=http://localhost:3000" \
+    -e "NEXTAUTH_SECRET=${LF_AUTH_SECRET}" \
+    -e "SALT=${LF_SALT}" \
+    -e "TELEMETRY_ENABLED=false" \
+    -e "PORT=3000" \
+    --log-driver json-file \
+    --log-opt max-size=20m \
+    --log-opt max-file=2 \
+    --label "service=langfuse" \
+    langfuse/langfuse:2
+
+  log "Langfuse запущен на порту 3000"
+}
+
+deploy_langfuse
+
 # ─── 6. Запуск нового контейнера ────────────────────────────
 log "Запуск контейнера ${CONTAINER_NAME} (${TAG})..."
 
