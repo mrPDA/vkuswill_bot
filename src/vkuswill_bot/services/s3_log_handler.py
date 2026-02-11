@@ -161,7 +161,8 @@ class S3LogHandler(logging.Handler):
 
             # Добавить стектрейс, если есть
             if record.exc_info and record.exc_info[1] is not None:
-                entry["exception"] = self.formatException(record.exc_info)
+                fmt = self.formatter or logging.Formatter()
+                entry["exception"] = fmt.formatException(record.exc_info)
 
             # Добавить extra-поля (user_id, request_id и т.п.)
             for key in ("user_id", "request_id", "chat_id"):
