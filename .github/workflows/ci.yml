@@ -68,11 +68,9 @@ jobs:
 
       - name: Ruff check
         run: uv run ruff check src/ tests/
-        continue-on-error: true
 
       - name: Ruff format check
         run: uv run ruff format --check src/ tests/
-        continue-on-error: true
 
   security:
     name: Security checks
@@ -93,13 +91,20 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
-      - name: Run security tests (bandit)
+      - name: SAST — Bandit
+        run: uv run bandit -r src/ -ll -ii
+
+      - name: OSS — pip-audit
+        run: uv run pip-audit --desc
+
+      - name: Run security tests (bandit patterns)
         run: uv run pytest tests/test_security_sast.py -v --tb=short
-        continue-on-error: true
 
       - name: Run config security tests
         run: uv run pytest tests/test_config_security.py -v --tb=short
-        continue-on-error: true
+
+      - name: Run AI safety tests
+        run: uv run pytest tests/test_ai_safety.py tests/test_input_validation.py -v --tb=short
 
       - name: Check for secrets in code
         run: |
@@ -126,8 +131,13 @@ jobs:
           echo "Проверка формата коммитов..."
           COMMITS=$(git log --format="%s" origin/${{ github.base_ref }}..HEAD)
           PATTERN="^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z]+\))?: .+"
+          MERGE_PATTERN="^Merge "
           ERRORS=0
           while IFS= read -r msg; do
+            if [ -n "$msg" ] && echo "$msg" | grep -qE "$MERGE_PATTERN"; then
+              echo "Пропускаем merge-коммит: $msg"
+              continue
+            fi
             if [ -n "$msg" ] && ! echo "$msg" | grep -qE "$PATTERN"; then
               echo "::error::Некорректный формат коммита: $msg"
               ERRORS=$((ERRORS + 1))

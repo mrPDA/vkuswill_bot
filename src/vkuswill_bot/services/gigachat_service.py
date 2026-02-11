@@ -1,32 +1,35 @@
 """Сервис GigaChat с поддержкой function calling через MCP-инструменты."""
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from gigachat import GigaChat
-from gigachat.models import Chat, Messages, MessagesRole
+from gigachat.models import Chat, ChatCompletion, Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
-from vkuswill_bot.services.dialog_manager import DialogManager
+from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS, DialogManager
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.prompts import (
+    CART_PREVIOUS_TOOL,
     ERROR_GIGACHAT,
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
     RECIPE_TOOL,
-    SYSTEM_PROMPT,
 )
 from vkuswill_bot.services.recipe_service import RecipeService
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import CallTracker, ToolExecutor
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
-# Лимит одновременно хранимых диалогов (LRU-вытеснение)
-MAX_CONVERSATIONS = 1000
+logger = logging.getLogger(__name__)
 
 # Лимит длины входящего сообщения пользователя (символы)
 MAX_USER_MESSAGE_LENGTH = 4096
@@ -40,6 +43,9 @@ DEFAULT_GIGACHAT_MAX_CONCURRENT = 15
 # Макс. количество retry при 429 от GigaChat
 GIGACHAT_MAX_RETRIES = 3
 
+# Лимит количества поисковых запросов в search_log на пользователя
+MAX_SEARCH_LOG_QUERIES = 100
+
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat и MCP-инструментами.
@@ -52,6 +58,7 @@ class GigaChatService:
     # Описания инструментов (определены в prompts.py)
     _RECIPE_TOOL = RECIPE_TOOL
     _LOCAL_TOOLS = LOCAL_TOOLS
+    _CART_PREVIOUS_TOOL = CART_PREVIOUS_TOOL
 
     def __init__(
         self,
@@ -63,15 +70,18 @@ class GigaChatService:
         recipe_store: RecipeStore | None = None,
         max_tool_calls: int = 20,
         max_history: int = 50,
-        dialog_manager: DialogManager | None = None,
-        tool_executor: "ToolExecutor | None" = None,
-        recipe_service: "RecipeService | None" = None,
+        dialog_manager: DialogManager | RedisDialogManager | None = None,
+        tool_executor: ToolExecutor | None = None,
+        recipe_service: RecipeService | None = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
     ) -> None:
         # TODO: verify_ssl_certs=True + ca_bundle_file когда SDK поддержит CA Минцифры
         self._client = GigaChat(
-            credentials=credentials, model=model, scope=scope,
-            verify_ssl_certs=False, timeout=60,
+            credentials=credentials,
+            model=model,
+            scope=scope,
+            verify_ssl_certs=False,
+            timeout=60,
         )
         self._mcp_client = mcp_client
         self._prefs_store = preferences_store
@@ -83,24 +93,30 @@ class GigaChatService:
         self._api_semaphore = asyncio.Semaphore(gigachat_max_concurrent)
 
         self._dialog_manager = dialog_manager or DialogManager(
-            max_conversations=MAX_CONVERSATIONS, max_history=max_history,
+            max_conversations=MAX_CONVERSATIONS,
+            max_history=max_history,
         )
-        self._conversations = self._dialog_manager.conversations  # обратная совместимость
+        # обратная совместимость
+        self._conversations = getattr(self._dialog_manager, "conversations", {})
 
         self._functions: list[dict] | None = None
+        self._search_logs: dict[int, dict[str, set[int]]] = {}
         self._search_processor = SearchProcessor()  # создаёт PriceCache внутри
         self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
         self._tool_executor = tool_executor or ToolExecutor(
-            mcp_client=mcp_client, search_processor=self._search_processor,
-            cart_processor=self._cart_processor, preferences_store=preferences_store,
+            mcp_client=mcp_client,
+            search_processor=self._search_processor,
+            cart_processor=self._cart_processor,
+            preferences_store=preferences_store,
         )
 
         if recipe_service is not None:
             self._recipe_service = recipe_service
         elif recipe_store is not None:
             self._recipe_service = RecipeService(
-                gigachat_client=self._client, recipe_store=recipe_store,
+                gigachat_client=self._client,
+                recipe_store=recipe_store,
             )
         else:
             self._recipe_service = None
@@ -115,74 +131,48 @@ class GigaChatService:
             params = tool["parameters"]
             if tool["name"] == "vkusvill_cart_link_create":
                 params = CartProcessor.enhance_cart_schema(params)
-            self._functions.append({
-                "name": tool["name"], "description": tool["description"],
-                "parameters": params,
-            })
+            self._functions.append(
+                {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": params,
+                }
+            )
         if self._prefs_store is not None:
             self._functions.extend(self._LOCAL_TOOLS)
         if self._recipe_store is not None:
             self._functions.append(self._RECIPE_TOOL)
+        # Инструмент получения предыдущей корзины (всегда доступен)
+        self._functions.append(self._CART_PREVIOUS_TOOL)
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
 
-    # ---- Делегаты в DialogManager ----
-
-    def _get_history(self, user_id: int) -> list[Messages]:
-        """Sync-делегат для обратной совместимости (тесты)."""
-        return self._dialog_manager.get_history(user_id)
-
-    def _trim_history(self, user_id: int) -> None:
-        """Sync-делегат для обратной совместимости (тесты)."""
-        self._dialog_manager.trim(user_id)
-
     async def reset_conversation(self, user_id: int) -> None:
-        """Сбросить историю диалога (async, работает с любым бэкендом)."""
+        """Сбросить историю диалога и search_log (async, работает с любым бэкендом)."""
         await self._dialog_manager.areset(user_id)
+        self._search_logs.pop(user_id, None)
 
-    # ---- Делегаты для обратной совместимости (тесты вызывают напрямую) ----
+    # ---- Session-level search_log ----
 
-    _parse_preferences = staticmethod(ToolExecutor._parse_preferences)
-    _apply_preferences_to_query = staticmethod(ToolExecutor._apply_preferences_to_query)
-    _parse_tool_arguments = staticmethod(ToolExecutor.parse_arguments)
-    _append_assistant_message = staticmethod(ToolExecutor.build_assistant_message)
-    _enrich_with_kg = staticmethod(RecipeService._enrich_with_kg)
-    _format_recipe_result = staticmethod(RecipeService._format_result)
-    _parse_json_from_llm = staticmethod(RecipeService._parse_json)
+    def _get_search_log(self, user_id: int) -> dict[str, set[int]]:
+        """Получить search_log для пользователя (накопленный за сессию).
 
-    def _preprocess_tool_args(self, tool_name: str, args: dict, user_prefs: dict[str, str]) -> dict:
-        return self._tool_executor.preprocess_args(tool_name, args, user_prefs)
+        search_log хранит маппинг: поисковый запрос → множество xml_id,
+        найденных по этому запросу. Используется верификацией корзины.
+        """
+        return self._search_logs.get(user_id, {})
 
-    def _is_duplicate_call(
-        self, tool_name: str, args: dict,
-        call_counts: dict[str, int], call_results: dict[str, str],
-        history: list[Messages],
-    ) -> bool:
-        """Обёртка: старый API (call_counts/call_results) для совместимости с тестами."""
-        call_key = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
-        call_counts[call_key] = call_counts.get(call_key, 0) + 1
-        from vkuswill_bot.services.tool_executor import MAX_IDENTICAL_TOOL_CALLS as _MAX
-        if call_counts[call_key] >= _MAX:
-            cached = call_results.get(call_key, json.dumps({"ok": True, "data": {}}, ensure_ascii=False))
-            history.append(Messages(role=MessagesRole.FUNCTION, content=cached, name=tool_name))
-            return True
-        return False
-
-    async def _execute_tool(self, tool_name: str, args: dict, user_id: int) -> str:
-        if tool_name == "recipe_ingredients" and self._recipe_service is not None:
-            return await self._recipe_service.get_ingredients(args)
-        return await self._tool_executor.execute(tool_name, args, user_id)
-
-    def _postprocess_tool_result(
-        self, tool_name: str, args: dict, result: str,
-        user_prefs: dict[str, str], search_log: dict[str, set[int]],
-    ) -> str:
-        return self._tool_executor.postprocess_result(tool_name, args, result, user_prefs, search_log)
-
-    async def _call_local_tool(self, tool_name: str, args: dict, user_id: int) -> str:
-        if tool_name == "recipe_ingredients":
-            return await self._handle_recipe_ingredients(args)
-        return await self._tool_executor._call_local_tool(tool_name, args, user_id)
+    def _save_search_log(
+        self,
+        user_id: int,
+        search_log: dict[str, set[int]],
+    ) -> None:
+        """Сохранить search_log для пользователя с лимитом размера."""
+        if len(search_log) > MAX_SEARCH_LOG_QUERIES:
+            keys = list(search_log.keys())
+            for key in keys[: len(keys) - MAX_SEARCH_LOG_QUERIES]:
+                del search_log[key]
+        self._search_logs[user_id] = search_log
 
     async def _handle_recipe_ingredients(self, args: dict) -> str:
         if self._recipe_service is not None:
@@ -213,14 +203,14 @@ class GigaChatService:
         self,
         history: list[Messages],
         functions: list[dict],
-    ) -> object:
+    ) -> ChatCompletion:
         """Вызвать GigaChat API с семафором и retry при 429.
 
         Ограничивает параллельные запросы через asyncio.Semaphore.
         При получении rate limit (429) — retry с exponential backoff.
 
         Returns:
-            Ответ GigaChat (response объект).
+            Ответ GigaChat (ChatCompletion-подобный объект).
 
         Raises:
             Exception: Если все retry исчерпаны или ошибка не связана с rate limit.
@@ -238,7 +228,7 @@ class GigaChatService:
                     )
             except Exception as e:
                 if attempt < GIGACHAT_MAX_RETRIES - 1 and self._is_rate_limit_error(e):
-                    delay = 2 ** attempt  # 1s, 2s
+                    delay = 2**attempt  # 1s, 2s
                     logger.warning(
                         "GigaChat rate limit, retry %d/%d через %ds: %s",
                         attempt + 1,
@@ -258,11 +248,16 @@ class GigaChatService:
     def _is_rate_limit_error(exc: Exception) -> bool:
         """Определить, является ли ошибка rate limit (429).
 
-        Проверяет строковое представление исключения.
-        TODO: заменить на проверку типа/кода при изучении иерархии GigaChat SDK.
+        Проверяет тип исключения (если SDK пробрасывает httpx),
+        иначе fallback на строковую эвристику.
         """
+        # Если SDK пробрасывает httpx.HTTPStatusError
+        if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+            return exc.response.status_code == 429
+
+        # Fallback: строковая эвристика
         exc_str = str(exc).lower()
-        return "429" in exc_str or "rate" in exc_str or "too many" in exc_str
+        return "429" in exc_str or "rate limit" in exc_str or "too many" in exc_str
 
     async def _process_message_locked(self, user_id: int, text: str) -> str:
         """Цикл function calling (под per-user lock)."""
@@ -271,7 +266,8 @@ class GigaChatService:
         history.append(Messages(role=MessagesRole.USER, content=text))
         functions = await self._get_functions()
         call_tracker = CallTracker()
-        search_log: dict[str, set[int]] = {}
+        # Загружаем накопленный search_log из сессии (не пустой dict!)
+        search_log = self._get_search_log(user_id)
         user_prefs: dict[str, str] = {}
         te = self._tool_executor
 
@@ -293,6 +289,7 @@ class GigaChatService:
             te.build_assistant_message(history, msg)
 
             if not msg.function_call:
+                self._save_search_log(user_id, search_log)
                 history = dm.trim_list(history)
                 await dm.save_history(user_id, history)
                 return msg.content or "Не удалось получить ответ."
@@ -301,7 +298,7 @@ class GigaChatService:
             args = te.parse_arguments(msg.function_call.arguments)
             logger.info("Вызов: %s(%s)", tool_name, json.dumps(args, ensure_ascii=False))
 
-            args = te.preprocess_args(tool_name, args, user_prefs)
+            args = await te.preprocess_args(tool_name, args, user_prefs)
             if te.is_duplicate_call(tool_name, args, call_tracker, history):
                 continue
             real_calls += 1
@@ -312,10 +309,18 @@ class GigaChatService:
                 result = await te.execute(tool_name, args, user_id)
             logger.info("Результат %s: %s", tool_name, result[:MAX_RESULT_LOG_LENGTH])
 
-            result = te.postprocess_result(tool_name, args, result, user_prefs, search_log)
+            result = await te.postprocess_result(
+                tool_name,
+                args,
+                result,
+                user_prefs,
+                search_log,
+                user_id=user_id,
+            )
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
 
+        self._save_search_log(user_id, search_log)
         history = dm.trim_list(history)
         await dm.save_history(user_id, history)
         return ERROR_TOO_MANY_STEPS

@@ -1,11 +1,17 @@
 """Мидлвари Telegram-бота."""
 
+from __future__ import annotations
+
 import logging
 import time
-from typing import Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
+
+if TYPE_CHECKING:
+    from vkuswill_bot.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
 
@@ -19,11 +25,100 @@ DEFAULT_MAX_TRACKED_USERS = 10_000
 _FULL_CLEANUP_INTERVAL = 300.0
 
 
+# ---------------------------------------------------------------------------
+# UserMiddleware — регистрация / блокировка / инъекция user в data
+# ---------------------------------------------------------------------------
+
+
+class UserMiddleware(BaseMiddleware):
+    """Мидлварь управления пользователями.
+
+    Выполняется **до** ThrottlingMiddleware. Обязанности:
+    - Upsert пользователя (get_or_create) при каждом входящем сообщении.
+    - Проверка блокировки (``status == 'blocked'`` → отказ).
+    - Инъекция данных пользователя в ``data["db_user"]`` для хендлеров.
+    - Инъекция персональных лимитов в ``data["user_limits"]``
+      (подхватывается ``ThrottlingMiddleware``).
+    - Инкремент счётчика сообщений.
+    """
+
+    def __init__(self, user_store: UserStore) -> None:
+        self._user_store = user_store
+
+    async def __call__(
+        self,
+        handler: Callable[[Message, dict[str, Any]], Awaitable[Any]],
+        event: Message,
+        data: dict[str, Any],
+    ) -> Any:
+        """Обработка входящего сообщения."""
+        if not isinstance(event, Message):
+            return await handler(event, data)
+
+        tg_user = event.from_user
+        if tg_user is None:
+            return await handler(event, data)
+
+        # Upsert: создать или обновить метаданные
+        try:
+            db_user = await self._user_store.get_or_create(
+                user_id=tg_user.id,
+                username=tg_user.username,
+                first_name=tg_user.first_name or "",
+                last_name=tg_user.last_name,
+                language_code=tg_user.language_code,
+            )
+        except Exception as exc:
+            # Если PostgreSQL недоступен — пропускаем, не блокируем бота
+            logger.error("UserMiddleware: ошибка upsert для %d: %s", tg_user.id, exc)
+            return await handler(event, data)
+
+        # Проверка блокировки
+        if db_user.get("status") == "blocked":
+            reason = db_user.get("blocked_reason") or ""
+            logger.info(
+                "Заблокированный пользователь %d пытался отправить сообщение",
+                tg_user.id,
+            )
+            msg = "Ваш аккаунт заблокирован."
+            if reason:
+                msg += f" Причина: {reason}"
+            await event.answer(msg)
+            return None
+
+        # Пробрасываем в data для хендлеров и ThrottlingMiddleware
+        data["db_user"] = db_user
+        data["user_store"] = self._user_store
+
+        # Персональные лимиты (если заданы)
+        if db_user.get("rate_limit") is not None:
+            data["user_limits"] = {
+                "rate_limit": db_user["rate_limit"],
+                "rate_period": db_user.get("rate_period"),
+            }
+
+        # Инкремент счётчика сообщений (fire-and-forget)
+        try:
+            await self._user_store.increment_message_count(tg_user.id)
+        except Exception as exc:
+            logger.debug("UserMiddleware: ошибка инкремента: %s", exc)
+
+        return await handler(event, data)
+
+
+# ---------------------------------------------------------------------------
+# ThrottlingMiddleware — rate limiting
+# ---------------------------------------------------------------------------
+
+
 class ThrottlingMiddleware(BaseMiddleware):
     """Мидлварь для ограничения частоты сообщений от пользователей.
 
     Лимитирует количество сообщений от одного пользователя
     за указанный период. При превышении — отправляет предупреждение.
+
+    Поддерживает персональные лимиты из ``data["user_limits"]``
+    (устанавливаются ``UserMiddleware``).
 
     Содержит защиту от неограниченного роста памяти:
     - периодическая полная очистка устаревших записей;
@@ -61,8 +156,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         self._last_full_cleanup = now
         if stale_users:
             logger.debug(
-                "Throttle full cleanup: удалено %d устаревших записей, "
-                "осталось %d",
+                "Throttle full cleanup: удалено %d устаревших записей, осталось %d",
                 len(stale_users),
                 len(self._user_timestamps),
             )
@@ -73,15 +167,25 @@ class ThrottlingMiddleware(BaseMiddleware):
         if not timestamps:
             return
         cutoff = now - self.period
-        self._user_timestamps[user_id] = [
-            ts for ts in timestamps if ts > cutoff
-        ]
+        self._user_timestamps[user_id] = [ts for ts in timestamps if ts > cutoff]
         # Удаляем ключ если список пуст — не держим мусор
         if not self._user_timestamps[user_id]:
             del self._user_timestamps[user_id]
 
-    def _is_rate_limited(self, user_id: int) -> bool:
-        """Проверить, превышен ли лимит для пользователя."""
+    def _is_rate_limited(
+        self,
+        user_id: int,
+        limit_override: int | None = None,
+        period_override: float | None = None,
+    ) -> bool:
+        """Проверить, превышен ли лимит для пользователя.
+
+        Args:
+            limit_override: Персональный лимит (из UserStore).
+            period_override: Персональный период (из UserStore).
+        """
+        effective_limit = limit_override or self.rate_limit
+        effective_period = period_override or self.period
         now = time.monotonic()
 
         # Периодическая полная очистка для защиты от роста памяти
@@ -99,8 +203,7 @@ class ThrottlingMiddleware(BaseMiddleware):
                 and user_id not in self._user_timestamps
             ):
                 logger.warning(
-                    "Throttle overflow: %d tracked users, "
-                    "пропускаем tracking для user %d",
+                    "Throttle overflow: %d tracked users, пропускаем tracking для user %d",
                     len(self._user_timestamps),
                     user_id,
                 )
@@ -109,13 +212,13 @@ class ThrottlingMiddleware(BaseMiddleware):
         self._cleanup_timestamps(user_id, now)
         timestamps = self._user_timestamps.get(user_id, [])
 
-        if len(timestamps) >= self.rate_limit:
+        if len(timestamps) >= effective_limit:
             logger.warning(
                 "Rate limit: пользователь %d превысил лимит (%d/%d за %.0f сек)",
                 user_id,
                 len(timestamps),
-                self.rate_limit,
-                self.period,
+                effective_limit,
+                effective_period,
             )
             return True
 
@@ -138,8 +241,18 @@ class ThrottlingMiddleware(BaseMiddleware):
         if user is None:
             return await handler(event, data)
 
-        if self._is_rate_limited(user.id):
-            wait_seconds = int(self.period)
+        # Персональные лимиты из UserMiddleware (если доступны)
+        user_limits = data.get("user_limits")
+        limit_override = None
+        period_override = None
+        if user_limits:
+            limit_override = user_limits.get("rate_limit")
+            period_override = user_limits.get("rate_period")
+
+        effective_period = period_override or self.period
+
+        if self._is_rate_limited(user.id, limit_override, period_override):
+            wait_seconds = int(effective_period)
             await event.answer(
                 f"⏳ Слишком много сообщений. "
                 f"Подождите {wait_seconds} секунд перед следующим запросом."

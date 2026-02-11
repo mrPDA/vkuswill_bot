@@ -72,8 +72,7 @@ class DialogManager:
             if len(self._conversations) >= self._max_conversations:
                 evicted_user_id, _ = self._conversations.popitem(last=False)
                 logger.info(
-                    "LRU-вытеснение: удалён диалог пользователя %d "
-                    "(лимит %d диалогов)",
+                    "LRU-вытеснение: удалён диалог пользователя %d (лимит %d диалогов)",
                     evicted_user_id,
                     self._max_conversations,
                 )
@@ -90,9 +89,7 @@ class DialogManager:
         """
         history = self._conversations.get(user_id)
         if history and len(history) > self._max_history:
-            self._conversations[user_id] = (
-                [history[0]] + history[-(self._max_history - 1):]
-            )
+            self._conversations[user_id] = [history[0], *history[-(self._max_history - 1) :]]
 
     def reset(self, user_id: int) -> None:
         """Сбросить историю диалога пользователя."""
@@ -106,7 +103,9 @@ class DialogManager:
         return self.get_history(user_id)
 
     async def save_history(
-        self, user_id: int, history: list[Messages],
+        self,
+        user_id: int,
+        history: list[Messages],
     ) -> None:
         """Сохранить историю диалога.
 
@@ -122,7 +121,7 @@ class DialogManager:
         и Redis-бэкенда.
         """
         if len(history) > self._max_history:
-            return [history[0]] + history[-(self._max_history - 1):]
+            return [history[0], *history[-(self._max_history - 1) :]]
         return history
 
     async def areset(self, user_id: int) -> None:

@@ -80,8 +80,7 @@ class RecipeStore:
         """
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT dish_name, servings, ingredients FROM recipes "
-            "WHERE dish_name = ?",
+            "SELECT dish_name, servings, ingredients FROM recipes WHERE dish_name = ?",
             (self.normalize_dish_name(dish_name),),
         )
         row = await cursor.fetchone()
@@ -106,8 +105,7 @@ class RecipeStore:
         """Сохранить рецепт в кеш."""
         db = await self._ensure_db()
         await db.execute(
-            "INSERT OR REPLACE INTO recipes (dish_name, servings, ingredients) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO recipes (dish_name, servings, ingredients) VALUES (?, ?, ?)",
             (
                 self.normalize_dish_name(dish_name),
                 servings,
@@ -121,6 +119,23 @@ class RecipeStore:
             servings,
             len(ingredients),
         )
+
+    async def delete(self, dish_name: str) -> bool:
+        """Удалить рецепт из кеша.
+
+        Returns:
+            True если рецепт был удалён, False если не найден.
+        """
+        db = await self._ensure_db()
+        cursor = await db.execute(
+            "DELETE FROM recipes WHERE dish_name = ?",
+            (self.normalize_dish_name(dish_name),),
+        )
+        await db.commit()
+        deleted = cursor.rowcount > 0
+        if deleted:
+            logger.info("Рецепт удалён из кеша: %s", dish_name)
+        return deleted
 
     async def close(self) -> None:
         """Закрыть соединение с БД."""
