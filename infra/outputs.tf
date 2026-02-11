@@ -59,9 +59,40 @@ output "lockbox_secret_id" {
   value       = yandex_lockbox_secret.bot.id
 }
 
+# ─── S3 Logs ─────────────────────────────────────────────────
+
+output "s3_log_bucket" {
+  description = "S3 bucket name for bot logs"
+  value       = yandex_storage_bucket.logs.bucket
+}
+
+output "s3_log_access_key" {
+  description = "S3 access key for log writer SA"
+  value       = yandex_iam_service_account_static_access_key.log_writer_s3.access_key
+  sensitive   = true
+}
+
+output "s3_log_secret_key" {
+  description = "S3 secret key for log writer SA"
+  value       = yandex_iam_service_account_static_access_key.log_writer_s3.secret_key
+  sensitive   = true
+}
+
 # ─── Service Account ─────────────────────────────────────────
 
 output "deployer_sa_id" {
   description = "GitHub deployer SA ID"
   value       = yandex_iam_service_account.deployer.id
+}
+
+output "deployer_access_key" {
+  description = "Deployer static access key ID (для CR docker login)"
+  value       = yandex_iam_service_account_static_access_key.deployer_cr_key.access_key
+  sensitive   = true
+}
+
+output "deployer_secret_key" {
+  description = "Deployer static secret key (для CR docker login)"
+  value       = yandex_iam_service_account_static_access_key.deployer_cr_key.secret_key
+  sensitive   = true
 }

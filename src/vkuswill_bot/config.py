@@ -50,6 +50,17 @@ class Config(BaseSettings):
     webhook_host: str = ""
     webhook_port: int = 8080
 
+    # S3 логирование (Yandex Object Storage)
+    s3_log_enabled: bool = False
+    s3_log_bucket: str = ""
+    s3_log_prefix: str = "logs"
+    s3_log_endpoint: str = "https://storage.yandexcloud.net"
+    s3_log_region: str = "ru-central1"
+    s3_log_access_key: str = ""
+    s3_log_secret_key: str = ""
+    s3_log_flush_interval: int = 60  # секунд
+    s3_log_flush_size: int = 500  # записей
+
     # Отладка
     debug: bool = False
 
