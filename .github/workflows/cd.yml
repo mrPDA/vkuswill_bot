@@ -113,19 +113,7 @@ jobs:
         run: |
           # Убрать yc credential helper из Docker config (если остался от предыдущих деплоев)
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
-            "python3 -c \"
-import json, pathlib, sys
-p = pathlib.Path.home() / '.docker' / 'config.json'
-if not p.exists(): sys.exit(0)
-cfg = json.loads(p.read_text())
-changed = False
-for key in ['credHelpers', 'credsStore']:
-    if key in cfg:
-        del cfg[key]
-        changed = True
-if changed:
-    p.write_text(json.dumps(cfg, indent=2))
-\" 2>/dev/null || true"
+            "rm -f ~/.docker/config.json" 2>/dev/null || true
           echo '${{ secrets.YC_CR_KEY_SECRET }}' | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "docker login cr.yandex --username json_key --password-stdin"
 
       - name: Prepare fallback .env on VM
