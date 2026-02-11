@@ -196,6 +196,7 @@ deploy_langfuse() {
     -e "NEXTAUTH_SECRET=${LF_AUTH_SECRET}" \
     -e "SALT=${LF_SALT}" \
     -e "TELEMETRY_ENABLED=false" \
+    -e "HOSTNAME=0.0.0.0" \
     -e "PORT=3000" \
     --log-driver json-file \
     --log-opt max-size=20m \
