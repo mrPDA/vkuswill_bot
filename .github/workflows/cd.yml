@@ -69,9 +69,9 @@ jobs:
 
       - name: Login to Yandex Container Registry
         run: |
-          echo "${{ secrets.YC_CR_KEY_SECRET }}" | \
+          echo '${{ secrets.YC_CR_KEY_SECRET }}' | \
             docker login cr.yandex \
-              --username "${{ secrets.YC_CR_KEY_ID }}" \
+              --username json_key \
               --password-stdin
 
       - name: Build and push
