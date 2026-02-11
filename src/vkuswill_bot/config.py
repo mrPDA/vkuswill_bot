@@ -62,6 +62,13 @@ class Config(BaseSettings):
     s3_log_flush_interval: int = 60  # секунд
     s3_log_flush_size: int = 500  # записей
 
+    # Langfuse (LLM-observability)
+    langfuse_enabled: bool = False
+    langfuse_public_key: str = ""
+    langfuse_secret_key: str = ""
+    langfuse_host: str = "https://cloud.langfuse.com"
+    langfuse_anonymize_messages: bool = False  # полностью скрывать текст сообщений
+
     # Отладка
     debug: bool = False
 

@@ -56,3 +56,20 @@ resource "yandex_mdb_postgresql_user" "bot" {
 }
 
 # Права назначаются автоматически через owner в yandex_mdb_postgresql_database
+
+# ─── Langfuse Database & User ─────────────────────────────
+
+resource "yandex_mdb_postgresql_user" "langfuse" {
+  cluster_id = yandex_mdb_postgresql_cluster.bot.id
+  name       = "langfuse"
+  password   = var.langfuse_pg_password
+  conn_limit = 20
+}
+
+resource "yandex_mdb_postgresql_database" "langfuse" {
+  cluster_id = yandex_mdb_postgresql_cluster.bot.id
+  name       = "langfuse"
+  owner      = yandex_mdb_postgresql_user.langfuse.name
+
+  depends_on = [yandex_mdb_postgresql_user.langfuse]
+}
