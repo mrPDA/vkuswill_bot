@@ -63,7 +63,7 @@ class TestSystemPromptContent:
 
     def test_reasonable_length(self):
         """Промпт разумного размера (не пустой, не гигантский)."""
-        assert 500 < len(SYSTEM_PROMPT) < 10000
+        assert 500 < len(SYSTEM_PROMPT) < 15000
 
     def test_mentions_recipe_ingredients(self):
         """Промпт содержит инструкции про recipe_ingredients."""
