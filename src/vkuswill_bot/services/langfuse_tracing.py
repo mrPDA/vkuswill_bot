@@ -237,15 +237,13 @@ class LangfuseService:
                 )
             except Exception as exc:
                 logger.warning(
-                    "Не удалось инициализировать Langfuse: %s. "
-                    "Трейсинг отключён.",
+                    "Не удалось инициализировать Langfuse: %s. Трейсинг отключён.",
                     exc,
                 )
                 self._enabled = False
         elif enabled:
             logger.warning(
-                "LANGFUSE_ENABLED=true, но ключи не заданы. "
-                "Трейсинг отключён.",
+                "LANGFUSE_ENABLED=true, но ключи не заданы. Трейсинг отключён.",
             )
             self._enabled = False
 
