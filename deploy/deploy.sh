@@ -179,7 +179,7 @@ deploy_langfuse() {
   fi
 
   log "Обновление Langfuse..."
-  docker pull langfuse/langfuse:3 2>/dev/null || true
+  docker pull langfuse/langfuse:2 2>/dev/null || true
 
   # Остановить предыдущий контейнер
   if docker ps -q -f "name=${LANGFUSE_NAME}" | grep -q .; then
@@ -202,7 +202,7 @@ deploy_langfuse() {
     --log-opt max-size=20m \
     --log-opt max-file=2 \
     --label "service=langfuse" \
-    langfuse/langfuse:3
+    langfuse/langfuse:2
 
   # Подождать и проверить, что контейнер жив
   sleep 5
