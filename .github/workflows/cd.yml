@@ -166,19 +166,26 @@ jobs:
         env:
           _VM_HOST: ${{ secrets.VM_HOST }}
         run: |
-          # Проверяем через nginx (HTTPS, self-signed) или напрямую
-          HEALTH_URL="https://${_VM_HOST}/health"
-          echo "Health check URL: ${HEALTH_URL}"
+          # Проверяем через nginx (HTTPS) или напрямую (HTTP)
+          HTTPS_URL="https://${_VM_HOST}/health"
+          HTTP_URL="http://${_VM_HOST}:8080/health"
+          echo "Health check URLs: ${HTTPS_URL} / ${HTTP_URL}"
           echo "Ожидание запуска бота (30 сек)..."
           sleep 30
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -sk --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null || \
-                     curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "http://${_VM_HOST}:8080/health" 2>/dev/null || echo "000")
+            # Попытка HTTPS (self-signed → -k)
+            STATUS=$(curl -sk --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "${HTTPS_URL}" 2>/dev/null) || true
             if [ "$STATUS" = "200" ]; then
-              echo "Health check OK (attempt $i)"
+              echo "Health check OK via HTTPS (attempt $i)"
               exit 0
             fi
-            echo "Attempt $i: status=$STATUS, retrying in 10s..."
+            # Фоллбэк на HTTP напрямую
+            STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "${HTTP_URL}" 2>/dev/null) || true
+            if [ "$STATUS" = "200" ]; then
+              echo "Health check OK via HTTP (attempt $i)"
+              exit 0
+            fi
+            echo "Attempt $i: HTTPS/HTTP status=$STATUS, retrying in 10s..."
             sleep 10
           done
           echo "::warning::Health check failed after 5 attempts"
