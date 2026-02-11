@@ -15,7 +15,6 @@
 
 import json
 import logging
-import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -476,7 +475,7 @@ class TestLazyClient:
         assert h._client_kwargs["endpoint_url"] == "https://custom.endpoint"
         assert h._client_kwargs["region_name"] == "us-east-1"
         assert h._client_kwargs["aws_access_key_id"] == "ak"
-        assert h._client_kwargs["aws_secret_access_key"] == "sk"
+        assert h._client_kwargs["aws_secret_access_key"] == "sk"  # noqa: S105
 
 
 # ============================================================================
