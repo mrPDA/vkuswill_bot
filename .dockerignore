@@ -1,0 +1,66 @@
+# Git
+.git
+.gitignore
+.githooks
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+.pytest_cache
+.ruff_cache
+.mypy_cache
+htmlcov
+coverage.xml
+.coverage
+
+# Виртуальное окружение (создаётся в builder)
+.venv
+
+# IDE
+.cursor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Секреты
+.env
+.env.*
+!.env.example
+
+# Документация
+*.md
+articles/
+docs/
+
+# Тесты (не нужны в production)
+tests/
+conftest.py
+
+# Нагрузочное тестирование
+loadtests/
+
+# CI/CD
+.github/
+
+# Скрипты разработки
+Makefile
+
+# Данные (монтируются как volume)
+data/
+*.log
+*.pid
+bot.log
+
+# Kubernetes / Terraform
+infra/
+deploy/
+
+# Coverage reports
+.coverage
+htmlcov/
+coverage.xml
+
+# Прочее
+Archive/

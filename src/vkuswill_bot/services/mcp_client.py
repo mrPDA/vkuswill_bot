@@ -16,6 +16,7 @@ import httpx
 
 logger = logging.getLogger(__name__)
 
+
 def _get_package_version() -> str:
     """Получить версию пакета из метаданных."""
     try:
@@ -132,9 +133,7 @@ class VkusvillMCPClient:
         data = response.json()
         if "error" in data:
             error = data["error"]
-            raise RuntimeError(
-                f"MCP JSON-RPC error {error.get('code')}: {error.get('message')}"
-            )
+            raise RuntimeError(f"MCP JSON-RPC error {error.get('code')}: {error.get('message')}")
         return data.get("result")
 
     @staticmethod
@@ -143,7 +142,7 @@ class VkusvillMCPClient:
         result = None
         for line in raw.splitlines():
             if line.startswith("data:"):
-                data_str = line[len("data:"):].strip()
+                data_str = line[len("data:") :].strip()
                 if data_str:
                     try:
                         msg = json.loads(data_str)
@@ -152,8 +151,7 @@ class VkusvillMCPClient:
                         elif "error" in msg:
                             error = msg["error"]
                             raise RuntimeError(
-                                f"MCP JSON-RPC error {error.get('code')}: "
-                                f"{error.get('message')}"
+                                f"MCP JSON-RPC error {error.get('code')}: {error.get('message')}"
                             )
                     except json.JSONDecodeError:
                         continue
@@ -260,12 +258,12 @@ class VkusvillMCPClient:
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "MCP get_tools попытка %d/%d: %r\n%s",
+                    "MCP get_tools попытка %d/%d: %r",
                     attempt + 1,
                     MAX_RETRIES,
                     e,
-                    traceback.format_exc(),
                 )
+                logger.debug("MCP get_tools traceback:\n%s", traceback.format_exc())
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
@@ -278,10 +276,11 @@ class VkusvillMCPClient:
     def _fix_cart_args(arguments: dict) -> dict:
         """Делегирует в CartProcessor.fix_cart_args (обратная совместимость)."""
         from vkuswill_bot.services.cart_processor import CartProcessor
+
         return CartProcessor.fix_cart_args(arguments)
 
     # Алиасы для тестов
-    from vkuswill_bot.services.search_processor import SEARCH_LIMIT  # noqa: E305
+    from vkuswill_bot.services.search_processor import SEARCH_LIMIT
     from vkuswill_bot.services.search_processor import SearchProcessor as _SP
 
     _UNIT_PATTERN = _SP._UNIT_PATTERN
@@ -291,6 +290,7 @@ class VkusvillMCPClient:
     def _clean_search_query(cls, query: str) -> str:
         """Делегирует в SearchProcessor.clean_search_query (обратная совместимость)."""
         from vkuswill_bot.services.search_processor import SearchProcessor
+
         return SearchProcessor.clean_search_query(query)
 
     async def call_tool(self, name: str, arguments: dict) -> str:
@@ -323,22 +323,20 @@ class VkusvillMCPClient:
                     if isinstance(item, dict) and item.get("type") == "text":
                         texts.append(item.get("text", ""))
 
-                response = "\n".join(texts) if texts else json.dumps(
-                    result, ensure_ascii=False
-                )
+                response = "\n".join(texts) if texts else json.dumps(result, ensure_ascii=False)
                 logger.debug("MCP ответ %s: %s", name, response[:500])
                 return response
 
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "MCP call_tool %s попытка %d/%d: %r\n%s",
+                    "MCP call_tool %s попытка %d/%d: %r",
                     name,
                     attempt + 1,
                     MAX_RETRIES,
                     e,
-                    traceback.format_exc(),
                 )
+                logger.debug("MCP call_tool %s traceback:\n%s", name, traceback.format_exc())
                 # Сбрасываем сессию и пробуем заново
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:

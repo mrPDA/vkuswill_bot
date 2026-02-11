@@ -83,8 +83,7 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert 1 <= cfg.max_tool_calls <= 50, (
-            f"max_tool_calls={cfg.max_tool_calls} — "
-            f"должен быть в диапазоне [1, 50]"
+            f"max_tool_calls={cfg.max_tool_calls} — должен быть в диапазоне [1, 50]"
         )
 
     def test_max_history_reasonable(self):
@@ -92,8 +91,7 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert 1 <= cfg.max_history_messages <= 200, (
-            f"max_history_messages={cfg.max_history_messages} — "
-            f"должен быть в диапазоне [1, 200]"
+            f"max_history_messages={cfg.max_history_messages} — должен быть в диапазоне [1, 200]"
         )
 
     def test_mcp_server_url_is_https(self):
@@ -163,9 +161,32 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert 1 <= cfg.gigachat_max_concurrent <= 100, (
-            f"gigachat_max_concurrent={cfg.gigachat_max_concurrent} — "
-            f"должен быть в [1, 100]"
+            f"gigachat_max_concurrent={cfg.gigachat_max_concurrent} — должен быть в [1, 100]"
         )
+
+    def test_db_pool_min_default(self):
+        """db_pool_min по умолчанию — 2."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_min == 2
+
+    def test_db_pool_max_default(self):
+        """db_pool_max по умолчанию — 10."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_max == 10
+
+    def test_db_pool_min_max_reasonable(self):
+        """Размеры пула разумные: 1 <= min <= max <= 100."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 1 <= cfg.db_pool_min <= cfg.db_pool_max <= 100
+
+    def test_admin_user_ids_default_empty(self):
+        """admin_user_ids по умолчанию — пустой список."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == []
 
 
 # ============================================================================
@@ -198,9 +219,7 @@ class TestSecretProtection:
 
         required_keys = ["BOT_TOKEN", "GIGACHAT_CREDENTIALS"]
         for key in required_keys:
-            assert key in content, (
-                f"{key} отсутствует в .env.example"
-            )
+            assert key in content, f"{key} отсутствует в .env.example"
 
     def test_config_loads_from_env_not_hardcoded(self):
         """Config загружает значения из env, а не из кода."""
@@ -212,7 +231,7 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
 
-        assert cfg.bot_token == "custom-token-123"
+        assert cfg.bot_token == "custom-token-123"  # noqa: S105
         assert cfg.gigachat_credentials == "custom-creds-456"
         assert cfg.mcp_server_url == "https://custom-mcp.example.com/mcp"
 
@@ -251,6 +270,28 @@ class TestSecretProtection:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.gigachat_max_concurrent == 30
 
+    def test_db_pool_customizable(self):
+        """db_pool_min/max настраиваются через переменные окружения."""
+        custom_env = {**MINIMAL_ENV, "DB_POOL_MIN": "5", "DB_POOL_MAX": "20"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.db_pool_min == 5
+        assert cfg.db_pool_max == 20
+
+    def test_admin_user_ids_customizable(self):
+        """admin_user_ids настраивается через переменную окружения."""
+        custom_env = {**MINIMAL_ENV, "ADMIN_USER_IDS": "[111, 222, 333]"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == [111, 222, 333]
+
+    def test_database_url_customizable(self):
+        """database_url (PostgreSQL) настраивается через env."""
+        custom_env = {**MINIMAL_ENV, "DATABASE_URL": "postgresql://user:pass@localhost:5432/bot"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.database_url == "postgresql://user:pass@localhost:5432/bot"
+
 
 # ============================================================================
 # Файлы конфигурации
@@ -269,9 +310,7 @@ class TestConfigFiles:
             gitignore = PROJECT_ROOT / ".gitignore"
             assert gitignore.exists()
             content = gitignore.read_text(encoding="utf-8")
-            assert ".env" in content, (
-                ".env существует, но не указан в .gitignore!"
-            )
+            assert ".env" in content, ".env существует, но не указан в .gitignore!"
 
     def test_no_sensitive_files_tracked(self):
         """Чувствительные файлы не должны быть в репозитории."""
@@ -286,13 +325,8 @@ class TestConfigFiles:
         for pattern in sensitive_patterns:
             matches = list(PROJECT_ROOT.glob(pattern))
             # Фильтруем файлы внутри .venv и node_modules
-            matches = [
-                m for m in matches
-                if ".venv" not in str(m) and "node_modules" not in str(m)
-            ]
-            assert not matches, (
-                f"Найдены чувствительные файлы: {[str(m) for m in matches]}"
-            )
+            matches = [m for m in matches if ".venv" not in str(m) and "node_modules" not in str(m)]
+            assert not matches, f"Найдены чувствительные файлы: {[str(m) for m in matches]}"
 
 
 # ============================================================================
@@ -324,11 +358,11 @@ class TestDatabaseSecurity:
         """database_path можно настроить через переменные окружения."""
         custom_env = {
             **MINIMAL_ENV,
-            "DATABASE_PATH": "/tmp/custom/prefs.db",
+            "DATABASE_PATH": "/tmp/custom/prefs.db",  # noqa: S108
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.database_path == "/tmp/custom/prefs.db"
+        assert cfg.database_path == "/tmp/custom/prefs.db"  # noqa: S108
 
 
 @pytest.mark.security
@@ -348,10 +382,7 @@ class TestEnvExampleCompleteness:
         # Важные опциональные ключи для документации
         optional_keys = ["MCP_SERVER_URL", "DEBUG"]
         for key in optional_keys:
-            assert key in content, (
-                f"{key} отсутствует в .env.example — "
-                f"важно для документации"
-            )
+            assert key in content, f"{key} отсутствует в .env.example — важно для документации"
 
     def test_env_example_no_placeholder_secrets(self):
         """.env.example не содержит секретов-заглушек, похожих на настоящие."""
@@ -370,9 +401,7 @@ class TestEnvExampleCompleteness:
                     ":" in value
                     and len(value) > 30
                     and any(c.isdigit() for c in value.split(":")[0])
-                ), (
-                    f".env.example: значение {key.strip()} похоже на настоящий токен"
-                )
+                ), f".env.example: значение {key.strip()} похоже на настоящий токен"
 
 
 @pytest.mark.security
@@ -387,22 +416,16 @@ class TestMCPClientSecurity:
         assert 1 <= CONNECT_TIMEOUT <= 60, (
             f"CONNECT_TIMEOUT={CONNECT_TIMEOUT} — должен быть в [1, 60]"
         )
-        assert 1 <= READ_TIMEOUT <= 300, (
-            f"READ_TIMEOUT={READ_TIMEOUT} — должен быть в [1, 300]"
-        )
+        assert 1 <= READ_TIMEOUT <= 300, f"READ_TIMEOUT={READ_TIMEOUT} — должен быть в [1, 300]"
 
     def test_mcp_retries_limited(self):
         """Количество retry ограничено."""
         from vkuswill_bot.services.mcp_client import MAX_RETRIES
 
-        assert 1 <= MAX_RETRIES <= 10, (
-            f"MAX_RETRIES={MAX_RETRIES} — должен быть в [1, 10]"
-        )
+        assert 1 <= MAX_RETRIES <= 10, f"MAX_RETRIES={MAX_RETRIES} — должен быть в [1, 10]"
 
     def test_mcp_client_uses_https(self):
         """MCP-клиент по умолчанию подключается по HTTPS."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.mcp_server_url.startswith("https://"), (
-            "MCP URL должен использовать HTTPS"
-        )
+        assert cfg.mcp_server_url.startswith("https://"), "MCP URL должен использовать HTTPS"

@@ -93,8 +93,7 @@ class RedisDialogManager:
                 return history
             except Exception as e:
                 logger.warning(
-                    "Redis: ошибка десериализации для user %d, "
-                    "создаю новую историю: %s",
+                    "Redis: ошибка десериализации для user %d, создаю новую историю: %s",
                     user_id,
                     e,
                 )
@@ -103,7 +102,9 @@ class RedisDialogManager:
         return [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
 
     async def save_history(
-        self, user_id: int, history: list[Messages],
+        self,
+        user_id: int,
+        history: list[Messages],
     ) -> None:
         """Сохранить историю в Redis с TTL.
 
@@ -125,7 +126,7 @@ class RedisDialogManager:
         Принимает и возвращает list — не зависит от хранилища.
         """
         if len(history) > self._max_history:
-            return [history[0]] + history[-(self._max_history - 1):]
+            return [history[0], *history[-(self._max_history - 1) :]]
         return history
 
     async def areset(self, user_id: int) -> None:

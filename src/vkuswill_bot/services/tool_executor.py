@@ -14,6 +14,7 @@ import logging
 from gigachat.models import Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.cart_snapshot_store import CartSnapshotStore
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.search_processor import SearchProcessor
@@ -30,12 +31,15 @@ MAX_RESULT_PREVIEW_LENGTH = 500
 MAX_IDENTICAL_TOOL_CALLS = 2
 
 # Имена локальных инструментов (для маршрутизации)
-LOCAL_TOOL_NAMES = frozenset({
-    "user_preferences_get",
-    "user_preferences_set",
-    "user_preferences_delete",
-    "recipe_ingredients",
-})
+LOCAL_TOOL_NAMES = frozenset(
+    {
+        "user_preferences_get",
+        "user_preferences_set",
+        "user_preferences_delete",
+        "recipe_ingredients",
+        "get_previous_cart",
+    }
+)
 
 
 class CallTracker:
@@ -75,11 +79,13 @@ class ToolExecutor:
         search_processor: SearchProcessor,
         cart_processor: CartProcessor,
         preferences_store: PreferencesStore | None = None,
+        cart_snapshot_store: CartSnapshotStore | None = None,
     ) -> None:
         self._mcp_client = mcp_client
         self._search_processor = search_processor
         self._cart_processor = cart_processor
         self._prefs_store = preferences_store
+        self._cart_snapshot_store = cart_snapshot_store
 
     # ---- Парсинг аргументов ----
 
@@ -106,7 +112,8 @@ class ToolExecutor:
 
     @staticmethod
     def build_assistant_message(
-        history: list[Messages], msg: object,
+        history: list[Messages],
+        msg: object,
     ) -> None:
         """Создать сообщение ассистента и добавить в историю."""
         assistant_msg = Messages(
@@ -121,7 +128,7 @@ class ToolExecutor:
 
     # ---- Предобработка аргументов ----
 
-    def preprocess_args(
+    async def preprocess_args(
         self,
         tool_name: str,
         args: dict,
@@ -134,7 +141,7 @@ class ToolExecutor:
         """
         if tool_name == "vkusvill_cart_link_create":
             args = self._cart_processor.fix_cart_args(args)
-            args = self._cart_processor.fix_unit_quantities(args)
+            args = await self._cart_processor.fix_unit_quantities(args)
 
         if tool_name == "vkusvill_products_search":
             # Очистка запроса от чисел и единиц измерения
@@ -154,6 +161,7 @@ class ToolExecutor:
 
             # Ограничение результатов поиска
             from vkuswill_bot.services.search_processor import SEARCH_LIMIT
+
             if "limit" not in args:
                 args = {**args, "limit": SEARCH_LIMIT}
 
@@ -177,9 +185,7 @@ class ToolExecutor:
             True если вызов дублирован и его нужно пропустить.
         """
         call_key = call_tracker.make_key(tool_name, args)
-        call_tracker.call_counts[call_key] = (
-            call_tracker.call_counts.get(call_key, 0) + 1
-        )
+        call_tracker.call_counts[call_key] = call_tracker.call_counts.get(call_key, 0) + 1
 
         if call_tracker.call_counts[call_key] >= MAX_IDENTICAL_TOOL_CALLS:
             logger.warning(
@@ -189,14 +195,20 @@ class ToolExecutor:
                 call_tracker.call_counts[call_key],
             )
             # Возвращаем реальный результат предыдущего вызова
-            cached = call_tracker.call_results.get(call_key, json.dumps(
-                {"ok": True, "data": {}}, ensure_ascii=False,
-            ))
-            history.append(Messages(
-                role=MessagesRole.FUNCTION,
-                content=cached,
-                name=tool_name,
-            ))
+            cached = call_tracker.call_results.get(
+                call_key,
+                json.dumps(
+                    {"ok": True, "data": {}},
+                    ensure_ascii=False,
+                ),
+            )
+            history.append(
+                Messages(
+                    role=MessagesRole.FUNCTION,
+                    content=cached,
+                    name=tool_name,
+                )
+            )
             return True
         return False
 
@@ -226,21 +238,26 @@ class ToolExecutor:
 
     # ---- Постобработка результата ----
 
-    def postprocess_result(
+    async def postprocess_result(
         self,
         tool_name: str,
         args: dict,
         result: str,
         user_prefs: dict[str, str],
         search_log: dict[str, set[int]],
+        user_id: int | None = None,
     ) -> str:
         """Постобработать результат вызова инструмента.
 
         - Парсит предпочтения из user_preferences_get.
         - Кеширует цены и обрезает результат поиска.
-        - Рассчитывает стоимость корзины и верифицирует.
+        - Рассчитывает стоимость корзины, верифицирует и сохраняет снимок.
 
         Мутирует user_prefs и search_log in-place.
+
+        Args:
+            user_id: ID пользователя Telegram (для снимка корзины).
+                     Опционален для обратной совместимости с тестами.
 
         Returns:
             Обработанный результат (строка).
@@ -252,11 +269,11 @@ class ToolExecutor:
                 user_prefs.update(parsed)
                 logger.info(
                     "Загружены предпочтения: %s",
-                    {k: v for k, v in user_prefs.items()},
+                    dict(user_prefs.items()),
                 )
 
         elif tool_name == "vkusvill_products_search":
-            self._search_processor.cache_prices(result)
+            await self._search_processor.cache_prices(result)
             query = args.get("q", "")
             found_ids = self._search_processor.extract_xml_ids(result)
             if query and found_ids:
@@ -264,11 +281,20 @@ class ToolExecutor:
             result = self._search_processor.trim_search_result(result)
 
         elif tool_name == "vkusvill_cart_link_create":
-            result = self._cart_processor.calc_total(args, result)
+            result = await self._cart_processor.calc_total(args, result)
+            result = await self._cart_processor.add_duplicate_warning(
+                args,
+                result,
+            )
             if search_log:
-                result = self._cart_processor.add_verification(
-                    args, result, search_log,
+                result = await self._cart_processor.add_verification(
+                    args,
+                    result,
+                    search_log,
                 )
+            # Сохраняем снимок корзины в Redis (если настроен)
+            if self._cart_snapshot_store and user_id is not None:
+                await self._save_cart_snapshot(user_id, args, result)
             logger.info(
                 "Расчёт корзины: %s",
                 result[:MAX_RESULT_PREVIEW_LENGTH],
@@ -276,12 +302,42 @@ class ToolExecutor:
 
         return result
 
+    async def _save_cart_snapshot(
+        self,
+        user_id: int,
+        args: dict,
+        result: str,
+    ) -> None:
+        """Извлечь данные из результата корзины и сохранить снимок."""
+        products = args.get("products", [])
+        link = ""
+        total: float | None = None
+        try:
+            result_data = json.loads(result)
+            data = result_data.get("data", {})
+            if isinstance(data, dict):
+                link = data.get("link", "")
+                summary = data.get("price_summary", {})
+                if isinstance(summary, dict):
+                    total = summary.get("total")
+        except (json.JSONDecodeError, TypeError):
+            pass
+        await self._cart_snapshot_store.save(  # type: ignore[union-attr]
+            user_id=user_id,
+            products=products,
+            link=link,
+            total=total,
+        )
+
     # ---- Маршрутизация локальных инструментов ----
 
     async def _call_local_tool(
-        self, tool_name: str, args: dict, user_id: int,
+        self,
+        tool_name: str,
+        args: dict,
+        user_id: int,
     ) -> str:
-        """Выполнить локальный инструмент (предпочтения).
+        """Выполнить локальный инструмент (предпочтения, корзина).
 
         Рецепты обрабатываются через RecipeService (вне ToolExecutor).
         """
@@ -292,6 +348,9 @@ class ToolExecutor:
                 {"ok": False, "error": "Кеш рецептов не настроен"},
                 ensure_ascii=False,
             )
+
+        if tool_name == "get_previous_cart":
+            return await self._get_previous_cart(user_id)
 
         if self._prefs_store is None:
             return json.dumps(
@@ -323,6 +382,45 @@ class ToolExecutor:
                 {"ok": False, "error": f"Неизвестный локальный инструмент: {tool_name}"},
                 ensure_ascii=False,
             )
+
+    async def _get_previous_cart(self, user_id: int) -> str:
+        """Получить содержимое предыдущей корзины пользователя.
+
+        Возвращает JSON с products, link, total — или сообщение
+        что корзины нет.
+        """
+        if self._cart_snapshot_store is None:
+            return json.dumps(
+                {"ok": False, "message": "Предыдущая корзина недоступна"},
+                ensure_ascii=False,
+            )
+        snapshot = await self._cart_snapshot_store.get(user_id)
+        if snapshot is None:
+            return json.dumps(
+                {"ok": True, "message": "У пользователя нет предыдущей корзины"},
+                ensure_ascii=False,
+            )
+        # Обогащаем снимок именами товаров из кеша цен
+        products = snapshot.get("products", [])
+        enriched_products = []
+        for item in products:
+            xml_id = item.get("xml_id")
+            q = item.get("q", 1)
+            cached = await self._cart_processor._price_cache.get(xml_id)
+            product_info: dict = {"xml_id": xml_id, "q": q}
+            if cached:
+                product_info["name"] = cached.name
+                product_info["price"] = cached.price
+                product_info["unit"] = cached.unit
+            enriched_products.append(product_info)
+        result: dict = {
+            "ok": True,
+            "products": enriched_products,
+            "link": snapshot.get("link", ""),
+            "total": snapshot.get("total"),
+            "created_at": snapshot.get("created_at", ""),
+        }
+        return json.dumps(result, ensure_ascii=False)
 
     # ---- Вспомогательные статические методы ----
 

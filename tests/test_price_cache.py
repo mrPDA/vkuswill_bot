@@ -16,6 +16,7 @@ from vkuswill_bot.services.price_cache import MAX_PRICE_CACHE_SIZE, PriceCache, 
 # PriceInfo
 # ============================================================================
 
+
 class TestPriceInfo:
     """Тесты PriceInfo."""
 
@@ -70,6 +71,7 @@ class TestPriceInfo:
 # PriceCache
 # ============================================================================
 
+
 class TestPriceCache:
     """Тесты PriceCache."""
 
@@ -77,45 +79,46 @@ class TestPriceCache:
     def cache(self) -> PriceCache:
         return PriceCache()
 
-    def test_set_and_get(self, cache):
-        cache.set(100, "Молоко", 79.0, "шт")
-        info = cache.get(100)
+    async def test_set_and_get(self, cache):
+        await cache.set(100, "Молоко", 79.0, "шт")
+        info = await cache.get(100)
         assert info is not None
         assert info.name == "Молоко"
         assert info.price == 79.0
         assert info.unit == "шт"
 
-    def test_get_missing(self, cache):
-        assert cache.get(999) is None
+    async def test_get_missing(self, cache):
+        assert await cache.get(999) is None
 
-    def test_len(self, cache):
+    async def test_len(self, cache):
         assert len(cache) == 0
-        cache.set(1, "A", 10.0)
+        await cache.set(1, "A", 10.0)
         assert len(cache) == 1
-        cache.set(2, "B", 20.0)
+        await cache.set(2, "B", 20.0)
         assert len(cache) == 2
 
-    def test_contains(self, cache):
+    async def test_contains(self, cache):
         assert 100 not in cache
-        cache.set(100, "Молоко", 79.0)
+        await cache.set(100, "Молоко", 79.0)
         assert 100 in cache
 
-    def test_overwrite(self, cache):
-        cache.set(100, "Молоко", 79.0)
-        cache.set(100, "Молоко 3.2%", 89.0)
-        assert cache.get(100).name == "Молоко 3.2%"
+    async def test_overwrite(self, cache):
+        await cache.set(100, "Молоко", 79.0)
+        await cache.set(100, "Молоко 3.2%", 89.0)
+        info = await cache.get(100)
+        assert info.name == "Молоко 3.2%"
         assert len(cache) == 1
 
-    def test_dict_setitem(self, cache):
+    async def test_dict_setitem(self, cache):
         """Совместимость: cache[id] = {...}."""
         cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
-        info = cache.get(100)
+        info = await cache.get(100)
         assert info.name == "Молоко"
         assert info.price == 79.0
 
     def test_dict_getitem(self, cache):
-        """Совместимость: cache[id] → PriceInfo."""
-        cache.set(100, "Молоко", 79.0)
+        """Совместимость: cache[id] → PriceInfo (sync)."""
+        cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
         info = cache[100]
         assert info["name"] == "Молоко"
 
@@ -148,9 +151,9 @@ class TestPriceCacheBool:
         cache = PriceCache()
         assert bool(cache) is True
 
-    def test_non_empty_cache_is_truthy(self):
+    async def test_non_empty_cache_is_truthy(self):
         cache = PriceCache()
-        cache.set(1, "item", 10.0)
+        await cache.set(1, "item", 10.0)
         assert bool(cache) is True
 
     def test_or_pattern_preserves_empty_cache(self):
@@ -159,7 +162,7 @@ class TestPriceCacheBool:
         result = original or PriceCache()
         assert result is original
 
-    def test_di_shared_cache_e2e(self):
+    async def test_di_shared_cache_e2e(self):
         """E2E: SearchProcessor и CartProcessor должны разделять один PriceCache.
 
         Воспроизводит production-баг: бот перестал считать цену корзины
@@ -179,32 +182,36 @@ class TestPriceCacheBool:
         assert sp.price_cache is cp._price_cache
 
         # Имитируем поиск → кэшируем цены
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "молоко", "total": 1},
-                "items": [
-                    {
-                        "xml_id": 100,
-                        "name": "Молоко 3.2%",
-                        "price": {"current": 79},
-                        "unit": "шт",
-                    }
-                ],
-            },
-        })
-        sp.cache_prices(search_result)
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "молоко", "total": 1},
+                    "items": [
+                        {
+                            "xml_id": 100,
+                            "name": "Молоко 3.2%",
+                            "price": {"current": 79},
+                            "unit": "шт",
+                        }
+                    ],
+                },
+            }
+        )
+        await sp.cache_prices(search_result)
         assert len(shared_cache) == 1
-        assert shared_cache.get(100) is not None
-        assert shared_cache.get(100).price == 79
+        assert await shared_cache.get(100) is not None
+        assert (await shared_cache.get(100)).price == 79
 
         # Имитируем корзину → рассчитываем стоимость
         cart_args = {"products": [{"xml_id": 100, "q": 2}]}
-        cart_result = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/cart/123"},
-        })
-        result = cp.calc_total(cart_args, cart_result)
+        cart_result = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/cart/123"},
+            }
+        )
+        result = await cp.calc_total(cart_args, cart_result)
         data = json.loads(result)
 
         summary = data["data"]["price_summary"]
@@ -216,19 +223,22 @@ class TestPriceCacheBool:
 class TestPriceCacheEviction:
     """Тесты FIFO-вытеснения."""
 
-    def test_eviction_on_overflow(self):
+    async def test_eviction_on_overflow(self):
         cache = PriceCache(max_size=10)
         for i in range(11):
-            cache.set(i, f"item_{i}", float(i))
+            await cache.set(i, f"item_{i}", float(i))
         # После вытеснения должно остаться <= max_size
         assert len(cache) <= 10
 
-    def test_old_entries_evicted_first(self):
+    async def test_old_entries_evicted_first(self):
         cache = PriceCache(max_size=10)
         for i in range(11):
-            cache.set(i, f"item_{i}", float(i))
+            await cache.set(i, f"item_{i}", float(i))
         # Последний элемент (10) должен остаться
-        assert cache.get(10) is not None
+        assert await cache.get(10) is not None
         # Первые элементы (0-4) должны быть вытеснены
-        evicted = sum(1 for i in range(5) if cache.get(i) is None)
+        evicted = 0
+        for i in range(5):
+            if await cache.get(i) is None:
+                evicted += 1
         assert evicted == 5
