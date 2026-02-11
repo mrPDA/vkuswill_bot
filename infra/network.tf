@@ -27,7 +27,23 @@ resource "yandex_vpc_security_group" "bot" {
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Webhook (Telegram → Bot)
+  # HTTPS (Telegram webhook → nginx → bot)
+  ingress {
+    description    = "HTTPS"
+    protocol       = "TCP"
+    port           = 443
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # HTTP (certbot ACME challenge)
+  ingress {
+    description    = "HTTP certbot"
+    protocol       = "TCP"
+    port           = 80
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+
+  # Webhook HTTP (прямой доступ для health check)
   ingress {
     description    = "Webhook HTTP"
     protocol       = "TCP"
