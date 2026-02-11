@@ -121,6 +121,12 @@ jobs:
           _BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           _GIGACHAT_CRED: ${{ secrets.GIGACHAT_CREDENTIALS }}
           _WEBHOOK_HOST: ${{ secrets.WEBHOOK_HOST || secrets.VM_HOST }}
+          _LF_ENABLED: ${{ secrets.LANGFUSE_ENABLED }}
+          _LF_DB_URL: ${{ secrets.LANGFUSE_DATABASE_URL }}
+          _LF_AUTH_SECRET: ${{ secrets.LANGFUSE_NEXTAUTH_SECRET }}
+          _LF_SALT: ${{ secrets.LANGFUSE_SALT }}
+          _LF_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
+          _LF_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
         run: |
           # Фоллбэк: минимальный .env на случай если yc CLI / Lockbox недоступны.
           # deploy.sh перезапишет .env из Lockbox, если yc CLI установлен.
@@ -131,6 +137,12 @@ jobs:
             echo "WEBHOOK_HOST=${_WEBHOOK_HOST}"
             echo "USE_WEBHOOK=true"
             echo "WEBHOOK_PORT=8080"
+            echo "LANGFUSE_ENABLED=${_LF_ENABLED:-false}"
+            echo "LANGFUSE_DATABASE_URL=${_LF_DB_URL}"
+            echo "LANGFUSE_NEXTAUTH_SECRET=${_LF_AUTH_SECRET}"
+            echo "LANGFUSE_SALT=${_LF_SALT}"
+            echo "LANGFUSE_PUBLIC_KEY=${_LF_PUBLIC_KEY}"
+            echo "LANGFUSE_SECRET_KEY=${_LF_SECRET_KEY}"
           } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 

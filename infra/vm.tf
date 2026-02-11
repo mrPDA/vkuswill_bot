@@ -49,6 +49,9 @@ resource "yandex_compute_instance" "bot" {
     })
   }
 
+  # SA для доступа к Lockbox с VM (yc lockbox payload get)
+  service_account_id = yandex_iam_service_account.deployer.id
+
   scheduling_policy {
     preemptible = false
   }

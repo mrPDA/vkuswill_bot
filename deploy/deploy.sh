@@ -69,6 +69,14 @@ ensure_yc_cli() {
     log "yc CLI установлен: $(yc version 2>/dev/null || echo 'OK')"
   else
     warn "Не удалось установить yc CLI, продолжаем без Lockbox"
+    return
+  fi
+
+  # Настроить использование instance service account (привязан к VM)
+  if ! yc config get instance-service-account 2>/dev/null | grep -q true; then
+    log "Настройка yc CLI: instance-service-account"
+    yc config set instance-service-account true 2>/dev/null || true
+    yc config set folder-id "$(curl -s -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/project/project-id 2>/dev/null)" 2>/dev/null || true
   fi
 }
 
