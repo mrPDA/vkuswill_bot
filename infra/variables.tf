@@ -155,6 +155,19 @@ variable "langfuse_salt" {
   sensitive   = true
 }
 
+variable "langfuse_public_key" {
+  description = "Langfuse project public key (pk-lf-...)"
+  type        = string
+  default     = ""
+}
+
+variable "langfuse_secret_key" {
+  description = "Langfuse project secret key (sk-lf-...)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 # ─── S3 Logs ─────────────────────────────────────────────────
 
 variable "s3_log_bucket" {
