@@ -5,6 +5,27 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.5.0] — 2026-02-12
+
+### Добавлено
+
+- **Langfuse LLM-observability** — трейсинг всех вызовов GigaChat (trace → generation → span)
+- **Self-hosted Langfuse** — контейнер на VM рядом с ботом, данные в РФ (Yandex Cloud)
+- **Анонимизация** — SHA-256 хеш user_id, автоматическая маскировка PII (телефоны, email, карты)
+- **Terraform: Langfuse DB** — БД `langfuse` + пользователь в существующем Managed PostgreSQL
+- **Lockbox: Langfuse секреты** — DATABASE_URL, NEXTAUTH_SECRET, SALT
+- **Nginx: Langfuse UI** — проксирование через `/langfuse/` (HTTPS)
+- **docker-compose: Langfuse** — self-hosted для локальной разработки
+- **No-Op трейсинг** — нулевой оверхед когда Langfuse отключён
+- **Промпты** — улучшены инструкции для корзины и рецептов
+- **SSL** — самоподписанный сертификат для Telegram webhook + nginx reverse proxy
+- **Тесты** — расширено покрытие до 1231 теста (S3LogHandler, промпты, конфигурация)
+
+### Исправлено
+
+- CD pipeline — S3 log переменные, GIGACHAT_MODEL, docker login, .env provisioning
+- Deploy script — обработка отсутствия yc CLI и ошибок Lockbox
+
 ## [0.4.0] — 2026-02-11
 
 ### Добавлено
