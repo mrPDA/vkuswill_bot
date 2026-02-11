@@ -9,6 +9,8 @@ NoOpTracer — все вызовы трейсинга становятся no-op
 Анонимизация: user_id хешируется (SHA-256, 12 символов), содержимое
 сообщений сохраняется (нужно для анализа качества), но можно включить
 маскировку через ``anonymize_messages=True``.
+
+Совместимо с Langfuse Python SDK v3 (start_span / start_generation API).
 """
 
 from __future__ import annotations
@@ -55,15 +57,15 @@ def _mask_pii(text: str) -> str:
 
 
 class LangfuseTrace:
-    """Обёртка над Langfuse trace с удобным API."""
+    """Обёртка над Langfuse trace (SDK v3: root span + update_trace)."""
 
-    def __init__(self, trace: Any) -> None:
-        self._trace = trace
+    def __init__(self, root_span: Any) -> None:
+        self._root = root_span
 
     @property
     def id(self) -> str:
         """ID трейса."""
-        return self._trace.id  # type: ignore[no-any-return]
+        return str(getattr(self._root, "id", "unknown"))
 
     def generation(
         self,
@@ -75,7 +77,7 @@ class LangfuseTrace:
         metadata: dict[str, Any] | None = None,
     ) -> LangfuseGeneration:
         """Создать generation-span для LLM-вызова."""
-        gen = self._trace.generation(
+        gen = self._root.start_generation(
             name=name,
             model=model,
             input=input,
@@ -92,7 +94,7 @@ class LangfuseTrace:
         metadata: dict[str, Any] | None = None,
     ) -> LangfuseSpan:
         """Создать span для tool call или другой операции."""
-        sp = self._trace.span(
+        sp = self._root.start_span(
             name=name,
             input=input,
             metadata=metadata,
@@ -106,11 +108,18 @@ class LangfuseTrace:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Обновить trace (например, итоговый ответ)."""
-        self._trace.update(output=output, metadata=metadata)
+        self._root.update_trace(output=output, metadata=metadata)
+
+    def end(self) -> None:
+        """Завершить корневой span трейса."""
+        import contextlib
+
+        with contextlib.suppress(Exception):
+            self._root.end()
 
 
 class LangfuseGeneration:
-    """Обёртка над Langfuse generation."""
+    """Обёртка над Langfuse generation (SDK v3)."""
 
     def __init__(self, generation: Any) -> None:
         self._generation = generation
@@ -126,13 +135,22 @@ class LangfuseGeneration:
         status_message: str | None = None,
     ) -> None:
         """Завершить generation (фиксирует output и usage)."""
-        self._generation.end(
-            output=output,
-            usage=usage,
-            metadata=metadata,
-            level=level,
-            status_message=status_message,
-        )
+        # SDK v3: update() для данных, end() для завершения
+        update_kwargs: dict[str, Any] = {}
+        if output is not None:
+            update_kwargs["output"] = output
+        if usage is not None:
+            update_kwargs["usage_details"] = usage
+        if metadata is not None:
+            update_kwargs["metadata"] = metadata
+        if level != "DEFAULT":
+            update_kwargs["level"] = level
+        if status_message is not None:
+            update_kwargs["status_message"] = status_message
+
+        if update_kwargs:
+            self._generation.update(**update_kwargs)
+        self._generation.end()
 
     @property
     def latency_ms(self) -> float:
@@ -141,7 +159,7 @@ class LangfuseGeneration:
 
 
 class LangfuseSpan:
-    """Обёртка над Langfuse span."""
+    """Обёртка над Langfuse span (SDK v3)."""
 
     def __init__(self, span: Any) -> None:
         self._span = span
@@ -156,12 +174,19 @@ class LangfuseSpan:
         status_message: str | None = None,
     ) -> None:
         """Завершить span."""
-        self._span.end(
-            output=output,
-            metadata=metadata,
-            level=level,
-            status_message=status_message,
-        )
+        update_kwargs: dict[str, Any] = {}
+        if output is not None:
+            update_kwargs["output"] = output
+        if metadata is not None:
+            update_kwargs["metadata"] = metadata
+        if level != "DEFAULT":
+            update_kwargs["level"] = level
+        if status_message is not None:
+            update_kwargs["status_message"] = status_message
+
+        if update_kwargs:
+            self._span.update(**update_kwargs)
+        self._span.end()
 
     @property
     def latency_ms(self) -> float:
@@ -182,6 +207,9 @@ class _NoOpTrace:
         return _NoOpSpan()
 
     def update(self, **_kwargs: Any) -> None:
+        pass
+
+    def end(self) -> None:
         pass
 
 
@@ -207,6 +235,8 @@ class LangfuseService:
 
     Если ``enabled=False`` (по умолчанию), все методы возвращают no-op объекты,
     не влияя на производительность.
+
+    Совместим с Langfuse Python SDK v3 (start_span API).
     """
 
     def __init__(
@@ -281,15 +311,21 @@ class LangfuseService:
         if isinstance(input, str):
             safe_input = "[REDACTED]" if self._anonymize_messages else _mask_pii(input)
 
-        trace = self._client.trace(
+        # SDK v3: создаём root span (= trace) + устанавливаем метаданные трейса
+        root_span = self._client.start_span(
             name=name,
-            user_id=anon_user_id,
             input=safe_input,
             metadata=metadata,
+        )
+        root_span.update_trace(
+            name=name,
+            user_id=anon_user_id,
             session_id=anon_session_id,
+            input=safe_input,
+            metadata=metadata,
             tags=tags,
         )
-        return LangfuseTrace(trace)
+        return LangfuseTrace(root_span)
 
     def flush(self) -> None:
         """Отправить накопленные события в Langfuse."""
