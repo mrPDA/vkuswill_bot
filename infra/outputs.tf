@@ -78,6 +78,14 @@ output "s3_log_secret_key" {
   sensitive   = true
 }
 
+# ─── Langfuse ─────────────────────────────────────────────────
+
+output "langfuse_pg_connection" {
+  description = "Langfuse PostgreSQL connection string (masked password)"
+  value       = "postgresql://langfuse:****@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse"
+  sensitive   = false
+}
+
 # ─── Service Account ─────────────────────────────────────────
 
 output "deployer_sa_id" {

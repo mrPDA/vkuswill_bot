@@ -5,16 +5,53 @@
 
 Если Langfuse не сконфигурирован (langfuse_enabled=False), используется
 NoOpTracer — все вызовы трейсинга становятся no-op.
+
+Анонимизация: user_id хешируется (SHA-256, 12 символов), содержимое
+сообщений сохраняется (нужно для анализа качества), но можно включить
+маскировку через ``anonymize_messages=True``.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import re
 import time
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+# ── Анонимизация ─────────────────────────────────────────────────────
+
+
+def _anonymize_user_id(user_id: str | int) -> str:
+    """Хешировать Telegram user_id (SHA-256, 12 символов).
+
+    Одинаковый user_id всегда даёт одинаковый хеш — можно группировать
+    сессии одного пользователя без раскрытия Telegram ID.
+    """
+    raw = str(user_id).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()[:12]
+
+
+# Паттерны PII для маскировки в тексте сообщений
+_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Телефоны: +7..., 8..., и вариации
+    (re.compile(r"(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"), "[PHONE]"),
+    # Email
+    (re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"), "[EMAIL]"),
+    # Номера карт (16 цифр, возможно через пробелы/дефисы)
+    (re.compile(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "[CARD]"),
+]
+
+
+def _mask_pii(text: str) -> str:
+    """Маскировать PII (телефоны, email, номера карт) в тексте."""
+    for pattern, replacement in _PII_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 class LangfuseTrace:
@@ -179,9 +216,11 @@ class LangfuseService:
         public_key: str = "",
         secret_key: str = "",
         host: str = "https://cloud.langfuse.com",
+        anonymize_messages: bool = False,
     ) -> None:
         self._enabled = enabled
         self._client: Any = None
+        self._anonymize_messages = anonymize_messages
 
         if enabled and public_key and secret_key:
             try:
@@ -225,16 +264,31 @@ class LangfuseService:
         session_id: str | None = None,
         tags: list[str] | None = None,
     ) -> LangfuseTrace | _NoOpTrace:
-        """Создать trace для обработки сообщения пользователя."""
+        """Создать trace для обработки сообщения пользователя.
+
+        Анонимизация применяется автоматически:
+        - user_id и session_id хешируются (SHA-256, 12 символов)
+        - PII в input маскируется (телефоны, email, карты)
+        - Если anonymize_messages=True, весь input заменяется на "[REDACTED]"
+        """
         if not self.enabled:
             return _NoOpTrace()
 
+        # Анонимизация user_id и session_id
+        anon_user_id = _anonymize_user_id(user_id) if user_id else None
+        anon_session_id = _anonymize_user_id(session_id) if session_id else None
+
+        # Маскировка input
+        safe_input = input
+        if isinstance(input, str):
+            safe_input = "[REDACTED]" if self._anonymize_messages else _mask_pii(input)
+
         trace = self._client.trace(
             name=name,
-            user_id=user_id,
-            input=input,
+            user_id=anon_user_id,
+            input=safe_input,
             metadata=metadata,
-            session_id=session_id,
+            session_id=anon_session_id,
             tags=tags,
         )
         return LangfuseTrace(trace)

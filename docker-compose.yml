@@ -38,6 +38,24 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # ─── Langfuse (LLM-observability) ─────────────────────────────────────────
+  # UI: http://localhost:3000 (регистрация при первом запуске)
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: vkuswill-langfuse
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/langfuse
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: langfuse-dev-secret-change-in-production
+      SALT: langfuse-dev-salt-change-in-production
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
   # ─── Bot ───────────────────────────────────────────────────────────────────
   bot:
     build:
@@ -51,9 +69,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/vkuswill
       STORAGE_BACKEND: redis
-      # Langfuse (берёт ключи из .env, host можно переопределить для self-hosted)
-      # LANGFUSE_ENABLED: "true"
-      # LANGFUSE_HOST: http://langfuse:3000
+      # Langfuse → self-hosted контейнер
+      LANGFUSE_ENABLED: "true"
+      LANGFUSE_HOST: http://langfuse:3000
     ports:
       - "8080:8080"
     depends_on:
@@ -61,6 +79,8 @@ services:
         condition: service_healthy
       postgres:
         condition: service_healthy
+      langfuse:
+        condition: service_started
     restart: unless-stopped
 
 volumes:

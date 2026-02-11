@@ -319,6 +319,7 @@ async def main() -> None:
         public_key=config.langfuse_public_key,
         secret_key=config.langfuse_secret_key,
         host=config.langfuse_host,
+        anonymize_messages=config.langfuse_anonymize_messages,
     )
 
     # GigaChat-сервис — все зависимости инжектируются явно
