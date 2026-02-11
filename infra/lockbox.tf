@@ -89,6 +89,16 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.langfuse_salt
   }
 
+  entries {
+    key        = "LANGFUSE_PUBLIC_KEY"
+    text_value = var.langfuse_public_key
+  }
+
+  entries {
+    key        = "LANGFUSE_SECRET_KEY"
+    text_value = var.langfuse_secret_key
+  }
+
   # S3 логирование
   entries {
     key        = "S3_LOG_ENABLED"
