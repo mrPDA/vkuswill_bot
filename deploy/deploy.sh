@@ -55,13 +55,31 @@ load_lockbox_secrets() {
     return
   fi
 
+  # Проверяем наличие yc CLI
+  if ! command -v yc &>/dev/null; then
+    warn "yc CLI не найден на VM, пропускаем загрузку секретов из Lockbox"
+    return
+  fi
+
   log "Загрузка секретов из Lockbox: ${LOCKBOX_SECRET_ID}..."
 
   local ENV_FILE="/opt/vkuswill-bot/.env"
+  local LOCKBOX_JSON
 
   # Получаем все payload entries
-  yc lockbox payload get "$LOCKBOX_SECRET_ID" --format json 2>/dev/null | \
-    python3 -c "
+  if ! LOCKBOX_JSON=$(yc lockbox payload get "$LOCKBOX_SECRET_ID" --format json 2>&1); then
+    warn "Не удалось получить секреты из Lockbox: ${LOCKBOX_JSON}"
+    warn "Проверьте, что yc CLI настроен и сервисный аккаунт VM имеет доступ к Lockbox"
+    return
+  fi
+
+  # Проверяем, что получили непустой JSON
+  if [[ -z "$LOCKBOX_JSON" ]] || ! echo "$LOCKBOX_JSON" | python3 -c "import json,sys; json.load(sys.stdin)" 2>/dev/null; then
+    warn "Lockbox вернул невалидный JSON, пропускаем загрузку секретов"
+    return
+  fi
+
+  echo "$LOCKBOX_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for entry in data.get('entries', []):
@@ -104,9 +122,12 @@ fi
 # Проверить, что WEBHOOK_HOST задан в .env (необходим для регистрации webhook в Telegram)
 if [[ -f "$ENV_FILE" ]]; then
   if ! grep -q '^WEBHOOK_HOST=.\+' "$ENV_FILE"; then
-    err "WEBHOOK_HOST не задан в ${ENV_FILE}. Укажите внешний домен/IP для webhook (например, bot.example.com)"
-    exit 1
+    warn "WEBHOOK_HOST не задан в ${ENV_FILE}. Укажите внешний домен/IP для webhook (например, bot.example.com)"
+    warn "Контейнер будет запущен, но webhook может не работать"
   fi
+else
+  warn "Файл ${ENV_FILE} не найден. Контейнер будет запущен без переменных окружения из файла."
+  warn "Убедитесь, что .env файл создан вручную или секреты доступны через Lockbox."
 fi
 
 # Директория для persistent-данных (SQLite preferences)
