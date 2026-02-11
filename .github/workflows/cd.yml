@@ -107,22 +107,11 @@ jobs:
 
       - name: Copy deploy script
         run: |
-          scp -i ~/.ssh/deploy_key \
-            deploy/deploy.sh \
-            "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${DEPLOY_DIR}/deploy.sh"
+          scp -i ~/.ssh/deploy_key deploy/deploy.sh "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/deploy.sh"
 
       - name: Run deploy
-        env:
-          FULL_IMAGE: ${{ needs.build-and-push.outputs.full_image }}
-          IMAGE_TAG: ${{ needs.build-and-push.outputs.image_tag }}
-          LOCKBOX_SECRET_ID: ${{ secrets.LOCKBOX_SECRET_ID }}
         run: |
-          ssh -i ~/.ssh/deploy_key \
-            "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
-            "bash ${DEPLOY_DIR}/deploy.sh \
-              --image '${FULL_IMAGE}' \
-              --tag '${IMAGE_TAG}' \
-              --lockbox '${LOCKBOX_SECRET_ID}'"
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${{ needs.build-and-push.outputs.full_image }}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}'"
 
       - name: Health check
         run: |
