@@ -111,7 +111,8 @@ jobs:
 
       - name: Run deploy
         run: |
-          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${{ needs.build-and-push.outputs.full_image }}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}'"
+          FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}'"
 
       - name: Health check
         run: |
