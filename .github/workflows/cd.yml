@@ -153,12 +153,16 @@ jobs:
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}'"
 
-      - name: Langfuse diagnostics
+      - name: Container diagnostics
         if: always()
         run: |
+          echo "=== Bot container logs (last 50) ==="
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+            "docker logs vkuswill-bot --tail 50 2>&1" || true
+          echo ""
           echo "=== Langfuse container status ==="
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
-            "docker ps -a -f name=vkuswill-langfuse --format '{{.Status}}' && echo '--- logs ---' && docker logs vkuswill-langfuse --tail 40 2>&1" || true
+            "docker ps -a -f name=vkuswill-langfuse --format '{{.Status}}' && echo '--- logs ---' && docker logs vkuswill-langfuse --tail 20 2>&1" || true
 
       - name: Health check
         timeout-minutes: 3
