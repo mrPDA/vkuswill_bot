@@ -51,6 +51,9 @@ services:
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/vkuswill
       STORAGE_BACKEND: redis
+      # Langfuse (берёт ключи из .env, host можно переопределить для self-hosted)
+      # LANGFUSE_ENABLED: "true"
+      # LANGFUSE_HOST: http://langfuse:3000
     ports:
       - "8080:8080"
     depends_on:
