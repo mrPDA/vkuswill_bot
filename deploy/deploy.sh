@@ -46,16 +46,24 @@ err() { echo -e "${RED}[deploy]${NC} $*"; }
 
 # ─── 0. Установка yc CLI (если отсутствует) ────────────────────
 ensure_yc_cli() {
+  # Проверить стандартные пути
+  for p in /usr/local/bin/yc /home/deploy/yandex-cloud/bin/yc "$HOME/yandex-cloud/bin/yc"; do
+    if [[ -x "$p" ]]; then
+      export PATH="$(dirname "$p"):$PATH"
+      return
+    fi
+  done
+
   if command -v yc &>/dev/null; then
     return
   fi
 
   log "Установка Yandex Cloud CLI..."
+  local YC_HOME="$HOME/yandex-cloud"
   curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | \
-    bash -s -- -i /opt/yandex-cloud -n 2>/dev/null
+    bash -s -- -i "$YC_HOME" -n 2>&1 || true
 
-  # Добавить в PATH текущей сессии
-  export PATH="/opt/yandex-cloud/bin:$PATH"
+  export PATH="${YC_HOME}/bin:$PATH"
 
   if command -v yc &>/dev/null; then
     log "yc CLI установлен: $(yc version 2>/dev/null || echo 'OK')"
