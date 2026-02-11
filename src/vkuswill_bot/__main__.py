@@ -24,6 +24,7 @@ from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
+from aiogram.types import FSInputFile
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 from vkuswill_bot.bot.handlers import admin_router, router
@@ -453,8 +454,21 @@ async def _run_webhook(
     setup_application(app, dp, bot=bot)
 
     # Установить webhook в Telegram
+    # Для самоподписанного сертификата передаём его в Telegram
+    certificate = None
+    if config.webhook_cert_path:
+        from pathlib import Path
+
+        cert_path = Path(config.webhook_cert_path)
+        if cert_path.exists():
+            certificate = FSInputFile(cert_path)
+            logger.info("Используется самоподписанный сертификат: %s", cert_path)
+        else:
+            logger.warning("Сертификат не найден: %s", cert_path)
+
     await bot.set_webhook(
         url=webhook_url,
+        certificate=certificate,
         drop_pending_updates=True,
     )
     logger.info("Telegram webhook установлен: %s", webhook_url)

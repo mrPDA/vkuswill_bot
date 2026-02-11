@@ -118,7 +118,7 @@ jobs:
           _BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           _GIGACHAT_CRED: ${{ secrets.GIGACHAT_CREDENTIALS }}
           _GIGACHAT_MODEL: ${{ secrets.GIGACHAT_MODEL }}
-          _WEBHOOK_HOST: ${{ secrets.WEBHOOK_HOST }}
+          _WEBHOOK_HOST: ${{ secrets.WEBHOOK_HOST || secrets.VM_HOST }}
         run: |
           {
             echo "BOT_TOKEN=${_BOT_TOKEN}"
@@ -130,23 +130,6 @@ jobs:
           } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 
-      - name: Update nginx config
-        run: |
-          scp -i ~/.ssh/deploy_key deploy/nginx-bot.conf "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/nginx-bot.conf"
-          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
-            "if [ -d /etc/nginx ]; then
-              DOMAIN=\$(grep '^WEBHOOK_HOST=' ${{ env.DEPLOY_DIR }}/.env | cut -d= -f2)
-              if [ -n \"\$DOMAIN\" ] && [ -f /etc/letsencrypt/live/\$DOMAIN/fullchain.pem ]; then
-                sed \"s/\\\${DOMAIN}/\$DOMAIN/g\" ${{ env.DEPLOY_DIR }}/nginx-bot.conf | sudo tee /etc/nginx/sites-available/vkuswill-bot > /dev/null
-                sudo nginx -t && sudo systemctl reload nginx
-                echo 'nginx config updated and reloaded'
-              else
-                echo 'SSL not configured yet, skipping nginx update'
-              fi
-            else
-              echo 'nginx not installed, skipping'
-            fi"
-
       - name: Run deploy
         run: |
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
@@ -154,20 +137,16 @@ jobs:
 
       - name: Health check
         env:
-          _WEBHOOK_HOST: ${{ secrets.WEBHOOK_HOST }}
           _VM_HOST: ${{ secrets.VM_HOST }}
         run: |
-          # Используем HTTPS через домен если настроен, иначе HTTP через IP
-          if [ -n "$_WEBHOOK_HOST" ]; then
-            HEALTH_URL="https://${_WEBHOOK_HOST}/health"
-          else
-            HEALTH_URL="http://${_VM_HOST}:8080/health"
-          fi
+          # Проверяем через nginx (HTTPS, self-signed) или напрямую
+          HEALTH_URL="https://${_VM_HOST}/health"
           echo "Health check URL: ${HEALTH_URL}"
           echo "Ожидание запуска бота (30 сек)..."
           sleep 30
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" "${HEALTH_URL}" || true)
+            STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null || \
+                     curl -s -o /dev/null -w "%{http_code}" "http://${_VM_HOST}:8080/health" || true)
             if [ "$STATUS" = "200" ]; then
               echo "Health check OK (attempt $i)"
               exit 0

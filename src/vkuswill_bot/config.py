@@ -49,6 +49,7 @@ class Config(BaseSettings):
     use_webhook: bool = False
     webhook_host: str = ""
     webhook_port: int = 8080
+    webhook_cert_path: str = ""  # путь к самоподписанному SSL-сертификату для Telegram
 
     # S3 логирование (Yandex Object Storage)
     s3_log_enabled: bool = False
