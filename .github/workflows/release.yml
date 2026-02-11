@@ -39,7 +39,7 @@ jobs:
 
       - name: Verify pyproject.toml version
         run: |
-          TOML_VERSION=$(grep -oP 'version\s*=\s*"\K[^"]+' pyproject.toml)
+          TOML_VERSION=$(grep -oP '^version\s*=\s*"\K[^"]+' pyproject.toml)
           TAG_VERSION=${{ steps.version.outputs.VERSION }}
           if [ "$TOML_VERSION" != "$TAG_VERSION" ]; then
             echo "::error::Версия в pyproject.toml ($TOML_VERSION) не совпадает с тегом ($TAG_VERSION)"
