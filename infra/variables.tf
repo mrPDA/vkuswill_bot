@@ -122,6 +122,26 @@ variable "admin_user_ids" {
   default     = "[]"
 }
 
+# ─── S3 Logs ─────────────────────────────────────────────────
+
+variable "s3_log_bucket" {
+  description = "S3 bucket name for bot logs"
+  type        = string
+  default     = "vkuswill-bot-logs"
+}
+
+variable "s3_log_retention_days" {
+  description = "Days to keep logs in S3 before auto-deletion"
+  type        = number
+  default     = 90
+}
+
+variable "s3_log_max_size_bytes" {
+  description = "Max bucket size in bytes (5 GB default)"
+  type        = number
+  default     = 5368709120 # 5 * 1024^3
+}
+
 # ─── Labels ──────────────────────────────────────────────────
 
 variable "labels" {

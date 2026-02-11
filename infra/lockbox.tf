@@ -41,4 +41,25 @@ resource "yandex_lockbox_secret_version" "bot" {
     key        = "ADMIN_USER_IDS"
     text_value = var.admin_user_ids
   }
+
+  # S3 логирование
+  entries {
+    key        = "S3_LOG_ENABLED"
+    text_value = "true"
+  }
+
+  entries {
+    key        = "S3_LOG_BUCKET"
+    text_value = var.s3_log_bucket
+  }
+
+  entries {
+    key        = "S3_LOG_ACCESS_KEY"
+    text_value = yandex_iam_service_account_static_access_key.log_writer_s3.access_key
+  }
+
+  entries {
+    key        = "S3_LOG_SECRET_KEY"
+    text_value = yandex_iam_service_account_static_access_key.log_writer_s3.secret_key
+  }
 }

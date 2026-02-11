@@ -78,11 +78,36 @@ def _setup_logging() -> None:
         stream_handler.setFormatter(_JSONFormatter())
         handlers.append(stream_handler)
     else:
-        # Разработка: человекочитаемый формат + файл
+        # Разработка: человекочитаемый формат
         stream_handler = logging.StreamHandler()
         stream_handler.setFormatter(logging.Formatter(LOG_FORMAT))
         handlers.append(stream_handler)
-        handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
+        # Файл ТОЛЬКО в debug-режиме (в production K8s логи собираются из stdout)
+        if config.debug:
+            handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
+
+    # S3 логирование: долгосрочное хранение в Yandex Object Storage
+    if config.s3_log_enabled and config.s3_log_bucket:
+        try:
+            from vkuswill_bot.services.s3_log_handler import create_s3_log_handler
+
+            s3_handler = create_s3_log_handler(
+                bucket=config.s3_log_bucket,
+                access_key=config.s3_log_access_key,
+                secret_key=config.s3_log_secret_key,
+                prefix=config.s3_log_prefix,
+                endpoint_url=config.s3_log_endpoint,
+                region_name=config.s3_log_region,
+                flush_interval=config.s3_log_flush_interval,
+                flush_size=config.s3_log_flush_size,
+                level=logging.INFO,
+            )
+            handlers.append(s3_handler)
+        except Exception as exc:  # noqa: BLE001
+            print(
+                f"[WARNING] S3 логирование не запущено: {exc}",
+                file=sys.stderr,
+            )
 
     logging.basicConfig(level=level, handlers=handlers, force=True)
 
@@ -145,6 +170,17 @@ async def _health_handler(request: web.Request) -> web.Response:
 
     status_code = 200 if checks["status"] == "ok" else 503
     return web.json_response(checks, status=status_code)
+
+
+def _flush_s3_handlers() -> None:
+    """Сбросить и закрыть все S3LogHandler-ы (вызывается при shutdown)."""
+    from vkuswill_bot.services.s3_log_handler import S3LogHandler
+
+    root = logging.getLogger()
+    for handler in root.handlers[:]:
+        if isinstance(handler, S3LogHandler):
+            handler.close()
+            root.removeHandler(handler)
 
 
 async def main() -> None:
@@ -313,6 +349,9 @@ async def main() -> None:
             logger.info("PostgreSQL pool закрыт")
         await bot.session.close()
         logger.info("Бот остановлен.")
+
+        # Сбросить оставшиеся логи в S3 перед завершением
+        _flush_s3_handlers()
 
     # ------------------------------------------------------------------
     # Запуск: webhook (production) или polling (разработка)
