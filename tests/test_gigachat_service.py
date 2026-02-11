@@ -21,7 +21,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from gigachat.models import (
     Chat,
-    Messages,
     MessagesRole,
 )
 
@@ -129,7 +128,9 @@ def service_with_recipes(mock_mcp_client, mock_recipe_store) -> GigaChatService:
 
 @pytest.fixture
 def service_with_all(
-    mock_mcp_client, mock_prefs_store, mock_recipe_store,
+    mock_mcp_client,
+    mock_prefs_store,
+    mock_recipe_store,
 ) -> GigaChatService:
     """GigaChatService со всеми хранилищами."""
     svc = GigaChatService(
@@ -161,12 +162,12 @@ class TestMessageTruncation:
             service._client,
             "chat",
             return_value=make_text_response("Ответ"),
-        ) as mock_chat:
+        ):
             await service.process_message(user_id=1, text=long_text)
 
         # Проверяем, что в историю попало обрезанное сообщение
         history = service._conversations[1]
-        user_msg = [m for m in history if m.role == MessagesRole.USER][0]
+        user_msg = next(m for m in history if m.role == MessagesRole.USER)
         assert len(user_msg.content) == MAX_USER_MESSAGE_LENGTH
 
     async def test_short_message_not_truncated(self, service):
@@ -181,7 +182,7 @@ class TestMessageTruncation:
             await service.process_message(user_id=1, text=text)
 
         history = service._conversations[1]
-        user_msg = [m for m in history if m.role == MessagesRole.USER][0]
+        user_msg = next(m for m in history if m.role == MessagesRole.USER)
         assert user_msg.content == text
 
 
@@ -216,9 +217,7 @@ class TestProcessMessage:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return make_function_call_response(
-                    "vkusvill_products_search", {"q": "молоко"}
-                )
+                return make_function_call_response("vkusvill_products_search", {"q": "молоко"})
             else:
                 return make_text_response("Нашёл молоко за 79 руб!")
 
@@ -240,14 +239,12 @@ class TestProcessMessage:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return make_function_call_response(
-                    "vkusvill_products_search", '{"q": "сыр"}'
-                )
+                return make_function_call_response("vkusvill_products_search", '{"q": "сыр"}')
             else:
                 return make_text_response("Вот сыр.")
 
         with patch.object(service._client, "chat", side_effect=mock_chat):
-            result = await service.process_message(user_id=1, text="Сыр")
+            await service.process_message(user_id=1, text="Сыр")
 
         mock_mcp_client.call_tool.assert_called_once_with(
             "vkusvill_products_search", {"q": "сыр", "limit": 5}
@@ -263,9 +260,7 @@ class TestProcessMessage:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return make_function_call_response(
-                    "vkusvill_products_search", {"q": "хлеб"}
-                )
+                return make_function_call_response("vkusvill_products_search", {"q": "хлеб"})
             else:
                 return make_text_response("Извините, сервис недоступен.")
 
@@ -294,9 +289,7 @@ class TestProcessMessage:
         with patch.object(
             service._client,
             "chat",
-            return_value=make_function_call_response(
-                "vkusvill_products_search", {"q": "тест"}
-            ),
+            return_value=make_function_call_response("vkusvill_products_search", {"q": "тест"}),
         ):
             result = await service.process_message(user_id=1, text="Тест")
 
@@ -308,9 +301,7 @@ class TestProcessMessage:
     async def test_failed_call_loop_detection(self, service, mock_mcp_client):
         """Если одинаковый tool-вызов провалился 2 раза — прерываем цикл."""
         # MCP возвращает ошибку (ok=false)
-        mock_mcp_client.call_tool.return_value = json.dumps(
-            {"ok": False, "error": "invalid_input"}
-        )
+        mock_mcp_client.call_tool.return_value = json.dumps({"ok": False, "error": "invalid_input"})
 
         call_count = 0
 
@@ -327,17 +318,15 @@ class TestProcessMessage:
                 return make_text_response("К сожалению, не удалось создать корзину.")
 
         with patch.object(service._client, "chat", side_effect=mock_chat):
-            result = await service.process_message(
-                user_id=1, text="Создай корзину"
-            )
+            result = await service.process_message(user_id=1, text="Создай корзину")
 
         assert "не удалось" in result.lower() or "корзин" in result.lower()
 
     async def test_successful_call_loop_detection(self, service, mock_mcp_client):
         """Детектор перехватывает повторные успешные вызовы с теми же аргументами."""
-        mock_mcp_client.call_tool.return_value = json.dumps({
-            "ok": True, "data": {"items": [{"xml_id": 1, "name": "Тест"}]}
-        })
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"ok": True, "data": {"items": [{"xml_id": 1, "name": "Тест"}]}}
+        )
 
         call_count = 0
 
@@ -409,9 +398,7 @@ class TestProcessMessage:
             nonlocal step
             step += 1
             q = products[step % len(products)]
-            return make_function_call_response(
-                "vkusvill_products_search", {"q": q}
-            )
+            return make_function_call_response("vkusvill_products_search", {"q": q})
 
         with patch.object(service._client, "chat", side_effect=mock_chat):
             result = await service.process_message(user_id=1, text="Тест")
@@ -435,7 +422,8 @@ class TestProcessMessage:
             if call_count <= 6:
                 # Все вызовы с одними и теми же аргументами
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "молоко"},
+                    "vkusvill_products_search",
+                    {"q": "молоко"},
                 )
             return make_text_response("Готово!")
 
@@ -448,10 +436,12 @@ class TestProcessMessage:
 
     async def test_call_results_cached_for_duplicates(self, service, mock_mcp_client):
         """Закешированный результат вставляется в историю при дублировании."""
-        original_result = json.dumps({
-            "ok": True,
-            "data": {"items": [{"xml_id": 42, "name": "Кефир"}]},
-        })
+        original_result = json.dumps(
+            {
+                "ok": True,
+                "data": {"items": [{"xml_id": 42, "name": "Кефир"}]},
+            }
+        )
         mock_mcp_client.call_tool.return_value = original_result
 
         call_count = 0
@@ -461,12 +451,13 @@ class TestProcessMessage:
             call_count += 1
             if call_count <= 3:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "кефир"},
+                    "vkusvill_products_search",
+                    {"q": "кефир"},
                 )
             return make_text_response("Готово!")
 
         with patch.object(service._client, "chat", side_effect=mock_chat):
-            result = await service.process_message(user_id=1, text="Кефир")
+            await service.process_message(user_id=1, text="Кефир")
 
         # Проверяем, что в истории FUNCTION-сообщение с результатом (не ошибкой)
         history = service._conversations[1]
@@ -487,15 +478,13 @@ class TestClose:
 
     async def test_close_success(self, service):
         """Успешное закрытие клиента."""
-        with patch.object(service._client, "close") as mock_close:
+        with patch.object(service._client, "close"):
             await service.close()
         # close() был вызван (через asyncio.to_thread)
 
     async def test_close_with_error(self, service):
         """Ошибка при закрытии логируется, не бросается."""
-        with patch.object(
-            service._client, "close", side_effect=RuntimeError("close error")
-        ):
+        with patch.object(service._client, "close", side_effect=RuntimeError("close error")):
             # Не должно бросить исключение
             await service.close()
 
@@ -545,27 +534,31 @@ class TestSearchTrimCacheCartFlow:
 
     async def test_search_then_cart_full_flow(self, service, mock_mcp_client):
         """Полный цикл: поиск кеширует цены, корзина рассчитывает стоимость."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {
-                        "xml_id": 41728,
-                        "name": "Молоко 3,2%",
-                        "price": {"current": 79, "currency": "RUB"},
-                        "unit": "шт",
-                        "weight": "930 мл",
-                        "rating": 4.8,
-                        "description": "Длинное описание...",
-                        "images": ["img.jpg"],
-                    },
-                ]
-            },
-        })
-        cart_result = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/?share_basket=123"},
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 41728,
+                            "name": "Молоко 3,2%",
+                            "price": {"current": 79, "currency": "RUB"},
+                            "unit": "шт",
+                            "weight": "930 мл",
+                            "rating": 4.8,
+                            "description": "Длинное описание...",
+                            "images": ["img.jpg"],
+                        },
+                    ]
+                },
+            }
+        )
+        cart_result = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=123"},
+            }
+        )
 
         mock_mcp_client.call_tool.side_effect = [search_result, cart_result]
 
@@ -576,7 +569,8 @@ class TestSearchTrimCacheCartFlow:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "молоко"},
+                    "vkusvill_products_search",
+                    {"q": "молоко"},
                 )
             elif call_count == 2:
                 return make_function_call_response(
@@ -630,7 +624,8 @@ class TestSearchTrimCacheCartFlow:
         assert isinstance(result, str)
         # Вызов MCP произошёл с пустым dict + limit (fallback при невалидном JSON)
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"limit": 5},
+            "vkusvill_products_search",
+            {"limit": 5},
         )
 
     async def test_function_call_with_non_str_non_dict_args(self, service, mock_mcp_client):
@@ -645,7 +640,8 @@ class TestSearchTrimCacheCartFlow:
             if call_count == 1:
                 # Создаём ответ с arguments типа int (не str, не dict)
                 resp = make_function_call_response(
-                    "vkusvill_products_search", {"q": "test"},
+                    "vkusvill_products_search",
+                    {"q": "test"},
                 )
                 # Подменяем arguments на non-dict, non-str
                 resp.choices[0].message.function_call.arguments = 12345
@@ -657,7 +653,8 @@ class TestSearchTrimCacheCartFlow:
 
         assert isinstance(result, str)
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"limit": 5},
+            "vkusvill_products_search",
+            {"limit": 5},
         )
 
     async def test_functions_state_id_preserved(self, service, mock_mcp_client):
@@ -671,7 +668,8 @@ class TestSearchTrimCacheCartFlow:
             call_count += 1
             if call_count == 1:
                 resp = make_function_call_response(
-                    "vkusvill_products_search", {"q": "тест"},
+                    "vkusvill_products_search",
+                    {"q": "тест"},
                 )
                 # Добавляем functions_state_id к сообщению
                 resp.choices[0].message.functions_state_id = "state-abc-123"
@@ -685,8 +683,7 @@ class TestSearchTrimCacheCartFlow:
         history = service._conversations[1]
         assistant_msgs = [m for m in history if m.role == MessagesRole.ASSISTANT]
         assert any(
-            getattr(m, "functions_state_id", None) == "state-abc-123"
-            for m in assistant_msgs
+            getattr(m, "functions_state_id", None) == "state-abc-123" for m in assistant_msgs
         )
 
 
@@ -694,7 +691,10 @@ class TestProcessMessageWithPrefs:
     """Тесты process_message с маршрутизацией предпочтений."""
 
     async def test_preferences_get_routed_locally(
-        self, service_with_prefs, mock_mcp_client, mock_prefs_store,
+        self,
+        service_with_prefs,
+        mock_mcp_client,
+        mock_prefs_store,
     ):
         """user_preferences_get маршрутизируется локально, не через MCP."""
         call_count = 0
@@ -704,14 +704,16 @@ class TestProcessMessageWithPrefs:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "user_preferences_get", {},
+                    "user_preferences_get",
+                    {},
                 )
             else:
                 return make_text_response("У вас нет предпочтений.")
 
         with patch.object(service_with_prefs._client, "chat", side_effect=mock_chat):
-            result = await service_with_prefs.process_message(
-                user_id=42, text="Мои предпочтения",
+            await service_with_prefs.process_message(
+                user_id=42,
+                text="Мои предпочтения",
             )
 
         # Вызвано хранилище, а не MCP
@@ -719,7 +721,10 @@ class TestProcessMessageWithPrefs:
         mock_mcp_client.call_tool.assert_not_called()
 
     async def test_preferences_set_routed_locally(
-        self, service_with_prefs, mock_mcp_client, mock_prefs_store,
+        self,
+        service_with_prefs,
+        mock_mcp_client,
+        mock_prefs_store,
     ):
         """user_preferences_set маршрутизируется локально."""
         call_count = 0
@@ -736,17 +741,22 @@ class TestProcessMessageWithPrefs:
                 return make_text_response("Запомнил!")
 
         with patch.object(service_with_prefs._client, "chat", side_effect=mock_chat):
-            result = await service_with_prefs.process_message(
-                user_id=42, text="Запомни, я люблю пломбир в шоколаде",
+            await service_with_prefs.process_message(
+                user_id=42,
+                text="Запомни, я люблю пломбир в шоколаде",
             )
 
         mock_prefs_store.set.assert_called_once_with(
-            42, "мороженое", "пломбир в шоколаде",
+            42,
+            "мороженое",
+            "пломбир в шоколаде",
         )
         mock_mcp_client.call_tool.assert_not_called()
 
     async def test_mcp_tool_still_goes_through_mcp(
-        self, service_with_prefs, mock_mcp_client,
+        self,
+        service_with_prefs,
+        mock_mcp_client,
     ):
         """MCP-инструменты по-прежнему маршрутизируются через MCP."""
         mock_mcp_client.call_tool.return_value = json.dumps(
@@ -760,32 +770,40 @@ class TestProcessMessageWithPrefs:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "молоко"},
+                    "vkusvill_products_search",
+                    {"q": "молоко"},
                 )
             else:
                 return make_text_response("Ничего не нашёл.")
 
         with patch.object(service_with_prefs._client, "chat", side_effect=mock_chat):
             await service_with_prefs.process_message(
-                user_id=42, text="Найди молоко",
+                user_id=42,
+                text="Найди молоко",
             )
 
         mock_mcp_client.call_tool.assert_called_once_with(
-            "vkusvill_products_search", {"q": "молоко", "limit": 5},
+            "vkusvill_products_search",
+            {"q": "молоко", "limit": 5},
         )
 
     async def test_preferences_enhance_search_query(
-        self, service_with_prefs, mock_mcp_client, mock_prefs_store,
+        self,
+        service_with_prefs,
+        mock_mcp_client,
+        mock_prefs_store,
     ):
         """После загрузки предпочтений поисковый запрос обогащается."""
         # Предпочтения: вареники -> с картофелем и шкварками
-        mock_prefs_store.get_formatted.return_value = json.dumps({
-            "ok": True,
-            "preferences": [
-                {"category": "вареники", "preference": "с картофелем и шкварками"},
-                {"category": "молоко", "preference": "Молоко безлактозное 2,5%, 900 мл"},
-            ],
-        })
+        mock_prefs_store.get_formatted.return_value = json.dumps(
+            {
+                "ok": True,
+                "preferences": [
+                    {"category": "вареники", "preference": "с картофелем и шкварками"},
+                    {"category": "молоко", "preference": "Молоко безлактозное 2,5%, 900 мл"},
+                ],
+            }
+        )
 
         mock_mcp_client.call_tool.return_value = json.dumps(
             {"ok": True, "data": {"meta": {"q": "test"}, "items": []}},
@@ -799,24 +817,28 @@ class TestProcessMessageWithPrefs:
             if call_count == 1:
                 # Шаг 1: загрузка предпочтений
                 return make_function_call_response(
-                    "user_preferences_get", {},
+                    "user_preferences_get",
+                    {},
                 )
             elif call_count == 2:
                 # Шаг 2: поиск вареников
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "вареники"},
+                    "vkusvill_products_search",
+                    {"q": "вареники"},
                 )
             elif call_count == 3:
                 # Шаг 3: поиск молока
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "молоко"},
+                    "vkusvill_products_search",
+                    {"q": "молоко"},
                 )
             else:
                 return make_text_response("Готово!")
 
         with patch.object(service_with_prefs._client, "chat", side_effect=mock_chat):
             await service_with_prefs.process_message(
-                user_id=42, text="Закажи вареники и молоко",
+                user_id=42,
+                text="Закажи вареники и молоко",
             )
 
         # Проверяем, что MCP получил обогащённые запросы
@@ -833,13 +855,18 @@ class TestProcessMessageWithPrefs:
         assert calls[1].args[1]["q"] == "Молоко безлактозное 2,5%, 900 мл"
 
     async def test_no_preferences_no_enhancement(
-        self, service_with_prefs, mock_mcp_client, mock_prefs_store,
+        self,
+        service_with_prefs,
+        mock_mcp_client,
+        mock_prefs_store,
     ):
         """Если предпочтений нет — поиск идёт без изменений."""
-        mock_prefs_store.get_formatted.return_value = json.dumps({
-            "ok": True,
-            "preferences": [],
-        })
+        mock_prefs_store.get_formatted.return_value = json.dumps(
+            {
+                "ok": True,
+                "preferences": [],
+            }
+        )
 
         mock_mcp_client.call_tool.return_value = json.dumps(
             {"ok": True, "data": {"meta": {"q": "test"}, "items": []}},
@@ -852,18 +879,21 @@ class TestProcessMessageWithPrefs:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "user_preferences_get", {},
+                    "user_preferences_get",
+                    {},
                 )
             elif call_count == 2:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "творог"},
+                    "vkusvill_products_search",
+                    {"q": "творог"},
                 )
             else:
                 return make_text_response("Готово!")
 
         with patch.object(service_with_prefs._client, "chat", side_effect=mock_chat):
             await service_with_prefs.process_message(
-                user_id=42, text="Закажи творог",
+                user_id=42,
+                text="Закажи творог",
             )
 
         calls = mock_mcp_client.call_tool.call_args_list
@@ -925,7 +955,9 @@ class TestHandleRecipeIngredients:
         assert "Не указано" in parsed["error"]
 
     async def test_cache_hit(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Кеш-попадание — возвращает из кеша без LLM."""
         mock_recipe_store.get.return_value = {
@@ -947,7 +979,9 @@ class TestHandleRecipeIngredients:
         assert parsed["ingredients"][0]["name"] == "свёкла"
 
     async def test_cache_hit_with_scaling(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Кеш-попадание с другим числом порций — масштабирует."""
         mock_recipe_store.get.return_value = {
@@ -968,19 +1002,25 @@ class TestHandleRecipeIngredients:
         assert parsed["ingredients"][0]["quantity"] == 1.0  # 0.5 * 8/4
 
     async def test_cache_miss_calls_llm(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Кеш-промах — вызывает GigaChat для извлечения рецепта."""
         mock_recipe_store.get.return_value = None
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "свёкла", "quantity": 0.5, "unit": "кг", "search_query": "свёкла"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "свёкла", "quantity": 0.5, "unit": "кг", "search_query": "свёкла"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -996,13 +1036,16 @@ class TestHandleRecipeIngredients:
         mock_recipe_store.save.assert_called_once()
 
     async def test_llm_error_returns_fallback(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Ошибка LLM — возвращает ошибку с инструкцией для GigaChat."""
         mock_recipe_store.get.return_value = None
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             side_effect=RuntimeError("LLM unavailable"),
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1014,7 +1057,9 @@ class TestHandleRecipeIngredients:
         assert "самостоятельно" in parsed["error"]
 
     async def test_default_servings(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Без параметра servings используется 2 по умолчанию."""
         mock_recipe_store.get.return_value = {
@@ -1032,7 +1077,9 @@ class TestHandleRecipeIngredients:
         assert parsed["ok"] is True
 
     async def test_invalid_servings_defaults_to_2(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Некорректный servings заменяется на 2."""
         mock_recipe_store.get.return_value = {
@@ -1048,19 +1095,22 @@ class TestHandleRecipeIngredients:
         assert parsed["servings"] == 2
 
     async def test_cache_miss_with_markdown_response(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """GigaChat возвращает JSON в markdown-обёртке — парсится корректно."""
         mock_recipe_store.get.return_value = None
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = (
-            '```json\n[{"name": "свёкла", "quantity": 0.5}]\n```'
-        )
+        llm_response.choices[
+            0
+        ].message.content = '```json\n[{"name": "свёкла", "quantity": 0.5}]\n```'
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1072,7 +1122,9 @@ class TestHandleRecipeIngredients:
         assert parsed["ingredients"][0]["name"] == "свёкла"
 
     async def test_hint_in_result(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Результат содержит hint для GigaChat с инструкцией по kg_equivalent."""
         mock_recipe_store.get.return_value = {
@@ -1090,7 +1142,9 @@ class TestHandleRecipeIngredients:
         assert "kg_equivalent" in parsed["hint"]
 
     async def test_cache_hit_enriched_with_kg(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Кеш-попадание — ингредиенты в шт обогащаются kg_equivalent."""
         mock_recipe_store.get.return_value = {
@@ -1113,20 +1167,26 @@ class TestHandleRecipeIngredients:
         assert "kg_equivalent" not in parsed["ingredients"][1]
 
     async def test_llm_result_enriched_with_kg(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Кеш-промах — LLM-результат тоже обогащается kg_equivalent."""
         mock_recipe_store.get.return_value = None
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "лук репчатый", "quantity": 2, "unit": "шт", "search_query": "лук"},
-            {"name": "говядина", "quantity": 0.8, "unit": "кг", "search_query": "говядина"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "лук репчатый", "quantity": 2, "unit": "шт", "search_query": "лук"},
+                {"name": "говядина", "quantity": 0.8, "unit": "кг", "search_query": "говядина"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1150,7 +1210,10 @@ class TestRecipeToolRouting:
     """Тесты маршрутизации recipe_ingredients в process_message."""
 
     async def test_recipe_routed_locally(
-        self, service_with_recipes, mock_recipe_store, mock_mcp_client,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
+        mock_mcp_client,
     ):
         """recipe_ingredients маршрутизируется через RecipeService, не через MCP."""
         mock_recipe_store.get.return_value = {
@@ -1166,13 +1229,15 @@ class TestRecipeToolRouting:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "recipe_ingredients", {"dish": "борщ", "servings": 4},
+                    "recipe_ingredients",
+                    {"dish": "борщ", "servings": 4},
                 )
             return make_text_response("Вот рецепт борща!")
 
         with patch.object(service_with_recipes._client, "chat", side_effect=mock_chat):
             result = await service_with_recipes.process_message(
-                user_id=42, text="Какие ингредиенты для борща?",
+                user_id=42,
+                text="Какие ингредиенты для борща?",
             )
 
         assert isinstance(result, str)
@@ -1189,7 +1254,9 @@ class TestHandleRecipeIngredientsEdgeCases:
     """Дополнительные тесты _handle_recipe_ingredients для покрытия."""
 
     async def test_cache_save_failure_handled(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """Ошибка при сохранении в кеш не крашит — результат возвращается (lines 440-441)."""
         mock_recipe_store.get.return_value = None
@@ -1197,12 +1264,16 @@ class TestHandleRecipeIngredientsEdgeCases:
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "мясо", "quantity": 1, "unit": "кг", "search_query": "говядина"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "мясо", "quantity": 1, "unit": "кг", "search_query": "говядина"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1217,7 +1288,9 @@ class TestHandleRecipeIngredientsEdgeCases:
         mock_recipe_store.save.assert_called_once()
 
     async def test_llm_returns_empty_list(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """LLM вернул пустой массив — ошибка (line 486)."""
         mock_recipe_store.get.return_value = None
@@ -1227,7 +1300,8 @@ class TestHandleRecipeIngredientsEdgeCases:
         llm_response.choices[0].message.content = "[]"
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1239,7 +1313,9 @@ class TestHandleRecipeIngredientsEdgeCases:
         assert "самостоятельно" in parsed["error"]
 
     async def test_llm_returns_dict_instead_of_list(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """LLM вернул dict вместо list — ошибка (line 486)."""
         mock_recipe_store.get.return_value = None
@@ -1249,7 +1325,8 @@ class TestHandleRecipeIngredientsEdgeCases:
         llm_response.choices[0].message.content = '{"error": "bad request"}'
 
         with patch.object(
-            service_with_recipes._client, "chat",
+            service_with_recipes._client,
+            "chat",
             return_value=llm_response,
         ):
             result = await service_with_recipes._handle_recipe_ingredients(
@@ -1260,7 +1337,9 @@ class TestHandleRecipeIngredientsEdgeCases:
         assert parsed["ok"] is False
 
     async def test_servings_string_defaults_to_2(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """servings="два" (строка) → заменяется на 2."""
         mock_recipe_store.get.return_value = {
@@ -1276,7 +1355,9 @@ class TestHandleRecipeIngredientsEdgeCases:
         assert parsed["servings"] == 2
 
     async def test_servings_zero_defaults_to_2(
-        self, service_with_recipes, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_recipe_store,
     ):
         """servings=0 → заменяется на 2."""
         mock_recipe_store.get.return_value = {
@@ -1292,7 +1373,8 @@ class TestHandleRecipeIngredientsEdgeCases:
         assert parsed["servings"] == 2
 
     async def test_dish_with_whitespace_only(
-        self, service_with_recipes,
+        self,
+        service_with_recipes,
     ):
         """dish=" " → ошибка (пустое после strip)."""
         result = await service_with_recipes._handle_recipe_ingredients(
@@ -1302,7 +1384,10 @@ class TestHandleRecipeIngredientsEdgeCases:
         assert parsed["ok"] is False
 
     async def test_recipe_integration_through_process_message(
-        self, service_with_recipes, mock_mcp_client, mock_recipe_store,
+        self,
+        service_with_recipes,
+        mock_mcp_client,
+        mock_recipe_store,
     ):
         """Интеграционный тест: recipe_ingredients через process_message."""
         mock_recipe_store.get.return_value = {
@@ -1314,10 +1399,16 @@ class TestHandleRecipeIngredientsEdgeCases:
             ],
         }
 
-        mock_mcp_client.call_tool.return_value = json.dumps({
-            "ok": True,
-            "data": {"items": [{"xml_id": 1, "name": "Свёкла", "price": {"current": 50}, "unit": "кг"}]},
-        })
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"xml_id": 1, "name": "Свёкла", "price": {"current": 50}, "unit": "кг"}
+                    ]
+                },
+            }
+        )
 
         call_count = 0
 
@@ -1326,22 +1417,26 @@ class TestHandleRecipeIngredientsEdgeCases:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "recipe_ingredients", {"dish": "борщ", "servings": 4},
+                    "recipe_ingredients",
+                    {"dish": "борщ", "servings": 4},
                 )
             elif call_count == 2:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "свёкла"},
+                    "vkusvill_products_search",
+                    {"q": "свёкла"},
                 )
             elif call_count == 3:
                 return make_function_call_response(
-                    "vkusvill_products_search", {"q": "капуста"},
+                    "vkusvill_products_search",
+                    {"q": "капуста"},
                 )
             else:
                 return make_text_response("Вот ваш борщ!")
 
         with patch.object(service_with_recipes._client, "chat", side_effect=mock_chat):
             result = await service_with_recipes.process_message(
-                user_id=1, text="Собери продукты для борща",
+                user_id=1,
+                text="Собери продукты для борща",
             )
 
         assert isinstance(result, str)
@@ -1449,12 +1544,14 @@ class TestCallGigachat:
                 raise rate_limit_error
             return expected
 
-        with patch.object(service._client, "chat", side_effect=mock_chat):
-            with patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"):
-                result = await service._call_gigachat(
-                    history=[],
-                    functions=[],
-                )
+        with (
+            patch.object(service._client, "chat", side_effect=mock_chat),
+            patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"),
+        ):
+            result = await service._call_gigachat(
+                history=[],
+                functions=[],
+            )
 
         assert result is expected
         assert call_count == 2
@@ -1463,17 +1560,15 @@ class TestCallGigachat:
         """Бросает исключение после исчерпания retry."""
         rate_limit_error = RuntimeError("HTTP 429 Too Many Requests")
 
-        with patch.object(
-            service._client,
-            "chat",
-            side_effect=rate_limit_error,
+        with (
+            patch.object(service._client, "chat", side_effect=rate_limit_error),
+            patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"),
+            pytest.raises(RuntimeError, match="429"),
         ):
-            with patch("vkuswill_bot.services.gigachat_service.asyncio.sleep"):
-                with pytest.raises(RuntimeError, match="429"):
-                    await service._call_gigachat(
-                        history=[],
-                        functions=[],
-                    )
+            await service._call_gigachat(
+                history=[],
+                functions=[],
+            )
 
     async def test_non_rate_limit_error_not_retried(self, service):
         """Обычная ошибка (не rate limit) не повторяется."""
@@ -1486,12 +1581,11 @@ class TestCallGigachat:
             call_count += 1
             raise error
 
-        with patch.object(service._client, "chat", side_effect=mock_chat):
-            with pytest.raises(RuntimeError, match="Connection refused"):
-                await service._call_gigachat(
-                    history=[],
-                    functions=[],
-                )
+        with (
+            patch.object(service._client, "chat", side_effect=mock_chat),
+            pytest.raises(RuntimeError, match="Connection refused"),
+        ):
+            await service._call_gigachat(history=[], functions=[])
 
         # Только 1 вызов — retry не было
         assert call_count == 1
@@ -1513,15 +1607,17 @@ class TestCallGigachat:
                 raise rate_limit_error
             return make_text_response("OK")
 
-        with patch.object(service._client, "chat", side_effect=mock_chat):
-            with patch(
+        with (
+            patch.object(service._client, "chat", side_effect=mock_chat),
+            patch(
                 "vkuswill_bot.services.gigachat_service.asyncio.sleep",
                 side_effect=mock_sleep,
-            ):
-                await service._call_gigachat(
-                    history=[],
-                    functions=[],
-                )
+            ),
+        ):
+            await service._call_gigachat(
+                history=[],
+                functions=[],
+            )
 
         # delay = 2 ** attempt: attempt=0 → 1, attempt=1 → 2
         assert sleep_calls == [1, 2]

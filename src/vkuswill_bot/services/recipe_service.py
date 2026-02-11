@@ -23,27 +23,61 @@ logger = logging.getLogger(__name__)
 # ---- Ферментированные / консервированные продукты ----
 # Эти продукты НЕЛЬЗЯ разбирать на сырые ингредиенты,
 # их приготовление занимает дни/недели. Бот должен искать готовые.
-FERMENTED_KEYWORDS: frozenset[str] = frozenset({
-    "квашеная", "квашеный", "квашеное", "квашеные",
-    "солёная", "солёный", "солёное", "солёные",
-    "соленая", "соленый", "соленое", "соленые",
-    "маринованная", "маринованный", "маринованное", "маринованные",
-    "мочёная", "мочёный", "мочёное", "мочёные",
-    "моченая", "моченый", "моченое", "моченые",
-    "кимчи",
-    "аджика", "ткемали", "горчица",
-    "варенье", "джем", "повидло", "конфитюр",
-})
+FERMENTED_KEYWORDS: frozenset[str] = frozenset(
+    {
+        "квашеная",
+        "квашеный",
+        "квашеное",
+        "квашеные",
+        "солёная",
+        "солёный",
+        "солёное",
+        "солёные",
+        "соленая",
+        "соленый",
+        "соленое",
+        "соленые",
+        "маринованная",
+        "маринованный",
+        "маринованное",
+        "маринованные",
+        "мочёная",
+        "мочёный",
+        "мочёное",
+        "мочёные",
+        "моченая",
+        "моченый",
+        "моченое",
+        "моченые",
+        "кимчи",
+        "аджика",
+        "ткемали",
+        "горчица",
+        "варенье",
+        "джем",
+        "повидло",
+        "конфитюр",
+    }
+)
 
 # Приблизительный вес 1 штуки в кг для овощей/фруктов
 PIECE_WEIGHT_KG: dict[str, float] = {
-    "картофель": 0.15, "картошка": 0.15,
-    "морковь": 0.15, "морковка": 0.15,
-    "свекла": 0.3, "буряк": 0.3,
-    "лук": 0.1, "луковица": 0.1,
-    "яблоко": 0.2, "помидор": 0.15, "томат": 0.15,
-    "огурец": 0.12, "перец": 0.15, "перец болгарский": 0.15,
-    "баклажан": 0.3, "кабачок": 0.3,
+    "картофель": 0.15,
+    "картошка": 0.15,
+    "морковь": 0.15,
+    "морковка": 0.15,
+    "свекла": 0.3,
+    "буряк": 0.3,
+    "лук": 0.1,
+    "луковица": 0.1,
+    "яблоко": 0.2,
+    "помидор": 0.15,
+    "томат": 0.15,
+    "огурец": 0.12,
+    "перец": 0.15,
+    "перец болгарский": 0.15,
+    "баклажан": 0.3,
+    "кабачок": 0.3,
 }
 
 
@@ -119,16 +153,23 @@ class RecipeService:
             # Масштабируем если другое количество порций
             if cached["servings"] != servings:
                 ingredients = RecipeStore.scale_ingredients(
-                    ingredients, cached["servings"], servings,
+                    ingredients,
+                    cached["servings"],
+                    servings,
                 )
             logger.info(
                 "Рецепт из кеша: %s на %d порций (%d ингредиентов)",
-                dish, servings, len(ingredients),
+                dish,
+                servings,
+                len(ingredients),
             )
             # Обогащаем ингредиенты эквивалентом в кг
             ingredients = self._enrich_with_kg(ingredients, PIECE_WEIGHT_KG)
             return self._format_result(
-                dish, servings, ingredients, cached=True,
+                dish,
+                servings,
+                ingredients,
+                cached=True,
             )
 
         # 2. Извлекаем через GigaChat
@@ -136,7 +177,10 @@ class RecipeService:
             ingredients = await self._extract_from_llm(dish, servings)
         except Exception as e:
             logger.error(
-                "Ошибка извлечения рецепта '%s': %s", dish, e, exc_info=True,
+                "Ошибка извлечения рецепта '%s': %s",
+                dish,
+                e,
+                exc_info=True,
             )
             return json.dumps(
                 {
@@ -158,11 +202,16 @@ class RecipeService:
         # Обогащаем ингредиенты эквивалентом в кг
         ingredients = self._enrich_with_kg(ingredients, PIECE_WEIGHT_KG)
         return self._format_result(
-            dish, servings, ingredients, cached=False,
+            dish,
+            servings,
+            ingredients,
+            cached=False,
         )
 
     async def _extract_from_llm(
-        self, dish: str, servings: int,
+        self,
+        dish: str,
+        servings: int,
     ) -> list[dict]:
         """Извлечь ингредиенты рецепта через отдельный вызов GigaChat.
 
@@ -188,12 +237,12 @@ class RecipeService:
         ingredients = self._parse_json(content)
 
         if not isinstance(ingredients, list) or not ingredients:
-            raise ValueError(
-                f"Ожидался непустой JSON-массив, получено: {content[:200]}"
-            )
+            raise ValueError(f"Ожидался непустой JSON-массив, получено: {content[:200]}")
 
         logger.info(
-            "Извлечено %d ингредиентов для '%s'", len(ingredients), dish,
+            "Извлечено %d ингредиентов для '%s'",
+            len(ingredients),
+            dish,
         )
         return ingredients
 

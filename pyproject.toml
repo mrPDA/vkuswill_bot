@@ -56,8 +56,11 @@ select = [
 ]
 
 ignore = [
-    "S101",  # assert в тестах OK
-    "S104",  # possible binding to all interfaces (для webhook 0.0.0.0)
+    "S101",   # assert в тестах OK
+    "S104",   # possible binding to all interfaces (для webhook 0.0.0.0)
+    "RUF001", # ambiguous unicode — кириллица в строках OK
+    "RUF002", # ambiguous unicode — кириллица в docstrings OK
+    "RUF003", # ambiguous unicode — кириллица в комментариях OK
 ]
 
 [tool.ruff.lint.per-file-ignores]

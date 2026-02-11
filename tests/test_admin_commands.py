@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -265,8 +265,8 @@ class TestAdminUser:
             "role": "user",
             "status": "active",
             "message_count": 100,
-            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
-            "last_message_at": datetime(2026, 2, 9, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
+            "last_message_at": datetime(2026, 2, 9, tzinfo=UTC),
             "blocked_reason": None,
         }
 
@@ -292,7 +292,7 @@ class TestAdminUser:
             "status": "blocked",
             "blocked_reason": "спам",
             "message_count": 5,
-            "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc),
+            "created_at": datetime(2026, 1, 1, tzinfo=UTC),
             "last_message_at": None,
         }
 

@@ -26,7 +26,7 @@ import os
 import sys
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -99,11 +99,11 @@ class S3LogHandler(logging.Handler):
     # Lazy-инициализация boto3 клиента (в потоке, не при импорте)
     # ------------------------------------------------------------------
 
-    def _get_client(self):  # noqa: ANN202
+    def _get_client(self):
         """Инициализировать boto3 S3-клиент при первом использовании."""
         if self._client is None:
             try:
-                import boto3  # noqa: S113
+                import boto3
                 from botocore.config import Config as BotoConfig
 
                 self._client = boto3.client(
@@ -149,7 +149,8 @@ class S3LogHandler(logging.Handler):
         try:
             entry: dict = {
                 "timestamp": datetime.fromtimestamp(
-                    record.created, tz=timezone.utc,
+                    record.created,
+                    tz=UTC,
                 ).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
@@ -215,7 +216,7 @@ class S3LogHandler(logging.Handler):
         content = "\n".join(records) + "\n"
 
         # Ключ: logs/2026/02/11/14-30-00-abc12345.jsonl
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
         key = (
             f"{self.prefix}/{now:%Y}/{now:%m}/{now:%d}/"
             f"{now:%H}-{now:%M}-{now:%S}-{uuid.uuid4().hex[:8]}.jsonl"

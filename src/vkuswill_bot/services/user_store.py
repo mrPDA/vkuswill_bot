@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 from typing import Any
 
@@ -83,7 +83,12 @@ class UserStore:
         """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                sql, user_id, username, first_name, last_name, language_code,
+                sql,
+                user_id,
+                username,
+                first_name,
+                last_name,
+                language_code,
             )
         return dict(row) if row else {}
 
@@ -92,7 +97,8 @@ class UserStore:
         await self.ensure_schema()
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT * FROM users WHERE user_id = $1", user_id,
+                "SELECT * FROM users WHERE user_id = $1",
+                user_id,
             )
         return dict(row) if row else None
 
@@ -105,7 +111,8 @@ class UserStore:
         await self.ensure_schema()
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT status FROM users WHERE user_id = $1", user_id,
+                "SELECT status FROM users WHERE user_id = $1",
+                user_id,
             )
         return row is not None and row["status"] == "blocked"
 
@@ -164,7 +171,8 @@ class UserStore:
         await self.ensure_schema()
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(
-                "SELECT role FROM users WHERE user_id = $1", user_id,
+                "SELECT role FROM users WHERE user_id = $1",
+                user_id,
             )
         return row is not None and row["role"] == "admin"
 
@@ -214,7 +222,10 @@ class UserStore:
         return None
 
     async def set_limits(
-        self, user_id: int, rate_limit: int | None, rate_period: float | None,
+        self,
+        user_id: int,
+        rate_limit: int | None,
+        rate_period: float | None,
     ) -> bool:
         """Установить персональные лимиты (None = сброс к дефолтным)."""
         await self.ensure_schema()
@@ -271,8 +282,7 @@ class UserStore:
         await self.ensure_schema()
         async with self._pool.acquire() as conn:
             user_row = await conn.fetchrow(
-                "SELECT message_count, created_at, last_message_at "
-                "FROM users WHERE user_id = $1",
+                "SELECT message_count, created_at, last_message_at FROM users WHERE user_id = $1",
                 user_id,
             )
             if not user_row:
@@ -298,7 +308,9 @@ class UserStore:
     # ------------------------------------------------------------------
 
     async def list_users(
-        self, limit: int = 50, offset: int = 0,
+        self,
+        limit: int = 50,
+        offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Список пользователей (для админ-панели)."""
         await self.ensure_schema()
@@ -323,8 +335,11 @@ class UserStore:
     async def count_active_today(self) -> int:
         """Количество активных сегодня (DAU)."""
         await self.ensure_schema()
-        today = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0,
+        today = datetime.now(UTC).replace(
+            hour=0,
+            minute=0,
+            second=0,
+            microsecond=0,
         )
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(

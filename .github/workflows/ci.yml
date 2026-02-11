@@ -131,8 +131,13 @@ jobs:
           echo "Проверка формата коммитов..."
           COMMITS=$(git log --format="%s" origin/${{ github.base_ref }}..HEAD)
           PATTERN="^(feat|fix|docs|style|refactor|perf|test|chore|ci)(\([a-z]+\))?: .+"
+          MERGE_PATTERN="^Merge "
           ERRORS=0
           while IFS= read -r msg; do
+            if [ -n "$msg" ] && echo "$msg" | grep -qE "$MERGE_PATTERN"; then
+              echo "Пропускаем merge-коммит: $msg"
+              continue
+            fi
             if [ -n "$msg" ] && ! echo "$msg" | grep -qE "$PATTERN"; then
               echo "::error::Некорректный формат коммита: $msg"
               ERRORS=$((ERRORS + 1))

@@ -40,6 +40,7 @@ from vkuswill_bot.services.redis_client import close_redis_client, create_redis_
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.user_store import UserStore
+import contextlib
 
 if TYPE_CHECKING:
     pass
@@ -103,7 +104,7 @@ def _setup_logging() -> None:
                 level=logging.INFO,
             )
             handlers.append(s3_handler)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             print(
                 f"[WARNING] S3 логирование не запущено: {exc}",
                 file=sys.stderr,
@@ -125,6 +126,7 @@ WEBHOOK_PATH = "/webhook"
 # ---------------------------------------------------------------------------
 # Health check endpoint
 # ---------------------------------------------------------------------------
+
 
 async def _health_handler(request: web.Request) -> web.Response:
     """Проверка работоспособности бота и зависимостей.
@@ -227,7 +229,8 @@ async def main() -> None:
             )
         except Exception as e:
             logger.warning(
-                "PostgreSQL недоступен (%s), UserMiddleware отключён", e,
+                "PostgreSQL недоступен (%s), UserMiddleware отключён",
+                e,
             )
             pg_pool = None
             user_store = None
@@ -272,11 +275,13 @@ async def main() -> None:
             )
         except Exception as e:
             logger.warning(
-                "Redis недоступен (%s), fallback на in-memory", e,
+                "Redis недоступен (%s), fallback на in-memory",
+                e,
             )
             from vkuswill_bot.services.cart_snapshot_store import (
                 InMemoryCartSnapshotStore,
             )
+
             price_cache = PriceCache()
             dialog_manager = DialogManager(
                 max_history=config.max_history_messages,
@@ -286,6 +291,7 @@ async def main() -> None:
         from vkuswill_bot.services.cart_snapshot_store import (
             InMemoryCartSnapshotStore,
         )
+
         price_cache = PriceCache()
         dialog_manager = DialogManager(
             max_history=config.max_history_messages,
@@ -359,7 +365,8 @@ async def main() -> None:
 
     if config.use_webhook:
         await _run_webhook(
-            bot, dp,
+            bot,
+            dp,
             redis_client=redis_client,
             pg_pool=pg_pool,
             mcp_client=mcp_client,
@@ -372,6 +379,7 @@ async def main() -> None:
 # ---------------------------------------------------------------------------
 # Режим Polling (разработка)
 # ---------------------------------------------------------------------------
+
 
 async def _run_polling(
     bot: Bot,
@@ -404,10 +412,8 @@ async def _run_polling(
             logger.info("Graceful shutdown: останавливаю polling...")
             await dp.stop_polling()
             polling_task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await polling_task
-            except asyncio.CancelledError:
-                pass
     finally:
         await cleanup()  # type: ignore[operator]
 
@@ -415,6 +421,7 @@ async def _run_polling(
 # ---------------------------------------------------------------------------
 # Режим Webhook (production)
 # ---------------------------------------------------------------------------
+
 
 async def _run_webhook(
     bot: Bot,
@@ -455,7 +462,7 @@ async def _run_webhook(
     # Запуск HTTP-сервера
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", config.webhook_port)
+    site = web.TCPSite(runner, "0.0.0.0", config.webhook_port)  # nosec B104
     await site.start()
 
     # Ожидание сигнала завершения

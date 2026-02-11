@@ -47,8 +47,9 @@ class TestSystemPromptContent:
 
     def test_mentions_disclaimer(self):
         """Промпт требует дисклеймер после корзины."""
-        assert "дисклеймер" in SYSTEM_PROMPT.lower() or \
-               "Наличие и точное количество" in SYSTEM_PROMPT
+        assert (
+            "дисклеймер" in SYSTEM_PROMPT.lower() or "Наличие и точное количество" in SYSTEM_PROMPT
+        )
 
     def test_format_rules(self):
         """Промпт содержит правила формата ответа."""
@@ -58,9 +59,7 @@ class TestSystemPromptContent:
     def test_no_secrets(self):
         """В промпте нет токенов, ключей и паролей."""
         for keyword in ["token", "password", "secret", "api_key", "credentials"]:
-            assert keyword not in SYSTEM_PROMPT.lower(), (
-                f"Промпт не должен содержать '{keyword}'"
-            )
+            assert keyword not in SYSTEM_PROMPT.lower(), f"Промпт не должен содержать '{keyword}'"
 
     def test_reasonable_length(self):
         """Промпт разумного размера (не пустой, не гигантский)."""

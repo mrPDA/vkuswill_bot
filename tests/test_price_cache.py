@@ -16,6 +16,7 @@ from vkuswill_bot.services.price_cache import MAX_PRICE_CACHE_SIZE, PriceCache, 
 # PriceInfo
 # ============================================================================
 
+
 class TestPriceInfo:
     """Тесты PriceInfo."""
 
@@ -69,6 +70,7 @@ class TestPriceInfo:
 # ============================================================================
 # PriceCache
 # ============================================================================
+
 
 class TestPriceCache:
     """Тесты PriceCache."""
@@ -180,20 +182,22 @@ class TestPriceCacheBool:
         assert sp.price_cache is cp._price_cache
 
         # Имитируем поиск → кэшируем цены
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "молоко", "total": 1},
-                "items": [
-                    {
-                        "xml_id": 100,
-                        "name": "Молоко 3.2%",
-                        "price": {"current": 79},
-                        "unit": "шт",
-                    }
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "молоко", "total": 1},
+                    "items": [
+                        {
+                            "xml_id": 100,
+                            "name": "Молоко 3.2%",
+                            "price": {"current": 79},
+                            "unit": "шт",
+                        }
+                    ],
+                },
+            }
+        )
         await sp.cache_prices(search_result)
         assert len(shared_cache) == 1
         assert await shared_cache.get(100) is not None
@@ -201,10 +205,12 @@ class TestPriceCacheBool:
 
         # Имитируем корзину → рассчитываем стоимость
         cart_args = {"products": [{"xml_id": 100, "q": 2}]}
-        cart_result = json.dumps({
-            "ok": True,
-            "data": {"link": "https://vkusvill.ru/cart/123"},
-        })
+        cart_result = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/cart/123"},
+            }
+        )
         result = await cp.calc_total(cart_args, cart_result)
         data = json.loads(result)
 

@@ -11,8 +11,7 @@
 - Невалидные аргументы функций
 """
 
-import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from gigachat.models import (
@@ -66,11 +65,11 @@ def service(mock_mcp_client) -> GigaChatService:
 
 UNICODE_ATTACK_PAYLOADS = [
     # Zero-width characters (скрытый текст)
-    "Привет\u200B\u200B\u200Bмир",
+    "Привет\u200b\u200b\u200bмир",
     # Zero-width joiner / non-joiner
-    "Тест\u200C\u200Dтекст",
+    "Тест\u200c\u200dтекст",
     # RTL override (может перевернуть отображение)
-    "\u202EЭто перевёрнутый текст",
+    "\u202eЭто перевёрнутый текст",
     # Homoglyphs (кириллица vs латиница)
     "Hеllо Wоrld",  # 'е', 'о' — кириллица
     # Combining characters (накладные диакритики)
@@ -82,7 +81,7 @@ UNICODE_ATTACK_PAYLOADS = [
     # Form feed, vertical tab
     "Текст\f\vс управляющими символами",
     # BOM (Byte Order Mark)
-    "\uFEFFТекст с BOM",
+    "\ufeffТекст с BOM",
     # Hangul filler
     "ㅤ" * 50,
     # Mathematical symbols as text
@@ -95,9 +94,7 @@ class TestUnicodeAttacks:
     """Тесты обработки Unicode-атак."""
 
     @pytest.mark.parametrize("payload", UNICODE_ATTACK_PAYLOADS)
-    async def test_unicode_does_not_crash_service(
-        self, service, payload: str
-    ):
+    async def test_unicode_does_not_crash_service(self, service, payload: str):
         """Unicode-атаки не крашат сервис."""
         with patch.object(
             service._client,
@@ -307,8 +304,7 @@ class TestInvalidMCPResponses:
     def test_parse_sse_invalid_json(self):
         """Невалидный JSON в SSE-ответе не крашит парсер."""
         result = VkusvillMCPClient._parse_sse_response(
-            "data: {invalid json here}\n"
-            'data: {"result": {"ok": true}}\n'
+            'data: {invalid json here}\ndata: {"result": {"ok": true}}\n'
         )
         assert result == {"ok": True}
 
@@ -319,9 +315,7 @@ class TestInvalidMCPResponses:
 
     def test_parse_sse_only_events(self):
         """SSE без data-строк возвращает None."""
-        result = VkusvillMCPClient._parse_sse_response(
-            "event: ping\nretry: 5000\n"
-        )
+        result = VkusvillMCPClient._parse_sse_response("event: ping\nretry: 5000\n")
         assert result is None
 
     async def test_mcp_tool_returns_invalid_json(self, service, mock_mcp_client):
@@ -412,9 +406,7 @@ class TestInvalidToolArguments:
         assert result["products"][0]["xml_id"] == "abc"
         assert result["products"][0]["q"] == 1
 
-    async def test_gigachat_returns_invalid_function_args(
-        self, service, mock_mcp_client
-    ):
+    async def test_gigachat_returns_invalid_function_args(self, service, mock_mcp_client):
         """GigaChat возвращает невалидные аргументы функции."""
         mock_mcp_client.call_tool.return_value = '{"ok": true}'
 
@@ -487,9 +479,7 @@ class TestSpecialCharacters:
     """Тесты обработки специальных символов."""
 
     @pytest.mark.parametrize("payload", SPECIAL_CHAR_PAYLOADS)
-    async def test_special_chars_dont_crash_service(
-        self, service, payload: str
-    ):
+    async def test_special_chars_dont_crash_service(self, service, payload: str):
         """Специальные символы не крашат сервис."""
         with patch.object(
             service._client,

@@ -38,11 +38,7 @@ class CartProcessor:
         чтобы GigaChat корректно генерировал аргументы.
         """
         params = copy.deepcopy(params)
-        items_schema = (
-            params.get("properties", {})
-            .get("products", {})
-            .get("items", {})
-        )
+        items_schema = params.get("properties", {}).get("products", {}).get("items", {})
         if not items_schema:
             return params
 
@@ -58,7 +54,7 @@ class CartProcessor:
         # Сделать q обязательным
         required = items_schema.get("required", [])
         if "q" not in required:
-            items_schema["required"] = list(required) + ["q"]
+            items_schema["required"] = [*list(required), "q"]
 
         return params
 
@@ -100,9 +96,7 @@ class CartProcessor:
                 order.append(xml_id)
 
         if merged:
-            arguments["products"] = [
-                {"xml_id": xid, "q": merged[xid]} for xid in order
-            ]
+            arguments["products"] = [{"xml_id": xid, "q": merged[xid]} for xid in order]
 
         return arguments
 
@@ -129,7 +123,10 @@ class CartProcessor:
                 if rounded != q:
                     logger.info(
                         "Округление q: xml_id=%s, unit=%s, %s → %s",
-                        xml_id, cached.unit, q, rounded,
+                        xml_id,
+                        cached.unit,
+                        q,
+                        rounded,
                     )
                     item["q"] = rounded
                     changed = True
@@ -182,14 +179,13 @@ class CartProcessor:
             summary["total"] = round(total, 2)
             summary["total_text"] = f"Итого: {total:.2f} руб"
         else:
-            summary["total_text"] = (
-                "Итого: не удалось рассчитать (не все цены известны)"
-            )
+            summary["total_text"] = "Итого: не удалось рассчитать (не все цены известны)"
 
         data = result_data.get("data")
         if not isinstance(data, dict):
             logger.warning(
-                "Результат корзины без поля 'data': %s", result_text[:200],
+                "Результат корзины без поля 'data': %s",
+                result_text[:200],
             )
             return result_text
         data["price_summary"] = summary
@@ -230,19 +226,19 @@ class CartProcessor:
             name = cached.name if cached else f"xml_id={xml_id}"
             queries = xml_to_queries.get(xml_id, [])
             if queries:
-                matched.append({
-                    "query": queries[0],
-                    "name": name,
-                    "xml_id": xml_id,
-                })
+                matched.append(
+                    {
+                        "query": queries[0],
+                        "name": name,
+                        "xml_id": xml_id,
+                    }
+                )
                 queries_with_match.update(queries)
             else:
                 unmatched_items.append({"name": name, "xml_id": xml_id})
 
         # Запросы, по которым ничего не попало в корзину
-        missing_queries = [
-            q for q in search_log if q not in queries_with_match
-        ]
+        missing_queries = [q for q in search_log if q not in queries_with_match]
 
         report: dict = {
             "matched": matched,
@@ -253,10 +249,7 @@ class CartProcessor:
         if missing_queries or unmatched_items:
             issues = []
             for q in missing_queries:
-                issues.append(
-                    f'Поиск "{q}" не имеет соответствия в корзине — '
-                    "товар пропущен!"
-                )
+                issues.append(f'Поиск "{q}" не имеет соответствия в корзине — товар пропущен!')
             for item in unmatched_items:
                 issues.append(
                     f'Товар "{item["name"]}" в корзине не соответствует '
@@ -303,8 +296,7 @@ class CartProcessor:
             if cached:
                 name = cached.name
                 words = frozenset(
-                    w for w in re.findall(r"\w+", name.lower())
-                    if len(w) >= _MIN_WORD_LEN
+                    w for w in re.findall(r"\w+", name.lower()) if len(w) >= _MIN_WORD_LEN
                 )
                 items_info.append((xml_id, name, words))
 
@@ -341,14 +333,15 @@ class CartProcessor:
             if isinstance(data, dict):
                 pairs = [f"«{n1}» и «{n2}»" for n1, n2 in duplicates]
                 data["duplicate_warning"] = (
-                    "В корзине обнаружены похожие товары: "
-                    + "; ".join(pairs) + ". "
+                    "В корзине обнаружены похожие товары: " + "; ".join(pairs) + ". "
                     "Возможно, это дубли одной позиции. "
                     "Проверь и оставь только ОДИН вариант."
                 )
                 logger.warning("Дубли в корзине: %s", pairs)
                 return json.dumps(
-                    result_data, ensure_ascii=False, indent=4,
+                    result_data,
+                    ensure_ascii=False,
+                    indent=4,
                 )
         except (json.JSONDecodeError, TypeError):
             pass
@@ -372,7 +365,9 @@ class CartProcessor:
             if isinstance(data, dict):
                 data["verification"] = verification
                 return json.dumps(
-                    result_data, ensure_ascii=False, indent=4,
+                    result_data,
+                    ensure_ascii=False,
+                    indent=4,
                 )
         except (json.JSONDecodeError, TypeError):
             pass

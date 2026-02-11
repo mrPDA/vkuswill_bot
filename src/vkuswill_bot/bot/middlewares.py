@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Awaitable, Callable
+from typing import TYPE_CHECKING, Any
+from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware
 from aiogram.types import Message
@@ -155,8 +156,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         self._last_full_cleanup = now
         if stale_users:
             logger.debug(
-                "Throttle full cleanup: удалено %d устаревших записей, "
-                "осталось %d",
+                "Throttle full cleanup: удалено %d устаревших записей, осталось %d",
                 len(stale_users),
                 len(self._user_timestamps),
             )
@@ -167,9 +167,7 @@ class ThrottlingMiddleware(BaseMiddleware):
         if not timestamps:
             return
         cutoff = now - self.period
-        self._user_timestamps[user_id] = [
-            ts for ts in timestamps if ts > cutoff
-        ]
+        self._user_timestamps[user_id] = [ts for ts in timestamps if ts > cutoff]
         # Удаляем ключ если список пуст — не держим мусор
         if not self._user_timestamps[user_id]:
             del self._user_timestamps[user_id]
@@ -205,8 +203,7 @@ class ThrottlingMiddleware(BaseMiddleware):
                 and user_id not in self._user_timestamps
             ):
                 logger.warning(
-                    "Throttle overflow: %d tracked users, "
-                    "пропускаем tracking для user %d",
+                    "Throttle overflow: %d tracked users, пропускаем tracking для user %d",
                     len(self._user_timestamps),
                     user_id,
                 )

@@ -10,9 +10,8 @@
 """
 
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
-import pytest
 
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware
 
@@ -271,9 +270,7 @@ class TestDDoSProtection:
             await mw(handler, event, {})
             # Устариваем сразу
             if uid in mw._user_timestamps:
-                mw._user_timestamps[uid] = [
-                    t - 1.0 for t in mw._user_timestamps[uid]
-                ]
+                mw._user_timestamps[uid] = [t - 1.0 for t in mw._user_timestamps[uid]]
 
         # Размер не может превышать max_tracked_users
         assert len(mw._user_timestamps) <= 50
