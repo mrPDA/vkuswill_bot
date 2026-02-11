@@ -113,6 +113,17 @@ jobs:
         run: |
           echo '${{ secrets.YC_CR_KEY_SECRET }}' | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "docker login cr.yandex --username json_key --password-stdin"
 
+      - name: Prepare .env on VM
+        env:
+          _BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          _GIGACHAT_CRED: ${{ secrets.GIGACHAT_CREDENTIALS }}
+          _WEBHOOK_HOST: ${{ secrets.VM_HOST }}
+        run: |
+          printf 'BOT_TOKEN=%s\nGIGACHAT_CREDENTIALS=%s\nWEBHOOK_HOST=%s\nUSE_WEBHOOK=true\nWEBHOOK_PORT=8080\n' \
+            "$_BOT_TOKEN" "$_GIGACHAT_CRED" "$_WEBHOOK_HOST" \
+          | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+            "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
+
       - name: Run deploy
         run: |
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
