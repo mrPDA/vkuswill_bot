@@ -260,12 +260,12 @@ class VkusvillMCPClient:
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "MCP get_tools попытка %d/%d: %r\n%s",
+                    "MCP get_tools попытка %d/%d: %r",
                     attempt + 1,
                     MAX_RETRIES,
                     e,
-                    traceback.format_exc(),
                 )
+                logger.debug("MCP get_tools traceback:\n%s", traceback.format_exc())
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
@@ -332,13 +332,13 @@ class VkusvillMCPClient:
             except Exception as e:
                 last_error = e
                 logger.warning(
-                    "MCP call_tool %s попытка %d/%d: %r\n%s",
+                    "MCP call_tool %s попытка %d/%d: %r",
                     name,
                     attempt + 1,
                     MAX_RETRIES,
                     e,
-                    traceback.format_exc(),
                 )
+                logger.debug("MCP call_tool %s traceback:\n%s", name, traceback.format_exc())
                 # Сбрасываем сессию и пробуем заново
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:

@@ -8,10 +8,10 @@ import logging
 from typing import TYPE_CHECKING
 
 from gigachat import GigaChat
-from gigachat.models import Chat, Messages, MessagesRole
+from gigachat.models import Chat, ChatCompletion, Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
-from vkuswill_bot.services.dialog_manager import DialogManager
+from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS, DialogManager
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.prompts import (
@@ -31,9 +31,6 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
 logger = logging.getLogger(__name__)
-
-# Лимит одновременно хранимых диалогов (LRU-вытеснение)
-MAX_CONVERSATIONS = 1000
 
 # Лимит длины входящего сообщения пользователя (символы)
 MAX_USER_MESSAGE_LENGTH = 4096
@@ -140,38 +137,6 @@ class GigaChatService:
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
 
-    # ---- Делегаты в DialogManager ----
-
-    def _get_history(self, user_id: int) -> list[Messages]:
-        """Sync-делегат для обратной совместимости (тесты).
-
-        Работает с DialogManager (in-memory). Для RedisDialogManager
-        выбросит TypeError — используйте async API (aget_history).
-        """
-        dm = self._dialog_manager
-        if not hasattr(dm, "get_history"):
-            msg = (
-                f"{type(dm).__name__} не поддерживает sync get_history(). "
-                "Используйте async API: aget_history()."
-            )
-            raise TypeError(msg)
-        return dm.get_history(user_id)
-
-    def _trim_history(self, user_id: int) -> None:
-        """Sync-делегат для обратной совместимости (тесты).
-
-        Работает с DialogManager (in-memory). Для RedisDialogManager
-        выбросит TypeError — используйте async API (trim_list + save_history).
-        """
-        dm = self._dialog_manager
-        if not hasattr(dm, "trim"):
-            msg = (
-                f"{type(dm).__name__} не поддерживает sync trim(). "
-                "Используйте async API: trim_list() + save_history()."
-            )
-            raise TypeError(msg)
-        dm.trim(user_id)
-
     async def reset_conversation(self, user_id: int) -> None:
         """Сбросить историю диалога и search_log (async, работает с любым бэкендом)."""
         await self._dialog_manager.areset(user_id)
@@ -226,14 +191,14 @@ class GigaChatService:
         self,
         history: list[Messages],
         functions: list[dict],
-    ) -> object:
+    ) -> ChatCompletion:
         """Вызвать GigaChat API с семафором и retry при 429.
 
         Ограничивает параллельные запросы через asyncio.Semaphore.
         При получении rate limit (429) — retry с exponential backoff.
 
         Returns:
-            Ответ GigaChat (response объект).
+            Ответ GigaChat (ChatCompletion-подобный объект).
 
         Raises:
             Exception: Если все retry исчерпаны или ошибка не связана с rate limit.
@@ -271,11 +236,16 @@ class GigaChatService:
     def _is_rate_limit_error(exc: Exception) -> bool:
         """Определить, является ли ошибка rate limit (429).
 
-        Проверяет строковое представление исключения.
-        TODO: заменить на проверку типа/кода при изучении иерархии GigaChat SDK.
+        Проверяет тип исключения (если SDK пробрасывает httpx),
+        иначе fallback на строковую эвристику.
         """
+        # Если SDK пробрасывает httpx.HTTPStatusError
+        if hasattr(exc, "response") and hasattr(exc.response, "status_code"):
+            return exc.response.status_code == 429
+
+        # Fallback: строковая эвристика
         exc_str = str(exc).lower()
-        return "429" in exc_str or "rate" in exc_str or "too many" in exc_str
+        return "429" in exc_str or "rate limit" in exc_str or "too many" in exc_str
 
     async def _process_message_locked(self, user_id: int, text: str) -> str:
         """Цикл function calling (под per-user lock)."""
