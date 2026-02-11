@@ -102,7 +102,12 @@ class PriceCache:
 
     def __setitem__(self, xml_id: int, value: dict) -> None:
         """Совместимость с dict-API: price_cache[id] = {"name": ..., "price": ..., "unit": ...}."""
-        self._set_sync(xml_id, name=value.get("name", ""), price=value.get("price", 0), unit=value.get("unit", "шт"))
+        self._set_sync(
+            xml_id,
+            name=value.get("name", ""),
+            price=value.get("price", 0),
+            unit=value.get("unit", "шт"),
+        )
 
     def __getitem__(self, xml_id: int) -> PriceInfo:
         """Совместимость с dict-API: price_cache[id] → PriceInfo."""
@@ -169,9 +174,14 @@ class TwoLevelPriceCache(PriceCache):
         # L2
         try:
             key = f"price:{xml_id}"
-            await self._redis.hset(key, mapping={
-                "name": name, "price": str(price), "unit": unit,
-            })
+            await self._redis.hset(
+                key,
+                mapping={
+                    "name": name,
+                    "price": str(price),
+                    "unit": unit,
+                },
+            )
             await self._redis.expire(key, self._ttl)
         except Exception as e:
             logger.warning("Redis L2 set error for price:%d: %s", xml_id, e)

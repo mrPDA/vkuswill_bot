@@ -13,6 +13,7 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import Message
 
 from vkuswill_bot.services.gigachat_service import GigaChatService
+import contextlib
 
 if TYPE_CHECKING:
     from vkuswill_bot.services.user_store import UserStore
@@ -27,10 +28,25 @@ MAX_TELEGRAM_MESSAGE_LENGTH = 4096
 # ---------------------------------------------------------------------------
 
 # Теги, которые поддерживает Telegram Bot API в ParseMode.HTML
-_ALLOWED_TAGS = frozenset({
-    "b", "strong", "i", "em", "u", "ins", "s", "strike", "del",
-    "code", "pre", "a", "blockquote", "tg-spoiler", "tg-emoji",
-})
+_ALLOWED_TAGS = frozenset(
+    {
+        "b",
+        "strong",
+        "i",
+        "em",
+        "u",
+        "ins",
+        "s",
+        "strike",
+        "del",
+        "code",
+        "pre",
+        "a",
+        "blockquote",
+        "tg-spoiler",
+        "tg-emoji",
+    }
+)
 
 # Regex: находит все HTML-теги  <tag ...>, </tag>, <tag/>
 _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)(/?\s*)>")
@@ -51,9 +67,9 @@ def _sanitize_telegram_html(text: str) -> str:
 
     def _check_tag(match: re.Match) -> str:
         full = match.group(0)
-        closing = match.group(1)   # "/" для закрывающих тегов
+        closing = match.group(1)  # "/" для закрывающих тегов
         tag = match.group(2).lower()
-        attrs = match.group(3)     # строка атрибутов
+        attrs = match.group(3)  # строка атрибутов
 
         # Тег не в whitelist — экранируем
         if tag not in _ALLOWED_TAGS:
@@ -77,6 +93,7 @@ def _sanitize_telegram_html(text: str) -> str:
         return full
 
     return _TAG_RE.sub(_check_tag, text)
+
 
 router = Router()
 admin_router = Router()
@@ -138,9 +155,7 @@ async def handle_text(
 
     # Показываем индикатор набора текста во время обработки
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(
-        _send_typing_periodically(message, stop_typing)
-    )
+    typing_task = asyncio.create_task(_send_typing_periodically(message, stop_typing))
 
     try:
         response = await gigachat_service.process_message(user_id, message.text)
@@ -158,10 +173,8 @@ async def handle_text(
     finally:
         stop_typing.set()
         typing_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await typing_task
-        except asyncio.CancelledError:
-            pass
 
     # Санитизация: пропускаем только Telegram-безопасные HTML-теги,
     # экранируем опасные (script, img, iframe и пр.)
@@ -180,15 +193,11 @@ async def _send_typing_periodically(
     """Периодически отправляет индикатор 'печатает...' в чат."""
     while not stop_event.is_set():
         try:
-            await message.bot.send_chat_action(
-                message.chat.id, ChatAction.TYPING
-            )
+            await message.bot.send_chat_action(message.chat.id, ChatAction.TYPING)
         except Exception as e:
             logger.debug("Ошибка отправки typing indicator: %s", e)
-        try:
+        with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=4.0)
-        except asyncio.TimeoutError:
-            pass
 
 
 def _split_message(text: str, max_length: int) -> list[str]:
@@ -257,9 +266,7 @@ async def cmd_admin_block(
 
     parts = message.text.split(maxsplit=2)
     if len(parts) < 2:
-        await message.answer(
-            "Использование: /admin_block &lt;user_id&gt; [причина]"
-        )
+        await message.answer("Использование: /admin_block &lt;user_id&gt; [причина]")
         return
 
     try:
@@ -301,9 +308,7 @@ async def cmd_admin_unblock(
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer(
-            "Использование: /admin_unblock &lt;user_id&gt;"
-        )
+        await message.answer("Использование: /admin_unblock &lt;user_id&gt;")
         return
 
     try:
@@ -362,9 +367,7 @@ async def cmd_admin_user(
 
     parts = message.text.split(maxsplit=1)
     if len(parts) < 2:
-        await message.answer(
-            "Использование: /admin_user &lt;user_id&gt;"
-        )
+        await message.answer("Использование: /admin_user &lt;user_id&gt;")
         return
 
     try:
@@ -397,10 +400,6 @@ async def cmd_admin_user(
     )
     if status == "blocked":
         text += f"Причина блокировки: {blocked_reason}\n"
-    text += (
-        f"\nСообщений: {msg_count}\n"
-        f"Зарегистрирован: {created}\n"
-        f"Последнее сообщение: {last_msg}"
-    )
+    text += f"\nСообщений: {msg_count}\nЗарегистрирован: {created}\nПоследнее сообщение: {last_msg}"
 
     await message.answer(text)

@@ -11,7 +11,6 @@
 - Автосоздание директории
 """
 
-import json
 import os
 
 import pytest
@@ -20,6 +19,7 @@ from vkuswill_bot.services.recipe_store import RecipeStore
 
 
 # ---- Фикстуры ----
+
 
 @pytest.fixture
 async def store(tmp_path):
@@ -167,9 +167,7 @@ class TestScaling:
 
     def test_preserves_other_fields(self):
         """Масштабирование не теряет другие поля."""
-        ingredients = [
-            {"name": "мясо", "quantity": 1.0, "unit": "кг", "search_query": "говядина"}
-        ]
+        ingredients = [{"name": "мясо", "quantity": 1.0, "unit": "кг", "search_query": "говядина"}]
         result = RecipeStore.scale_ingredients(ingredients, 4, 8)
         assert result[0]["name"] == "мясо"
         assert result[0]["unit"] == "кг"
@@ -257,8 +255,7 @@ class TestCorruptedData:
         # Вручную портим данные
         async with aiosqlite.connect(db_path) as db:
             await db.execute(
-                "UPDATE recipes SET ingredients = 'not-valid-json' "
-                "WHERE dish_name = 'борщ'",
+                "UPDATE recipes SET ingredients = 'not-valid-json' WHERE dish_name = 'борщ'",
             )
             await db.commit()
 

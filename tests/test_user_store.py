@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import datetime, UTC
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -96,8 +95,13 @@ class TestGetOrCreate:
         """Создаёт нового пользователя при первом обращении."""
         s, conn = store
         # asyncpg.Record ведёт себя как dict при вызове dict(row)
-        row = {"user_id": 123, "username": "testuser", "first_name": "Test",
-               "role": "user", "status": "active"}
+        row = {
+            "user_id": 123,
+            "username": "testuser",
+            "first_name": "Test",
+            "role": "user",
+            "status": "active",
+        }
         conn.fetchrow.return_value = row
 
         result = await s.get_or_create(
@@ -398,7 +402,7 @@ class TestStatistics:
     async def test_get_stats_found(self, store):
         """get_stats возвращает статистику пользователя."""
         s, conn = store
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         conn.fetchrow.return_value = {
             "message_count": 42,
             "created_at": now,
@@ -497,11 +501,11 @@ class TestConstants:
 
     def test_valid_roles(self):
         """VALID_ROLES содержит user и admin."""
-        assert VALID_ROLES == {"user", "admin"}
+        assert {"user", "admin"} == VALID_ROLES
 
     def test_valid_statuses(self):
         """VALID_STATUSES содержит active, blocked, limited."""
-        assert VALID_STATUSES == {"active", "blocked", "limited"}
+        assert {"active", "blocked", "limited"} == VALID_STATUSES
 
     def test_migration_file_exists(self):
         """Файл миграции существует."""

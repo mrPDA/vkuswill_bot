@@ -40,14 +40,9 @@ def make_text_response(text: str) -> ChatCompletion:
     )
 
 
-def make_function_call_response(
-    name: str, arguments: dict | str
-) -> ChatCompletion:
+def make_function_call_response(name: str, arguments: dict | str) -> ChatCompletion:
     """Создать ответ GigaChat с вызовом функции."""
-    if isinstance(arguments, str):
-        args = json.loads(arguments)
-    else:
-        args = arguments
+    args = json.loads(arguments) if isinstance(arguments, str) else arguments
     return ChatCompletion(
         choices=[
             Choices(

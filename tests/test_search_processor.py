@@ -41,25 +41,27 @@ class TestCachePrices:
 
     async def test_caches_prices(self, processor):
         """Извлекает цены из результата поиска."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {
-                        "xml_id": 41728,
-                        "name": "Картофель молодой Египет",
-                        "price": {"current": 135, "currency": "RUB", "old": None},
-                        "unit": "кг",
-                    },
-                    {
-                        "xml_id": 103297,
-                        "name": "Молоко 3,2%",
-                        "price": {"current": 79, "currency": "RUB", "old": 99},
-                        "unit": "шт",
-                    },
-                ]
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 41728,
+                            "name": "Картофель молодой Египет",
+                            "price": {"current": 135, "currency": "RUB", "old": None},
+                            "unit": "кг",
+                        },
+                        {
+                            "xml_id": 103297,
+                            "name": "Молоко 3,2%",
+                            "price": {"current": 79, "currency": "RUB", "old": 99},
+                            "unit": "шт",
+                        },
+                    ]
+                },
+            }
+        )
 
         await processor.cache_prices(search_result)
 
@@ -79,22 +81,29 @@ class TestCachePrices:
 
     async def test_handles_empty_items(self, processor):
         """Не падает на пустом списке товаров."""
-        await processor.cache_prices(json.dumps({
-            "ok": True, "data": {"items": []}
-        }))
+        await processor.cache_prices(json.dumps({"ok": True, "data": {"items": []}}))
         assert len(processor.price_cache) == 0
 
     async def test_handles_missing_price(self, processor):
         """Пропускает товары без цены."""
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 100, "name": "Без цены", "price": {}, "unit": "шт"},
-                    {"xml_id": 200, "name": "С ценой", "price": {"current": 50}, "unit": "шт"},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"xml_id": 100, "name": "Без цены", "price": {}, "unit": "шт"},
+                            {
+                                "xml_id": 200,
+                                "name": "С ценой",
+                                "price": {"current": 50},
+                                "unit": "шт",
+                            },
+                        ]
+                    },
+                }
+            )
+        )
         assert 100 not in processor.price_cache
         assert 200 in processor.price_cache
 
@@ -102,14 +111,23 @@ class TestCachePrices:
         """Перезаписывает цены при повторном поиске."""
         processor.price_cache[41728] = {"name": "Старое", "price": 100, "unit": "кг"}
 
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 41728, "name": "Новое", "price": {"current": 135}, "unit": "кг"},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 41728,
+                                "name": "Новое",
+                                "price": {"current": 135},
+                                "unit": "кг",
+                            },
+                        ]
+                    },
+                }
+            )
+        )
 
         assert processor.price_cache[41728]["name"] == "Новое"
         assert processor.price_cache[41728]["price"] == 135
@@ -123,14 +141,23 @@ class TestCachePrices:
         assert len(processor.price_cache) == MAX_PRICE_CACHE_SIZE
 
         # Добавляем ещё товар через cache_prices
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 99999, "name": "Новый", "price": {"current": 100}, "unit": "шт"},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 99999,
+                                "name": "Новый",
+                                "price": {"current": 100},
+                                "unit": "шт",
+                            },
+                        ]
+                    },
+                }
+            )
+        )
 
         # Кеш уменьшился (половина удалена)
         assert len(processor.price_cache) <= MAX_PRICE_CACHE_SIZE
@@ -150,25 +177,27 @@ class TestTrimSearchResult:
 
     def test_trims_fields(self, processor):
         """Убирает description, images и прочие лишние поля."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {
-                        "xml_id": 41728,
-                        "name": "Картофель",
-                        "price": {"current": 135, "currency": "RUB", "old": 150},
-                        "unit": "кг",
-                        "weight": "1 кг",
-                        "rating": 4.8,
-                        "description": "Очень длинное описание товара...",
-                        "images": ["https://example.com/img1.jpg"],
-                        "slug": "kartoshka",
-                        "category": "Овощи",
-                    }
-                ]
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 41728,
+                            "name": "Картофель",
+                            "price": {"current": 135, "currency": "RUB", "old": 150},
+                            "unit": "кг",
+                            "weight": "1 кг",
+                            "rating": 4.8,
+                            "description": "Очень длинное описание товара...",
+                            "images": ["https://example.com/img1.jpg"],
+                            "slug": "kartoshka",
+                            "category": "Овощи",
+                        }
+                    ]
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         item = result["data"]["items"][0]
 
@@ -188,19 +217,21 @@ class TestTrimSearchResult:
 
     def test_simplifies_price(self, processor):
         """Упрощает price dict до числа (current)."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Товар",
-                        "price": {"current": 99.5, "currency": "RUB", "old": 120},
-                        "unit": "шт",
-                    }
-                ]
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Товар",
+                            "price": {"current": 99.5, "currency": "RUB", "old": 120},
+                            "unit": "шт",
+                        }
+                    ]
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         assert result["data"]["items"][0]["price"] == 99.5
 
@@ -221,21 +252,23 @@ class TestTrimSearchResult:
 
     def test_preserves_other_data_fields(self, processor):
         """Сохраняет другие поля в data (total, page и т.д.)."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "total": 42,
-                "page": 1,
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Товар",
-                        "price": {"current": 50},
-                        "unit": "шт",
-                    }
-                ]
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "total": 42,
+                    "page": 1,
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Товар",
+                            "price": {"current": 50},
+                            "unit": "шт",
+                        }
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         assert result["data"]["total"] == 42
         assert result["data"]["page"] == 1
@@ -262,17 +295,19 @@ class TestTrimSearchResult:
 
     def test_removes_non_dict_items(self, processor):
         """trim_search_result пропускает не-dict элементы в items."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    "not-a-dict",
-                    42,
-                    {"xml_id": 1, "name": "Товар", "price": {"current": 50}, "unit": "шт"},
-                    None,
-                ]
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        "not-a-dict",
+                        42,
+                        {"xml_id": 1, "name": "Товар", "price": {"current": 50}, "unit": "шт"},
+                        None,
+                    ]
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         # Только dict-элемент остался
         assert len(result["data"]["items"]) == 1
@@ -289,15 +324,17 @@ class TestExtractXmlIds:
 
     def test_extracts_ids(self, processor):
         """Извлекает xml_id из нормального результата."""
-        result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 100, "name": "Товар 1"},
-                    {"xml_id": 200, "name": "Товар 2"},
-                ]
-            },
-        })
+        result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"xml_id": 100, "name": "Товар 1"},
+                        {"xml_id": 200, "name": "Товар 2"},
+                    ]
+                },
+            }
+        )
         ids = processor.extract_xml_ids(result)
         assert ids == {100, 200}
 
@@ -312,30 +349,34 @@ class TestExtractXmlIds:
 
     def test_skips_non_dict_items(self, processor):
         """Пропускает не-dict элементы."""
-        result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    "string_item",
-                    42,
-                    None,
-                    {"xml_id": 100, "name": "Товар"},
-                ]
-            },
-        })
+        result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        "string_item",
+                        42,
+                        None,
+                        {"xml_id": 100, "name": "Товар"},
+                    ]
+                },
+            }
+        )
         assert processor.extract_xml_ids(result) == {100}
 
     def test_skips_items_without_xml_id(self, processor):
         """Пропускает dict-элементы без xml_id."""
-        result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"name": "Без ID"},
-                    {"xml_id": 200, "name": "С ID"},
-                ]
-            },
-        })
+        result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"name": "Без ID"},
+                        {"xml_id": 200, "name": "С ID"},
+                    ]
+                },
+            }
+        )
         assert processor.extract_xml_ids(result) == {200}
 
 
@@ -349,15 +390,17 @@ class TestParseSearchItems:
 
     def test_valid_result(self, processor):
         """Корректный результат парсится в (data, items)."""
-        raw = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 1, "name": "Товар 1"},
-                    {"xml_id": 2, "name": "Товар 2"},
-                ]
-            },
-        })
+        raw = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"xml_id": 1, "name": "Товар 1"},
+                        {"xml_id": 2, "name": "Товар 2"},
+                    ]
+                },
+            }
+        )
         parsed = processor.parse_search_items(raw)
         assert parsed is not None
         data, items = parsed
@@ -455,38 +498,50 @@ class TestCachePricesEdgeCases:
 
     async def test_missing_xml_id(self, processor):
         """Товар без xml_id не кешируется."""
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"name": "Без ID", "price": {"current": 100}, "unit": "шт"},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"name": "Без ID", "price": {"current": 100}, "unit": "шт"},
+                        ]
+                    },
+                }
+            )
+        )
         assert len(processor.price_cache) == 0
 
     async def test_default_unit_sht(self, processor):
         """Если unit не указан — по умолчанию 'шт'."""
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 1, "name": "Товар", "price": {"current": 50}},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"xml_id": 1, "name": "Товар", "price": {"current": 50}},
+                        ]
+                    },
+                }
+            )
+        )
         assert processor.price_cache[1]["unit"] == "шт"
 
     async def test_price_not_dict_skipped(self, processor):
         """Если price — не dict, товар пропускается."""
-        await processor.cache_prices(json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {"xml_id": 1, "name": "Товар", "price": 100, "unit": "шт"},
-                ]
-            },
-        }))
+        await processor.cache_prices(
+            json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"xml_id": 1, "name": "Товар", "price": 100, "unit": "шт"},
+                        ]
+                    },
+                }
+            )
+        )
         # price не dict → get("current") вернёт AttributeError → пропуск
         assert len(processor.price_cache) == 0
 
@@ -504,6 +559,7 @@ class TestCachePricesEdgeCases:
 # ============================================================================
 # Очистка поисковых запросов (clean_search_query)
 # ============================================================================
+
 
 class TestCleanSearchQuery:
     """Тесты SearchProcessor.clean_search_query."""
@@ -648,20 +704,22 @@ class TestTrimSearchResultRelevance:
 
     def test_adds_warning_when_term_missing(self, processor):
         """Добавляет relevance_warning если слово не найдено в товарах."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "стейк вагю", "total": 53},
-                "items": [
-                    {
-                        "xml_id": 32976,
-                        "name": "Форель стейк охл., вес",
-                        "price": {"current": 2235},
-                        "unit": "кг",
-                    },
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "стейк вагю", "total": 53},
+                    "items": [
+                        {
+                            "xml_id": 32976,
+                            "name": "Форель стейк охл., вес",
+                            "price": {"current": 2235},
+                            "unit": "кг",
+                        },
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         warning = result["data"].get("relevance_warning", "")
         assert "вагю" in warning
@@ -669,57 +727,63 @@ class TestTrimSearchResultRelevance:
 
     def test_no_warning_when_all_terms_match(self, processor):
         """Не добавляет warning если все слова запроса найдены."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "молоко", "total": 10},
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Молоко 3,2%",
-                        "price": {"current": 79},
-                        "unit": "шт",
-                    },
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "молоко", "total": 10},
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Молоко 3,2%",
+                            "price": {"current": 79},
+                            "unit": "шт",
+                        },
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         assert "relevance_warning" not in result["data"]
 
     def test_no_warning_without_meta(self, processor):
         """Без meta.q — warning не добавляется."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Товар",
-                        "price": {"current": 50},
-                        "unit": "шт",
-                    },
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Товар",
+                            "price": {"current": 50},
+                            "unit": "шт",
+                        },
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         assert "relevance_warning" not in result["data"]
 
     def test_warning_contains_query(self, processor):
         """Warning содержит оригинальный запрос."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "фуа-гра", "total": 5},
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Паштет куриный",
-                        "price": {"current": 200},
-                        "unit": "шт",
-                    },
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "фуа-гра", "total": 5},
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Паштет куриный",
+                            "price": {"current": 200},
+                            "unit": "шт",
+                        },
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         warning = result["data"]["relevance_warning"]
         assert "фуа-гра" in warning
@@ -734,26 +798,28 @@ class TestTrimSearchResultRelevance:
 
     def test_warning_on_exotic_product(self, processor):
         """Проверка: экзотический товар «трюфель белый» → warning на «белый»."""
-        search_result = json.dumps({
-            "ok": True,
-            "data": {
-                "meta": {"q": "трюфель белый", "total": 20},
-                "items": [
-                    {
-                        "xml_id": 1,
-                        "name": "Масло трюфельное",
-                        "price": {"current": 500},
-                        "unit": "шт",
-                    },
-                    {
-                        "xml_id": 2,
-                        "name": "Чипсы со вкусом трюфеля",
-                        "price": {"current": 150},
-                        "unit": "шт",
-                    },
-                ],
-            },
-        })
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "трюфель белый", "total": 20},
+                    "items": [
+                        {
+                            "xml_id": 1,
+                            "name": "Масло трюфельное",
+                            "price": {"current": 500},
+                            "unit": "шт",
+                        },
+                        {
+                            "xml_id": 2,
+                            "name": "Чипсы со вкусом трюфеля",
+                            "price": {"current": 150},
+                            "unit": "шт",
+                        },
+                    ],
+                },
+            }
+        )
         result = json.loads(processor.trim_search_result(search_result))
         warning = result["data"].get("relevance_warning", "")
         assert "белый" in warning

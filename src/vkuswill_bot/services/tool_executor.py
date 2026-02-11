@@ -31,13 +31,15 @@ MAX_RESULT_PREVIEW_LENGTH = 500
 MAX_IDENTICAL_TOOL_CALLS = 2
 
 # Имена локальных инструментов (для маршрутизации)
-LOCAL_TOOL_NAMES = frozenset({
-    "user_preferences_get",
-    "user_preferences_set",
-    "user_preferences_delete",
-    "recipe_ingredients",
-    "get_previous_cart",
-})
+LOCAL_TOOL_NAMES = frozenset(
+    {
+        "user_preferences_get",
+        "user_preferences_set",
+        "user_preferences_delete",
+        "recipe_ingredients",
+        "get_previous_cart",
+    }
+)
 
 
 class CallTracker:
@@ -110,7 +112,8 @@ class ToolExecutor:
 
     @staticmethod
     def build_assistant_message(
-        history: list[Messages], msg: object,
+        history: list[Messages],
+        msg: object,
     ) -> None:
         """Создать сообщение ассистента и добавить в историю."""
         assistant_msg = Messages(
@@ -158,6 +161,7 @@ class ToolExecutor:
 
             # Ограничение результатов поиска
             from vkuswill_bot.services.search_processor import SEARCH_LIMIT
+
             if "limit" not in args:
                 args = {**args, "limit": SEARCH_LIMIT}
 
@@ -181,9 +185,7 @@ class ToolExecutor:
             True если вызов дублирован и его нужно пропустить.
         """
         call_key = call_tracker.make_key(tool_name, args)
-        call_tracker.call_counts[call_key] = (
-            call_tracker.call_counts.get(call_key, 0) + 1
-        )
+        call_tracker.call_counts[call_key] = call_tracker.call_counts.get(call_key, 0) + 1
 
         if call_tracker.call_counts[call_key] >= MAX_IDENTICAL_TOOL_CALLS:
             logger.warning(
@@ -193,14 +195,20 @@ class ToolExecutor:
                 call_tracker.call_counts[call_key],
             )
             # Возвращаем реальный результат предыдущего вызова
-            cached = call_tracker.call_results.get(call_key, json.dumps(
-                {"ok": True, "data": {}}, ensure_ascii=False,
-            ))
-            history.append(Messages(
-                role=MessagesRole.FUNCTION,
-                content=cached,
-                name=tool_name,
-            ))
+            cached = call_tracker.call_results.get(
+                call_key,
+                json.dumps(
+                    {"ok": True, "data": {}},
+                    ensure_ascii=False,
+                ),
+            )
+            history.append(
+                Messages(
+                    role=MessagesRole.FUNCTION,
+                    content=cached,
+                    name=tool_name,
+                )
+            )
             return True
         return False
 
@@ -261,7 +269,7 @@ class ToolExecutor:
                 user_prefs.update(parsed)
                 logger.info(
                     "Загружены предпочтения: %s",
-                    {k: v for k, v in user_prefs.items()},
+                    dict(user_prefs.items()),
                 )
 
         elif tool_name == "vkusvill_products_search":
@@ -275,11 +283,14 @@ class ToolExecutor:
         elif tool_name == "vkusvill_cart_link_create":
             result = await self._cart_processor.calc_total(args, result)
             result = await self._cart_processor.add_duplicate_warning(
-                args, result,
+                args,
+                result,
             )
             if search_log:
                 result = await self._cart_processor.add_verification(
-                    args, result, search_log,
+                    args,
+                    result,
+                    search_log,
                 )
             # Сохраняем снимок корзины в Redis (если настроен)
             if self._cart_snapshot_store and user_id is not None:
@@ -321,7 +332,10 @@ class ToolExecutor:
     # ---- Маршрутизация локальных инструментов ----
 
     async def _call_local_tool(
-        self, tool_name: str, args: dict, user_id: int,
+        self,
+        tool_name: str,
+        args: dict,
+        user_id: int,
     ) -> str:
         """Выполнить локальный инструмент (предпочтения, корзина).
 

@@ -80,8 +80,7 @@ class RecipeStore:
         """
         db = await self._ensure_db()
         cursor = await db.execute(
-            "SELECT dish_name, servings, ingredients FROM recipes "
-            "WHERE dish_name = ?",
+            "SELECT dish_name, servings, ingredients FROM recipes WHERE dish_name = ?",
             (self.normalize_dish_name(dish_name),),
         )
         row = await cursor.fetchone()
@@ -106,8 +105,7 @@ class RecipeStore:
         """Сохранить рецепт в кеш."""
         db = await self._ensure_db()
         await db.execute(
-            "INSERT OR REPLACE INTO recipes (dish_name, servings, ingredients) "
-            "VALUES (?, ?, ?)",
+            "INSERT OR REPLACE INTO recipes (dish_name, servings, ingredients) VALUES (?, ?, ?)",
             (
                 self.normalize_dish_name(dish_name),
                 servings,

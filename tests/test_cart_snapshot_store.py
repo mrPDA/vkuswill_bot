@@ -9,7 +9,7 @@
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -42,7 +42,12 @@ class TestSave:
     async def test_saves_snapshot(self, store, mock_redis):
         """Сохраняет снимок корзины в Redis с TTL."""
         products = [{"xml_id": 100, "q": 2}]
-        await store.save(user_id=42, products=products, link="https://vkusvill.ru/cart/123", total=158.0)
+        await store.save(
+            user_id=42,
+            products=products,
+            link="https://vkusvill.ru/cart/123",
+            total=158.0,
+        )
 
         mock_redis.set.assert_called_once()
         call_args = mock_redis.set.call_args

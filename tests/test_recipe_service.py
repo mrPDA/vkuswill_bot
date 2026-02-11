@@ -17,7 +17,6 @@ import pytest
 
 from vkuswill_bot.services.recipe_service import (
     FERMENTED_KEYWORDS,
-    PIECE_WEIGHT_KG,
     RecipeService,
 )
 
@@ -103,15 +102,21 @@ class TestGetIngredients:
         assert parsed["ingredients"][0]["quantity"] == 1.0  # 0.5 * 8/4
 
     async def test_cache_miss_calls_llm(
-        self, service, mock_recipe_store, mock_gigachat_client,
+        self,
+        service,
+        mock_recipe_store,
+        mock_gigachat_client,
     ):
         mock_recipe_store.get.return_value = None
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "свёкла", "quantity": 0.5, "unit": "кг", "search_query": "свёкла"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "свёкла", "quantity": 0.5, "unit": "кг", "search_query": "свёкла"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(service._client, "chat", return_value=llm_response):
             result = await service.get_ingredients({"dish": "борщ", "servings": 4})
@@ -125,7 +130,8 @@ class TestGetIngredients:
         mock_recipe_store.get.return_value = None
 
         with patch.object(
-            service._client, "chat",
+            service._client,
+            "chat",
             side_effect=RuntimeError("LLM unavailable"),
         ):
             result = await service.get_ingredients({"dish": "борщ"})
@@ -184,9 +190,12 @@ class TestGetIngredients:
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "мясо", "quantity": 1, "unit": "кг"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "мясо", "quantity": 1, "unit": "кг"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(service._client, "chat", return_value=llm_response):
             result = await service.get_ingredients({"dish": "азу", "servings": 4})
@@ -227,9 +236,9 @@ class TestGetIngredients:
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = (
-            '```json\n[{"name": "свёкла", "quantity": 0.5}]\n```'
-        )
+        llm_response.choices[
+            0
+        ].message.content = '```json\n[{"name": "свёкла", "quantity": 0.5}]\n```'
 
         with patch.object(service._client, "chat", return_value=llm_response):
             result = await service.get_ingredients({"dish": "борщ"})
@@ -247,7 +256,7 @@ class TestGetIngredients:
 class TestEnrichWithKg:
     """Тесты _enrich_with_kg: добавление kg_equivalent."""
 
-    WEIGHTS = {
+    WEIGHTS = {  # noqa: RUF012
         "картофель": 0.15,
         "лук": 0.1,
         "морковь": 0.15,
@@ -359,8 +368,10 @@ class TestFormatResult:
 
     def test_basic_structure(self):
         result = RecipeService._format_result(
-            dish="борщ", servings=4,
-            ingredients=[{"name": "свёкла"}], cached=True,
+            dish="борщ",
+            servings=4,
+            ingredients=[{"name": "свёкла"}],
+            cached=True,
         )
         parsed = json.loads(result)
         assert parsed["ok"] is True
@@ -373,8 +384,10 @@ class TestFormatResult:
     def test_hint_forbids_extra_items(self):
         """Hint явно запрещает добавлять товары не из списка."""
         result = RecipeService._format_result(
-            dish="блинчики", servings=5,
-            ingredients=[{"name": "мука"}], cached=False,
+            dish="блинчики",
+            servings=5,
+            ingredients=[{"name": "мука"}],
+            cached=False,
         )
         parsed = json.loads(result)
         hint = parsed["hint"].lower()
@@ -383,7 +396,8 @@ class TestFormatResult:
 
     def test_cached_false(self):
         result = RecipeService._format_result(
-            dish="плов", servings=6,
+            dish="плов",
+            servings=6,
             ingredients=[{"name": "рис"}, {"name": "морковь"}],
             cached=False,
         )
@@ -393,8 +407,10 @@ class TestFormatResult:
 
     def test_unicode_preserved(self):
         result = RecipeService._format_result(
-            dish="Щи из квашеной капусты", servings=4,
-            ingredients=[], cached=True,
+            dish="Щи из квашеной капусты",
+            servings=4,
+            ingredients=[],
+            cached=True,
         )
         assert "Щи из квашеной капусты" in result
 
@@ -478,10 +494,13 @@ class TestGetIngredientsEnrichment:
 
         llm_response = MagicMock()
         llm_response.choices = [MagicMock()]
-        llm_response.choices[0].message.content = json.dumps([
-            {"name": "лук репчатый", "quantity": 2, "unit": "шт"},
-            {"name": "говядина", "quantity": 0.8, "unit": "кг"},
-        ], ensure_ascii=False)
+        llm_response.choices[0].message.content = json.dumps(
+            [
+                {"name": "лук репчатый", "quantity": 2, "unit": "шт"},
+                {"name": "говядина", "quantity": 0.8, "unit": "кг"},
+            ],
+            ensure_ascii=False,
+        )
 
         with patch.object(service._client, "chat", return_value=llm_response):
             result = await service.get_ingredients({"dish": "азу", "servings": 4})
@@ -554,7 +573,9 @@ class TestGetIngredientsFermentedBlock:
     """Тесты блокировки ферментированных продуктов в get_ingredients."""
 
     async def test_fermented_product_returns_error(
-        self, service, mock_recipe_store,
+        self,
+        service,
+        mock_recipe_store,
     ):
         """recipe_ingredients('квашеная капуста') возвращает ошибку."""
         result = await service.get_ingredients({"dish": "квашеная капуста"})
@@ -567,7 +588,9 @@ class TestGetIngredientsFermentedBlock:
         mock_recipe_store.get.assert_not_called()
 
     async def test_fermented_product_does_not_call_llm(
-        self, service, mock_recipe_store,
+        self,
+        service,
+        mock_recipe_store,
     ):
         """Для ферментированных продуктов НЕ вызывается GigaChat."""
         with patch.object(service._client, "chat") as mock_chat:

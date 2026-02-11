@@ -20,7 +20,6 @@ from vkuswill_bot.services.prompts import (
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
     RECIPE_TOOL,
-    SYSTEM_PROMPT,
 )
 from vkuswill_bot.services.recipe_service import RecipeService
 from vkuswill_bot.services.recipe_store import RecipeStore
@@ -72,14 +71,17 @@ class GigaChatService:
         max_tool_calls: int = 20,
         max_history: int = 50,
         dialog_manager: DialogManager | RedisDialogManager | None = None,
-        tool_executor: "ToolExecutor | None" = None,
-        recipe_service: "RecipeService | None" = None,
+        tool_executor: ToolExecutor | None = None,
+        recipe_service: RecipeService | None = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
     ) -> None:
         # TODO: verify_ssl_certs=True + ca_bundle_file когда SDK поддержит CA Минцифры
         self._client = GigaChat(
-            credentials=credentials, model=model, scope=scope,
-            verify_ssl_certs=False, timeout=60,
+            credentials=credentials,
+            model=model,
+            scope=scope,
+            verify_ssl_certs=False,
+            timeout=60,
         )
         self._mcp_client = mcp_client
         self._prefs_store = preferences_store
@@ -91,9 +93,11 @@ class GigaChatService:
         self._api_semaphore = asyncio.Semaphore(gigachat_max_concurrent)
 
         self._dialog_manager = dialog_manager or DialogManager(
-            max_conversations=MAX_CONVERSATIONS, max_history=max_history,
+            max_conversations=MAX_CONVERSATIONS,
+            max_history=max_history,
         )
-        self._conversations = getattr(self._dialog_manager, "conversations", {})  # обратная совместимость
+        # обратная совместимость
+        self._conversations = getattr(self._dialog_manager, "conversations", {})
 
         self._functions: list[dict] | None = None
         self._search_logs: dict[int, dict[str, set[int]]] = {}
@@ -101,15 +105,18 @@ class GigaChatService:
         self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
         self._tool_executor = tool_executor or ToolExecutor(
-            mcp_client=mcp_client, search_processor=self._search_processor,
-            cart_processor=self._cart_processor, preferences_store=preferences_store,
+            mcp_client=mcp_client,
+            search_processor=self._search_processor,
+            cart_processor=self._cart_processor,
+            preferences_store=preferences_store,
         )
 
         if recipe_service is not None:
             self._recipe_service = recipe_service
         elif recipe_store is not None:
             self._recipe_service = RecipeService(
-                gigachat_client=self._client, recipe_store=recipe_store,
+                gigachat_client=self._client,
+                recipe_store=recipe_store,
             )
         else:
             self._recipe_service = None
@@ -124,10 +131,13 @@ class GigaChatService:
             params = tool["parameters"]
             if tool["name"] == "vkusvill_cart_link_create":
                 params = CartProcessor.enhance_cart_schema(params)
-            self._functions.append({
-                "name": tool["name"], "description": tool["description"],
-                "parameters": params,
-            })
+            self._functions.append(
+                {
+                    "name": tool["name"],
+                    "description": tool["description"],
+                    "parameters": params,
+                }
+            )
         if self._prefs_store is not None:
             self._functions.extend(self._LOCAL_TOOLS)
         if self._recipe_store is not None:
@@ -153,7 +163,9 @@ class GigaChatService:
         return self._search_logs.get(user_id, {})
 
     def _save_search_log(
-        self, user_id: int, search_log: dict[str, set[int]],
+        self,
+        user_id: int,
+        search_log: dict[str, set[int]],
     ) -> None:
         """Сохранить search_log для пользователя с лимитом размера."""
         if len(search_log) > MAX_SEARCH_LOG_QUERIES:
@@ -216,7 +228,7 @@ class GigaChatService:
                     )
             except Exception as e:
                 if attempt < GIGACHAT_MAX_RETRIES - 1 and self._is_rate_limit_error(e):
-                    delay = 2 ** attempt  # 1s, 2s
+                    delay = 2**attempt  # 1s, 2s
                     logger.warning(
                         "GigaChat rate limit, retry %d/%d через %ds: %s",
                         attempt + 1,
@@ -298,7 +310,12 @@ class GigaChatService:
             logger.info("Результат %s: %s", tool_name, result[:MAX_RESULT_LOG_LENGTH])
 
             result = await te.postprocess_result(
-                tool_name, args, result, user_prefs, search_log, user_id=user_id,
+                tool_name,
+                args,
+                result,
+                user_prefs,
+                search_log,
+                user_id=user_id,
             )
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))

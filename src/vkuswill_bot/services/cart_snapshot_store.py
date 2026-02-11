@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -49,11 +49,12 @@ class InMemoryCartSnapshotStore:
             "products": products,
             "link": link,
             "total": total,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         logger.debug(
             "Снимок корзины сохранён (in-memory): user=%d, products=%d",
-            user_id, len(products),
+            user_id,
+            len(products),
         )
 
     async def get(self, user_id: int) -> dict | None:
@@ -91,7 +92,7 @@ class CartSnapshotStore:
             "products": products,
             "link": link,
             "total": total,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
         }
         key = f"{_KEY_PREFIX}{user_id}"
         try:
@@ -102,12 +103,15 @@ class CartSnapshotStore:
             )
             logger.info(
                 "Снимок корзины сохранён: user=%d, products=%d, total=%s",
-                user_id, len(products), total,
+                user_id,
+                len(products),
+                total,
             )
         except Exception as e:
             logger.warning(
                 "Ошибка сохранения снимка корзины user=%d: %s",
-                user_id, e,
+                user_id,
+                e,
             )
 
     async def get(self, user_id: int) -> dict | None:
@@ -128,7 +132,8 @@ class CartSnapshotStore:
         except Exception as e:
             logger.warning(
                 "Ошибка чтения снимка корзины user=%d: %s",
-                user_id, e,
+                user_id,
+                e,
             )
             return None
 
@@ -140,5 +145,6 @@ class CartSnapshotStore:
         except Exception as e:
             logger.warning(
                 "Ошибка удаления снимка корзины user=%d: %s",
-                user_id, e,
+                user_id,
+                e,
             )
