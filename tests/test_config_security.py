@@ -188,6 +188,101 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.admin_user_ids == []
 
+    def test_webhook_cert_path_default_empty(self):
+        """webhook_cert_path по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_cert_path == ""
+
+    # --- S3 Log ---
+
+    def test_s3_log_disabled_by_default(self):
+        """S3-логирование отключено по умолчанию."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_enabled is False
+
+    def test_s3_log_bucket_default_empty(self):
+        """s3_log_bucket по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_bucket == ""
+
+    def test_s3_log_prefix_default(self):
+        """s3_log_prefix по умолчанию — 'logs'."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_prefix == "logs"
+
+    def test_s3_log_endpoint_default_https(self):
+        """s3_log_endpoint по умолчанию использует HTTPS."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_endpoint.startswith("https://")
+
+    def test_s3_log_region_default(self):
+        """s3_log_region по умолчанию — ru-central1."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_region == "ru-central1"
+
+    def test_s3_log_access_key_default_empty(self):
+        """s3_log_access_key по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_access_key == ""
+
+    def test_s3_log_secret_key_default_empty(self):
+        """s3_log_secret_key по умолчанию — пустая строка."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_secret_key == ""
+
+    def test_s3_log_flush_interval_default(self):
+        """s3_log_flush_interval по умолчанию — 60 секунд."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_flush_interval == 60
+
+    def test_s3_log_flush_size_default(self):
+        """s3_log_flush_size по умолчанию — 500 записей."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_flush_size == 500
+
+    def test_s3_log_flush_interval_reasonable(self):
+        """s3_log_flush_interval разумный: [5, 3600]."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 5 <= cfg.s3_log_flush_interval <= 3600
+
+    def test_s3_log_flush_size_reasonable(self):
+        """s3_log_flush_size разумный: [10, 50000]."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 10 <= cfg.s3_log_flush_size <= 50000
+
+    # --- Langfuse ---
+
+    def test_langfuse_disabled_by_default(self):
+        """Langfuse отключён по умолчанию."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.langfuse_enabled is False
+
+    def test_langfuse_host_default_https(self):
+        """langfuse_host по умолчанию использует HTTPS."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.langfuse_host.startswith("https://")
+
+    def test_langfuse_keys_default_empty(self):
+        """Langfuse-ключи по умолчанию — пустые строки."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.langfuse_public_key == ""
+        assert cfg.langfuse_secret_key == ""
+
 
 # ============================================================================
 # Защита секретов
@@ -291,6 +386,55 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.database_url == "postgresql://user:pass@localhost:5432/bot"
+
+    def test_webhook_cert_path_customizable(self):
+        """webhook_cert_path настраивается через env."""
+        custom_env = {**MINIMAL_ENV, "WEBHOOK_CERT_PATH": "/etc/ssl/bot.pem"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_cert_path == "/etc/ssl/bot.pem"
+
+    def test_s3_log_settings_customizable(self):
+        """S3-логирование полностью настраивается через env."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "S3_LOG_ENABLED": "true",
+            "S3_LOG_BUCKET": "my-logs",
+            "S3_LOG_PREFIX": "bot-logs",
+            "S3_LOG_ENDPOINT": "https://s3.custom.com",
+            "S3_LOG_REGION": "eu-west-1",
+            "S3_LOG_ACCESS_KEY": "AKIA_TEST",
+            "S3_LOG_SECRET_KEY": "secret_test_key",
+            "S3_LOG_FLUSH_INTERVAL": "30",
+            "S3_LOG_FLUSH_SIZE": "1000",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.s3_log_enabled is True
+        assert cfg.s3_log_bucket == "my-logs"
+        assert cfg.s3_log_prefix == "bot-logs"
+        assert cfg.s3_log_endpoint == "https://s3.custom.com"
+        assert cfg.s3_log_region == "eu-west-1"
+        assert cfg.s3_log_access_key == "AKIA_TEST"
+        assert cfg.s3_log_secret_key == "secret_test_key"  # noqa: S105
+        assert cfg.s3_log_flush_interval == 30
+        assert cfg.s3_log_flush_size == 1000
+
+    def test_langfuse_settings_customizable(self):
+        """Langfuse полностью настраивается через env."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "LANGFUSE_ENABLED": "true",
+            "LANGFUSE_PUBLIC_KEY": "pk-lf-test",
+            "LANGFUSE_SECRET_KEY": "sk-lf-test",
+            "LANGFUSE_HOST": "https://langfuse.custom.com",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.langfuse_enabled is True
+        assert cfg.langfuse_public_key == "pk-lf-test"
+        assert cfg.langfuse_secret_key == "sk-lf-test"  # noqa: S105
+        assert cfg.langfuse_host == "https://langfuse.custom.com"
 
 
 # ============================================================================

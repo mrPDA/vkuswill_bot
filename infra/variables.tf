@@ -122,6 +122,26 @@ variable "admin_user_ids" {
   default     = "[]"
 }
 
+# ─── Langfuse ─────────────────────────────────────────────────
+
+variable "langfuse_pg_password" {
+  description = "PostgreSQL password for Langfuse user"
+  type        = string
+  sensitive   = true
+}
+
+variable "langfuse_nextauth_secret" {
+  description = "NextAuth secret for Langfuse (openssl rand -base64 32)"
+  type        = string
+  sensitive   = true
+}
+
+variable "langfuse_salt" {
+  description = "Encryption salt for Langfuse (openssl rand -base64 32)"
+  type        = string
+  sensitive   = true
+}
+
 # ─── S3 Logs ─────────────────────────────────────────────────
 
 variable "s3_log_bucket" {

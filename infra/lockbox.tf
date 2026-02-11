@@ -42,6 +42,32 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.admin_user_ids
   }
 
+  # Langfuse (LLM-observability, self-hosted на VM)
+  entries {
+    key        = "LANGFUSE_ENABLED"
+    text_value = "true"
+  }
+
+  entries {
+    key        = "LANGFUSE_HOST"
+    text_value = "http://localhost:3000"
+  }
+
+  entries {
+    key = "LANGFUSE_DATABASE_URL"
+    text_value = "postgresql://langfuse:${var.langfuse_pg_password}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse"
+  }
+
+  entries {
+    key        = "LANGFUSE_NEXTAUTH_SECRET"
+    text_value = var.langfuse_nextauth_secret
+  }
+
+  entries {
+    key        = "LANGFUSE_SALT"
+    text_value = var.langfuse_salt
+  }
+
   # S3 логирование
   entries {
     key        = "S3_LOG_ENABLED"
