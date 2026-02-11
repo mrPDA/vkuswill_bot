@@ -109,6 +109,10 @@ jobs:
         run: |
           scp -i ~/.ssh/deploy_key deploy/deploy.sh "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/deploy.sh"
 
+      - name: Docker login on VM
+        run: |
+          echo '${{ secrets.YC_CR_KEY_SECRET }}' | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "docker login cr.yandex --username json_key --password-stdin"
+
       - name: Run deploy
         run: |
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
