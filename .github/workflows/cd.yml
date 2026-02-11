@@ -117,11 +117,17 @@ jobs:
         env:
           _BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           _GIGACHAT_CRED: ${{ secrets.GIGACHAT_CREDENTIALS }}
+          _GIGACHAT_MODEL: ${{ secrets.GIGACHAT_MODEL }}
           _WEBHOOK_HOST: ${{ secrets.VM_HOST }}
         run: |
-          printf 'BOT_TOKEN=%s\nGIGACHAT_CREDENTIALS=%s\nWEBHOOK_HOST=%s\nUSE_WEBHOOK=true\nWEBHOOK_PORT=8080\n' \
-            "$_BOT_TOKEN" "$_GIGACHAT_CRED" "$_WEBHOOK_HOST" \
-          | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+          {
+            echo "BOT_TOKEN=${_BOT_TOKEN}"
+            echo "GIGACHAT_CREDENTIALS=${_GIGACHAT_CRED}"
+            echo "GIGACHAT_MODEL=${_GIGACHAT_MODEL:-GigaChat}"
+            echo "WEBHOOK_HOST=${_WEBHOOK_HOST}"
+            echo "USE_WEBHOOK=true"
+            echo "WEBHOOK_PORT=8080"
+          } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 
       - name: Run deploy
