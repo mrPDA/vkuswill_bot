@@ -162,6 +162,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}'"
 
       - name: Health check
+        timeout-minutes: 3
         env:
           _VM_HOST: ${{ secrets.VM_HOST }}
         run: |
@@ -171,8 +172,8 @@ jobs:
           echo "Ожидание запуска бота (30 сек)..."
           sleep 30
           for i in 1 2 3 4 5; do
-            STATUS=$(curl -sk -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null || \
-                     curl -s -o /dev/null -w "%{http_code}" "http://${_VM_HOST}:8080/health" || true)
+            STATUS=$(curl -sk --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "${HEALTH_URL}" 2>/dev/null || \
+                     curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "http://${_VM_HOST}:8080/health" 2>/dev/null || echo "000")
             if [ "$STATUS" = "200" ]; then
               echo "Health check OK (attempt $i)"
               exit 0
