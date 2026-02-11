@@ -76,7 +76,13 @@ ensure_yc_cli() {
   if ! yc config get instance-service-account 2>/dev/null | grep -q true; then
     log "Настройка yc CLI: instance-service-account"
     yc config set instance-service-account true 2>/dev/null || true
-    yc config set folder-id "$(curl -s -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/project/project-id 2>/dev/null)" 2>/dev/null || true
+    # folder-id из метаданных Yandex Cloud VM
+    local FOLDER_ID
+    FOLDER_ID=$(curl -sf -H 'Metadata-Flavor: Google' http://169.254.169.254/computeMetadata/v1/yandex/folder-id 2>/dev/null) || true
+    if [[ -n "$FOLDER_ID" ]]; then
+      yc config set folder-id "$FOLDER_ID" 2>/dev/null || true
+      log "yc CLI folder-id: ${FOLDER_ID}"
+    fi
   fi
 }
 
@@ -107,7 +113,7 @@ load_lockbox_secrets() {
   local LOCKBOX_JSON
 
   # Получаем все payload entries
-  if ! LOCKBOX_JSON=$(yc lockbox payload get "$LOCKBOX_SECRET_ID" --format json 2>&1); then
+  if ! LOCKBOX_JSON=$(yc lockbox payload get --id "$LOCKBOX_SECRET_ID" --format json 2>&1); then
     warn "Не удалось получить секреты из Lockbox: ${LOCKBOX_JSON}"
     warn "Проверьте, что yc CLI настроен и сервисный аккаунт VM имеет доступ к Lockbox"
     return
@@ -197,7 +203,14 @@ deploy_langfuse() {
     --label "service=langfuse" \
     langfuse/langfuse:2
 
-  log "Langfuse запущен на порту 3000"
+  # Подождать и проверить, что контейнер жив
+  sleep 5
+  if docker ps -q -f "name=${LANGFUSE_NAME}" | grep -q .; then
+    log "Langfuse запущен на порту 3000"
+  else
+    warn "Langfuse контейнер упал! Логи:"
+    docker logs "$LANGFUSE_NAME" --tail 30 2>&1 || true
+  fi
 }
 
 deploy_langfuse
