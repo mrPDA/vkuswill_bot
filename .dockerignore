@@ -53,5 +53,14 @@ data/
 *.pid
 bot.log
 
+# Kubernetes / Terraform
+infra/
+deploy/
+
+# Coverage reports
+.coverage
+htmlcov/
+coverage.xml
+
 # Прочее
 Archive/

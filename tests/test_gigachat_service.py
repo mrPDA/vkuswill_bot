@@ -25,11 +25,11 @@ from gigachat.models import (
     MessagesRole,
 )
 
+from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS
 from vkuswill_bot.services.gigachat_service import (
     DEFAULT_GIGACHAT_MAX_CONCURRENT,
     GIGACHAT_MAX_RETRIES,
     GigaChatService,
-    MAX_CONVERSATIONS,
     MAX_SEARCH_LOG_QUERIES,
     MAX_USER_MESSAGE_LENGTH,
 )
@@ -1365,8 +1365,8 @@ class TestIsRateLimitError:
         exc = RuntimeError("HTTP 429 Too Many Requests")
         assert GigaChatService._is_rate_limit_error(exc) is True
 
-    def test_rate_in_message(self):
-        """Сообщение содержит 'rate' → rate limit."""
+    def test_rate_limit_in_message(self):
+        """Сообщение содержит 'rate limit' → rate limit."""
         exc = RuntimeError("Rate limit exceeded")
         assert GigaChatService._is_rate_limit_error(exc) is True
 
@@ -1398,6 +1398,18 @@ class TestIsRateLimitError:
     def test_value_error(self):
         """ValueError — не rate limit."""
         exc = ValueError("Invalid argument")
+        assert GigaChatService._is_rate_limit_error(exc) is False
+
+    def test_httpx_429_status_code(self):
+        """Исключение с response.status_code=429 → rate limit."""
+        exc = RuntimeError("HTTP error")
+        exc.response = MagicMock(status_code=429)
+        assert GigaChatService._is_rate_limit_error(exc) is True
+
+    def test_httpx_500_status_code(self):
+        """Исключение с response.status_code=500 → не rate limit."""
+        exc = RuntimeError("HTTP error")
+        exc.response = MagicMock(status_code=500)
         assert GigaChatService._is_rate_limit_error(exc) is False
 
 
@@ -1561,59 +1573,6 @@ class TestModuleConstants:
     def test_default_gigachat_max_concurrent(self):
         """DEFAULT_GIGACHAT_MAX_CONCURRENT = 15."""
         assert DEFAULT_GIGACHAT_MAX_CONCURRENT == 15
-
-
-# ============================================================================
-# Sync-делегаты с RedisDialogManager
-# ============================================================================
-
-
-class TestSyncDelegatesWithRedisBackend:
-    """Sync-делегаты _get_history/_trim_history бросают TypeError с Redis-бэкендом.
-
-    RedisDialogManager не реализует sync API (get_history, trim).
-    GigaChatService должен выбрасывать понятный TypeError вместо AttributeError.
-    """
-
-    @pytest.fixture
-    def redis_dialog_manager(self):
-        """Мок RedisDialogManager — без sync-методов get_history/trim.
-
-        Используем spec_set из реального RedisDialogManager, чтобы
-        hasattr() корректно возвращал False для отсутствующих методов
-        (MagicMock без spec автоматически создаёт атрибуты).
-        """
-        from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
-
-        dm = MagicMock(spec=RedisDialogManager)
-        dm.get_lock.return_value = MagicMock()
-        return dm
-
-    @pytest.fixture
-    def service_with_redis(self, mock_mcp_client, redis_dialog_manager):
-        """GigaChatService с мок-RedisDialogManager."""
-        svc = GigaChatService(
-            credentials="test-creds",
-            model="GigaChat",
-            scope="GIGACHAT_API_PERS",
-            mcp_client=mock_mcp_client,
-            dialog_manager=redis_dialog_manager,
-        )
-        return svc
-
-    def test_get_history_raises_type_error(self, service_with_redis):
-        """_get_history бросает TypeError при Redis-бэкенде."""
-        with pytest.raises(TypeError, match="не поддерживает sync get_history"):
-            service_with_redis._get_history(user_id=1)
-
-    def test_trim_history_raises_type_error(self, service_with_redis):
-        """_trim_history бросает TypeError при Redis-бэкенде."""
-        with pytest.raises(TypeError, match="не поддерживает sync trim"):
-            service_with_redis._trim_history(user_id=1)
-
-    def test_conversations_fallback_to_empty_dict(self, service_with_redis):
-        """_conversations = {} когда у бэкенда нет свойства conversations."""
-        assert service_with_redis._conversations == {}
 
 
 # ============================================================================

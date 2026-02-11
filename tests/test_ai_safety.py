@@ -426,8 +426,8 @@ class TestDataExfiltration:
 
     def test_conversations_isolated_between_users(self, service):
         """Диалоги разных пользователей изолированы."""
-        h1 = service._get_history(user_id=1)
-        h2 = service._get_history(user_id=2)
+        h1 = service._dialog_manager.get_history(user_id=1)
+        h2 = service._dialog_manager.get_history(user_id=2)
 
         h1.append(Messages(role=MessagesRole.USER, content="Секрет пользователя 1"))
 
@@ -437,7 +437,8 @@ class TestDataExfiltration:
 
     async def test_reset_clears_all_user_data(self, service):
         """Сброс полностью удаляет данные пользователя."""
-        history = service._get_history(user_id=42)
+        dm = service._dialog_manager
+        history = dm.get_history(user_id=42)
         history.append(
             Messages(role=MessagesRole.USER, content="Персональные данные")
         )
@@ -447,9 +448,9 @@ class TestDataExfiltration:
 
         await service.reset_conversation(user_id=42)
 
-        assert 42 not in service._conversations
+        assert 42 not in dm.conversations
         # Новая история — чистая
-        new_history = service._get_history(user_id=42)
+        new_history = dm.get_history(user_id=42)
         assert len(new_history) == 1
         assert new_history[0].role == MessagesRole.SYSTEM
 
@@ -465,7 +466,8 @@ class TestHistoryPoisoning:
 
     async def test_history_trimming_preserves_system_prompt(self, service):
         """При обрезке истории системный промпт всегда сохраняется."""
-        history = service._get_history(user_id=1)
+        dm = service._dialog_manager
+        history = dm.get_history(user_id=1)
 
         # Заполняем историю сверх лимита
         for i in range(20):
@@ -473,9 +475,9 @@ class TestHistoryPoisoning:
                 Messages(role=MessagesRole.USER, content=f"msg-{i}")
             )
 
-        service._trim_history(user_id=1)
+        dm.trim(user_id=1)
 
-        trimmed = service._conversations[1]
+        trimmed = dm.conversations[1]
         # Системный промпт на месте
         assert trimmed[0].role == MessagesRole.SYSTEM
         assert trimmed[0].content == SYSTEM_PROMPT
