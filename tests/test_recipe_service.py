@@ -269,14 +269,30 @@ class TestEnrichWithKg:
         result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
         assert result[0]["kg_equivalent"] == 0.3
 
-    def test_skips_weight_units(self):
-        items = [
-            {"name": "картофель", "quantity": 1, "unit": "кг"},
-            {"name": "морковь", "quantity": 200, "unit": "г"},
-        ]
+    def test_skips_kg_unit(self):
+        """Товары в кг — уже готовое значение, kg_equivalent не нужен."""
+        items = [{"name": "картофель", "quantity": 1, "unit": "кг"}]
         result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
-        for item in result:
-            assert "kg_equivalent" not in item
+        assert "kg_equivalent" not in result[0]
+
+    def test_converts_grams_to_kg(self):
+        """Граммы конвертируются в кг (200 г → 0.2 кг)."""
+        items = [{"name": "морковь", "quantity": 200, "unit": "г"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["kg_equivalent"] == 0.2
+
+    def test_converts_ml_to_liters(self):
+        """Миллилитры конвертируются в литры (500 мл → 0.5 л)."""
+        items = [{"name": "молоко", "quantity": 500, "unit": "мл"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert result[0]["l_equivalent"] == 0.5
+        assert "kg_equivalent" not in result[0]
+
+    def test_skips_liters_unit(self):
+        """Товары в литрах — уже готовое значение, l_equivalent не нужен."""
+        items = [{"name": "молоко", "quantity": 1, "unit": "л"}]
+        result = RecipeService._enrich_with_kg(items, self.WEIGHTS)
+        assert "l_equivalent" not in result[0]
 
     def test_skips_non_dict_items(self):
         items = ["строка", 42, None, {"name": "лук", "quantity": 2, "unit": "шт"}]
