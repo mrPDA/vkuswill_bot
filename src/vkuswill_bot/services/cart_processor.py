@@ -106,12 +106,16 @@ class CartProcessor:
         GigaChat иногда ставит дробное q для товаров в штуках
         (например, 0.68 для банки огурцов). Для товаров с unit='шт'
         округляем q вверх до ближайшего целого.
+
+        Корректировки записываются в ``args["_quantity_adjustments"]``
+        для включения в результат (чтобы GigaChat понимал, что
+        количества были скорректированы намеренно).
         """
         products = args.get("products")
         if not products or not isinstance(products, list):
             return args
 
-        changed = False
+        adjustments: list[str] = []
         for item in products:
             if not isinstance(item, dict):
                 continue
@@ -128,11 +132,15 @@ class CartProcessor:
                         q,
                         rounded,
                     )
+                    adjustments.append(
+                        f"{cached.name}: {q} → {rounded} {cached.unit} "
+                        f"(товар продаётся поштучно, дробное количество невозможно)"
+                    )
                     item["q"] = rounded
-                    changed = True
 
-        if changed:
+        if adjustments:
             logger.info("Исправленные аргументы корзины: %s", args)
+            args["_quantity_adjustments"] = adjustments
 
         return args
 
