@@ -100,16 +100,23 @@ class CartProcessor:
 
         return arguments
 
+    # Максимальное q, поддерживаемое VkusVill API
+    _MAX_Q_API = 40
+
+    # Макс. разумное q для штучных товаров (для покупок на дом)
+    _MAX_Q_DISCRETE = 10
+
     async def fix_unit_quantities(self, args: dict) -> dict:
-        """Округлить q до целого для штучных товаров.
+        """Округлить q до целого для штучных товаров и ограничить max q.
 
-        GigaChat иногда ставит дробное q для товаров в штуках
-        (например, 0.68 для банки огурцов). Для товаров с unit='шт'
-        округляем q вверх до ближайшего целого.
+        GigaChat иногда:
+        - Ставит дробное q для штучных товаров (0.68 для банки огурцов)
+        - Путает граммы рецепта с количеством штук (60 г сахара → q=60)
 
-        Корректировки записываются в ``args["_quantity_adjustments"]``
-        для включения в результат (чтобы GigaChat понимал, что
-        количества были скорректированы намеренно).
+        Для штучных товаров: округляем вверх + cap до _MAX_Q_DISCRETE.
+        Для весовых товаров: cap до _MAX_Q_API (40 кг).
+
+        Корректировки записываются в ``args["_quantity_adjustments"]``.
         """
         products = args.get("products")
         if not products or not isinstance(products, list):
@@ -122,7 +129,9 @@ class CartProcessor:
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
             cached = await self._price_cache.get(xml_id)
+
             if cached and cached.unit in self._DISCRETE_UNITS:
+                # Округление дробного q для штучных товаров
                 rounded = math.ceil(q)
                 if rounded != q:
                     logger.info(
@@ -136,7 +145,46 @@ class CartProcessor:
                         f"{cached.name}: {q} → {rounded} {cached.unit} "
                         f"(товар продаётся поштучно, дробное количество невозможно)"
                     )
-                    item["q"] = rounded
+                    q = rounded
+
+                # Cap для штучных: q > _MAX_Q_DISCRETE — скорее всего
+                # GigaChat перепутал граммы рецепта с количеством штук
+                if q > self._MAX_Q_DISCRETE:
+                    old_q = q
+                    q = min(q, self._MAX_Q_DISCRETE)
+                    logger.warning(
+                        "Слишком большое q для штучного товара: xml_id=%s (%s), %s → %s %s",
+                        xml_id,
+                        cached.name,
+                        old_q,
+                        q,
+                        cached.unit,
+                    )
+                    adjustments.append(
+                        f"{cached.name}: {old_q} → {q} {cached.unit} "
+                        f"(количество ограничено до {self._MAX_Q_DISCRETE} шт — "
+                        f"скорее всего ты перепутал граммы рецепта с количеством "
+                        f"штук товара; 1 шт = упаковка товара)"
+                    )
+
+                item["q"] = q
+
+            elif q > self._MAX_Q_API:
+                # Cap для весовых товаров (API лимит)
+                old_q = q
+                item["q"] = self._MAX_Q_API
+                name = cached.name if cached else f"xml_id={xml_id}"
+                unit = cached.unit if cached else "?"
+                logger.warning(
+                    "q превышает API лимит: xml_id=%s, %s → %s %s",
+                    xml_id,
+                    old_q,
+                    self._MAX_Q_API,
+                    unit,
+                )
+                adjustments.append(
+                    f"{name}: {old_q} → {self._MAX_Q_API} {unit} (ограничено до максимума API)"
+                )
 
         if adjustments:
             logger.info("Исправленные аргументы корзины: %s", args)
