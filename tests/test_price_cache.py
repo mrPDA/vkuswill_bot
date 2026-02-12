@@ -66,6 +66,66 @@ class TestPriceInfo:
         info = PriceInfo("Молоко", 79.0, "кг")
         assert info.get("unit", "шт") == "кг"
 
+    def test_create_with_weight(self):
+        """PriceInfo с весом упаковки."""
+        info = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        assert info.weight_value == 1.0
+        assert info.weight_unit == "кг"
+
+    def test_weight_defaults_to_none(self):
+        """Без weight — поля None."""
+        info = PriceInfo("Молоко", 79.0)
+        assert info.weight_value is None
+        assert info.weight_unit is None
+
+    def test_weight_grams_kg(self):
+        """weight_grams: кг → граммы."""
+        info = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        assert info.weight_grams == 1000.0
+
+    def test_weight_grams_g(self):
+        """weight_grams: г → граммы (as-is)."""
+        info = PriceInfo("Масло", 282.0, "шт", weight_value=200.0, weight_unit="г")
+        assert info.weight_grams == 200.0
+
+    def test_weight_grams_liters(self):
+        """weight_grams: л → мл (1 л = 1000)."""
+        info = PriceInfo("Молоко", 259.0, "шт", weight_value=2.0, weight_unit="л")
+        assert info.weight_grams == 2000.0
+
+    def test_weight_grams_ml(self):
+        """weight_grams: мл → мл (as-is)."""
+        info = PriceInfo("Сливки", 100.0, "шт", weight_value=200.0, weight_unit="мл")
+        assert info.weight_grams == 200.0
+
+    def test_weight_grams_none_when_no_weight(self):
+        """weight_grams: None если вес не задан."""
+        info = PriceInfo("Товар", 50.0)
+        assert info.weight_grams is None
+
+    def test_weight_grams_unknown_unit(self):
+        """weight_grams: None для неизвестной единицы."""
+        info = PriceInfo("Товар", 50.0, "шт", weight_value=1.0, weight_unit="фунт")
+        assert info.weight_grams is None
+
+    def test_eq_with_weight(self):
+        """PriceInfo eq учитывает weight."""
+        a = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        b = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        assert a == b
+
+    def test_neq_different_weight(self):
+        """PriceInfo не равен при разном weight."""
+        a = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        b = PriceInfo("Сахар", 85.0, "шт", weight_value=5.0, weight_unit="кг")
+        assert a != b
+
+    def test_repr_with_weight(self):
+        """repr включает weight если задан."""
+        info = PriceInfo("Сахар", 85.0, "шт", weight_value=1.0, weight_unit="кг")
+        r = repr(info)
+        assert "weight=1.0 кг" in r
+
 
 # ============================================================================
 # PriceCache
@@ -115,6 +175,18 @@ class TestPriceCache:
         info = await cache.get(100)
         assert info.name == "Молоко"
         assert info.price == 79.0
+
+    async def test_dict_setitem_with_weight(self, cache):
+        """Совместимость: cache[id] = {..., "weight": {...}}."""
+        cache[100] = {
+            "name": "Сахар",
+            "price": 85.0,
+            "unit": "шт",
+            "weight": {"value": 1.0, "unit": "кг"},
+        }
+        info = await cache.get(100)
+        assert info.weight_value == 1.0
+        assert info.weight_unit == "кг"
 
     def test_dict_getitem(self, cache):
         """Совместимость: cache[id] → PriceInfo (sync)."""
@@ -218,6 +290,38 @@ class TestPriceCacheBool:
         assert summary["total"] == 158.0
         assert "Молоко 3.2%" in summary["items"][0]
         assert "цена неизвестна" not in summary["items"][0]
+
+    async def test_cache_prices_stores_weight(self):
+        """cache_prices сохраняет weight из search results."""
+        import json
+        from vkuswill_bot.services.search_processor import SearchProcessor
+
+        cache = PriceCache()
+        sp = SearchProcessor(cache)
+
+        search_result = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "сахар", "total": 1},
+                    "items": [
+                        {
+                            "xml_id": 35192,
+                            "name": "Сахар-песок 1 кг",
+                            "price": {"current": 85},
+                            "unit": "шт",
+                            "weight": {"value": 1, "unit": "кг"},
+                        }
+                    ],
+                },
+            }
+        )
+        await sp.cache_prices(search_result)
+        info = await cache.get(35192)
+        assert info is not None
+        assert info.weight_value == 1
+        assert info.weight_unit == "кг"
+        assert info.weight_grams == 1000.0
 
 
 class TestPriceCacheEviction:

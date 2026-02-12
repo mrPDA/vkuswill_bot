@@ -109,14 +109,22 @@ class CartProcessor:
     # Макс. разумное q для штучных товаров (для покупок на дом)
     _MAX_Q_DISCRETE = 10
 
+    # Порог, выше которого q считается «перепутанными граммами/мл»
+    _GRAM_CONFUSION_THRESHOLD = 3
+
     async def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров и ограничить max q.
 
         GigaChat иногда:
         - Ставит дробное q для штучных товаров (0.68 для банки огурцов)
-        - Путает граммы рецепта с количеством штук (60 г сахара → q=60)
+        - Путает граммы рецепта с количеством штук (170 г сахара → q=170)
 
-        Для штучных товаров: округляем вверх + cap до _MAX_Q_DISCRETE.
+        Для штучных товаров:
+        1. Яйца → q=1 (упаковка 10 шт, хватит для любого рецепта)
+        2. Если вес упаковки известен и q > _GRAM_CONFUSION_THRESHOLD →
+           пересчитываем: q = ceil(q_граммы / вес_упаковки_граммы)
+        3. Округляем вверх + cap до _MAX_Q_DISCRETE.
+
         Для весовых товаров: cap до _MAX_Q_API (40 кг).
 
         Корректировки записываются в ``args["_quantity_adjustments"]``.
@@ -135,8 +143,6 @@ class CartProcessor:
 
             if cached and cached.unit in self._DISCRETE_UNITS:
                 # Яйца: 1 шт = 1 упаковка (10 яиц).
-                # Если q > 1 и это яйца — скорее всего GigaChat
-                # перепутал количество яиц (шт) с количеством упаковок
                 name_lower = cached.name.lower()
                 is_egg = any(kw in name_lower for kw in self._EGG_KEYWORDS)
                 if is_egg and q > 1:
@@ -154,6 +160,35 @@ class CartProcessor:
                     item["q"] = q
                     continue
 
+                # Умный пересчёт: если q подозрительно велико и известен
+                # вес упаковки — GigaChat перепутал граммы рецепта с количеством
+                # упаковок. Пересчитываем: q = ceil(q_гр / вес_упаковки_гр).
+                weight_g = cached.weight_grams
+                if q > self._GRAM_CONFUSION_THRESHOLD and weight_g and weight_g > 0:
+                    corrected = math.ceil(q / weight_g)
+                    if corrected < q:
+                        old_q = q
+                        q = max(corrected, 1)
+                        logger.info(
+                            "Пересчёт по весу: xml_id=%s (%s), "
+                            "q=%s → %s (вес упаковки: %s %s = %s г, "
+                            "GigaChat перепутал граммы с количеством упаковок)",
+                            xml_id,
+                            cached.name,
+                            old_q,
+                            q,
+                            cached.weight_value,
+                            cached.weight_unit,
+                            weight_g,
+                        )
+                        adjustments.append(
+                            f"{cached.name}: {old_q} → {q} {cached.unit} "
+                            f"(пересчитано по весу упаковки "
+                            f"{cached.weight_value} {cached.weight_unit}; "
+                            f"GigaChat перепутал граммы/мл рецепта "
+                            f"с количеством упаковок)"
+                        )
+
                 # Округление дробного q для штучных товаров
                 rounded = math.ceil(q)
                 if rounded != q:
@@ -170,8 +205,7 @@ class CartProcessor:
                     )
                     q = rounded
 
-                # Cap для штучных: q > _MAX_Q_DISCRETE — скорее всего
-                # GigaChat перепутал граммы рецепта с количеством штук
+                # Cap для штучных: q > _MAX_Q_DISCRETE — fallback
                 if q > self._MAX_Q_DISCRETE:
                     old_q = q
                     q = min(q, self._MAX_Q_DISCRETE)

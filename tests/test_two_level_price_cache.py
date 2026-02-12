@@ -62,6 +62,37 @@ class TestGet:
         # Промотировано в L1
         assert 100 in cache._data
 
+    async def test_l2_hit_with_weight(self, cache, mock_redis):
+        """L2 hit с weight — weight промотируется в L1."""
+        mock_redis.hgetall.return_value = {
+            b"name": "Сахар 1 кг".encode(),
+            b"price": b"85.0",
+            b"unit": "шт".encode(),
+            b"weight_value": b"1.0",
+            b"weight_unit": "кг".encode(),
+        }
+
+        result = await cache.get(100)
+
+        assert result is not None
+        assert result.weight_value == 1.0
+        assert result.weight_unit == "кг"
+        assert result.weight_grams == 1000.0
+
+    async def test_l2_hit_without_weight(self, cache, mock_redis):
+        """L2 hit без weight — weight_value и weight_unit остаются None."""
+        mock_redis.hgetall.return_value = {
+            b"name": b"Old item",
+            b"price": b"50.0",
+            b"unit": b"sht",
+        }
+
+        result = await cache.get(100)
+
+        assert result is not None
+        assert result.weight_value is None
+        assert result.weight_unit is None
+
     async def test_l2_hit_second_call_hits_l1(self, cache, mock_redis):
         """После промоции повторный вызов идёт из L1."""
         mock_redis.hgetall.return_value = {
@@ -110,6 +141,32 @@ class TestSet:
             mapping={"name": "Молоко", "price": "79.0", "unit": "шт"},
         )
         mock_redis.expire.assert_called_once_with("price:100", 3600)
+
+    async def test_writes_weight_to_redis(self, cache, mock_redis):
+        """set() с weight пишет weight_value и weight_unit в Redis."""
+        await cache.set(
+            100,
+            "Сахар 1 кг",
+            85.0,
+            "шт",
+            weight_value=1.0,
+            weight_unit="кг",
+        )
+
+        # L1
+        assert cache._data[100].weight_value == 1.0
+        assert cache._data[100].weight_unit == "кг"
+        # L2
+        mock_redis.hset.assert_called_once_with(
+            "price:100",
+            mapping={
+                "name": "Сахар 1 кг",
+                "price": "85.0",
+                "unit": "шт",
+                "weight_value": "1.0",
+                "weight_unit": "кг",
+            },
+        )
 
     async def test_redis_error_still_writes_l1(self, cache, mock_redis):
         """Ошибка Redis → L1 всё равно обновляется."""
