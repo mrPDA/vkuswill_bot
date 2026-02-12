@@ -128,7 +128,6 @@ jobs:
           _LF_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           _LF_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           _LF_HOST: ${{ secrets.LANGFUSE_HOST }}
-          _USDA_KEY: ${{ secrets.USDA_API_KEY }}
         run: |
           # Фоллбэк: минимальный .env на случай если yc CLI / Lockbox недоступны.
           # deploy.sh перезапишет .env из Lockbox, если yc CLI установлен.
@@ -146,7 +145,6 @@ jobs:
             echo "LANGFUSE_SALT=${_LF_SALT}"
             echo "LANGFUSE_PUBLIC_KEY=${_LF_PUBLIC_KEY}"
             echo "LANGFUSE_SECRET_KEY=${_LF_SECRET_KEY}"
-            echo "USDA_API_KEY=${_USDA_KEY}"
           } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 
