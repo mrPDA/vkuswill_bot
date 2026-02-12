@@ -334,7 +334,11 @@ class GigaChatService:
             fc_mode = "none" if force_text else "auto"
             logger.info(
                 "Шаг %d для user %d (вызовов: %d, дубликатов подряд: %d, fc=%s)",
-                total_steps, user_id, real_calls, consecutive_skips, fc_mode,
+                total_steps,
+                user_id,
+                real_calls,
+                consecutive_skips,
+                fc_mode,
             )
 
             # ── Langfuse: generation для каждого вызова LLM ──
@@ -354,7 +358,9 @@ class GigaChatService:
 
             try:
                 response = await self._call_gigachat_with_fc(
-                    history, functions, function_call=fc_mode,
+                    history,
+                    functions,
+                    function_call=fc_mode,
                 )
             except Exception as e:
                 logger.error("Ошибка GigaChat: %s", e, exc_info=True)
