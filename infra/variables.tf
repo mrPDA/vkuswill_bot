@@ -130,13 +130,6 @@ variable "gigachat_model" {
   default     = "GigaChat-2-Max"
 }
 
-variable "usda_api_key" {
-  description = "USDA FoodData Central API key for nutrition lookup (free: api.data.gov)"
-  type        = string
-  default     = ""
-  sensitive   = true
-}
-
 variable "webhook_host" {
   description = "External hostname/IP for Telegram webhook (e.g. 89.169.138.16)"
   type        = string
