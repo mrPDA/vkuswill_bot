@@ -272,11 +272,13 @@ class RecipeService:
         ingredients: list[dict],
         piece_weights: dict[str, float],
     ) -> list[dict]:
-        """Добавить поле kg_equivalent для ингредиентов в штуках.
+        """Добавить поле kg_equivalent для ингредиентов.
 
-        Если рецепт указывает quantity=3, unit="шт" для картофеля,
-        а картофель продаётся в кг, GigaChat должен поставить q≈0.45.
-        Добавляем готовое число, чтобы модель не считала сама.
+        Конвертирует разные единицы в кг, чтобы GigaChat
+        не ошибался при расчёте q для весовых товаров:
+        - г → кг (200 г → 0.2 кг)
+        - шт → кг (3 картофелины → 0.45 кг через таблицу весов)
+        - кг → без изменений (уже готовое значение)
         """
         for item in ingredients:
             if not isinstance(item, dict):
@@ -285,18 +287,31 @@ class RecipeService:
             quantity = item.get("quantity", 0)
             name = item.get("name", "").lower()
 
-            # Пропускаем если уже в весовых единицах
-            if unit in ("кг", "г", "мл", "л"):
+            if not quantity or quantity <= 0:
                 continue
 
-            # Ищем совпадение в таблице весов
+            # Граммы → килограммы (прямая конвертация)
+            if unit == "г":
+                item["kg_equivalent"] = round(quantity / 1000, 3)
+                continue
+
+            # Миллилитры → литры (прямая конвертация)
+            if unit == "мл":
+                item["l_equivalent"] = round(quantity / 1000, 3)
+                continue
+
+            # кг и л — уже готовые значения, пропускаем
+            if unit in ("кг", "л"):
+                continue
+
+            # Штучные: ищем совпадение в таблице весов
             weight_per_piece = None
             for key, w in piece_weights.items():
                 if key in name:
                     weight_per_piece = w
                     break
 
-            if weight_per_piece is not None and quantity > 0:
+            if weight_per_piece is not None:
                 kg_eq = round(quantity * weight_per_piece, 2)
                 item["kg_equivalent"] = kg_eq
 
@@ -318,21 +333,21 @@ class RecipeService:
                 "ingredients": ingredients,
                 "cached": cached,
                 "hint": (
-                    "ОБЯЗАТЕЛЬНЫЙ ПОРЯДОК ДЕЙСТВИЙ: "
-                    "1) Сначала ищи КАЖДЫЙ ингредиент через "
-                    "vkusvill_products_search(q=search_query). "
-                    "2) Используй ТОЛЬКО xml_id из результатов поиска. "
-                    "3) ТОЛЬКО ПОСЛЕ поиска ВСЕХ ингредиентов вызывай "
-                    "vkusvill_cart_link_create. "
-                    "ЗАПРЕЩЕНО вызывать vkusvill_cart_link_create без "
-                    "предварительного поиска — у тебя НЕТ xml_id товаров, "
-                    "их можно получить ТОЛЬКО через поиск! "
+                    "ТВОЙ СЛЕДУЮЩИЙ ШАГ: вызови vkusvill_products_search "
+                    "для КАЖДОГО ингредиента из списка, используя search_query. "
+                    "Затем из результатов поиска возьми xml_id лучшего товара "
+                    "и создай корзину через vkusvill_cart_link_create. "
+                    "НЕ пропускай ни одного ингредиента! "
                     "НЕ ищи и НЕ добавляй от себя соль, молотый перец, "
                     "воду и другие продукты, которых нет в списке! "
-                    "ВАЖНО: если товар продаётся в кг (unit='кг'), "
-                    "а у ингредиента есть поле kg_equivalent — "
-                    "используй его как q! "
-                    "Например: kg_equivalent=0.45 → q=0.45."
+                    "РАСЧЁТ КОЛИЧЕСТВА (q): "
+                    "если у ингредиента есть kg_equivalent — "
+                    "используй его как q для товаров в кг. "
+                    "Если есть l_equivalent — используй его как q "
+                    "для товаров в литрах. "
+                    "Примеры: kg_equivalent=0.2 → q=0.2 (для товара в кг); "
+                    "l_equivalent=0.5 → q=0.5 (для товара в л); "
+                    "Для штучных товаров (unit='шт') — q = целое число."
                 ),
             },
             ensure_ascii=False,
