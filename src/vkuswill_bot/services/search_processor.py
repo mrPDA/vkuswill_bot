@@ -262,11 +262,16 @@ class SearchProcessor:
                 continue
             price = price_info.get("current")
             if xml_id is not None and price is not None:
+                weight = item.get("weight", {}) or {}
+                weight_value = weight.get("value") if isinstance(weight, dict) else None
+                weight_unit = weight.get("unit") if isinstance(weight, dict) else None
                 await self.price_cache.set(
                     xml_id,
                     name=item.get("name", ""),
                     price=price,
                     unit=item.get("unit", "шт"),
+                    weight_value=weight_value,
+                    weight_unit=weight_unit,
                 )
 
     def extract_xml_ids(self, result_text: str) -> set[int]:

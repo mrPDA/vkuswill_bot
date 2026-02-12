@@ -495,6 +495,203 @@ class TestFixUnitQuantitiesEdgeCases:
 
 
 # ============================================================================
+# Умный пересчёт q по весу упаковки (gram confusion fix)
+# ============================================================================
+
+
+class TestFixUnitQuantitiesWeightCorrection:
+    """Тесты: пересчёт q когда GigaChat путает граммы рецепта с количеством упаковок.
+
+    Примеры из production:
+    - Рецепт: 170г сахара → GigaChat ставит q=170 для пачки 1 кг → 170 кг!
+    - Рецепт: 250мл молока → GigaChat ставит q=250 для бутылки 2 л → 250 шт!
+    """
+
+    async def test_sugar_170g_to_1_pack(self, processor, price_cache):
+        """170г сахара → q=170 для пачки 1 кг → q=1."""
+        await price_cache.set(
+            35192,
+            name="Сахар-песок 1 кг",
+            price=85,
+            unit="шт",
+            weight_value=1.0,
+            weight_unit="кг",
+        )
+        args = {"products": [{"xml_id": 35192, "q": 170}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+        assert "_quantity_adjustments" in result
+
+    async def test_milk_250ml_to_1_bottle(self, processor, price_cache):
+        """250мл молока → q=250 для бутылки 2 л → q=1."""
+        await price_cache.set(
+            56510,
+            name="Молоко 2 л",
+            price=259,
+            unit="шт",
+            weight_value=2.0,
+            weight_unit="л",
+        )
+        args = {"products": [{"xml_id": 56510, "q": 250}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+
+    async def test_butter_100g_to_1_pack(self, processor, price_cache):
+        """100г масла → q=100 для пачки 200г → q=1."""
+        await price_cache.set(
+            16306,
+            name="Масло сливочное 200 г",
+            price=282,
+            unit="шт",
+            weight_value=200.0,
+            weight_unit="г",
+        )
+        args = {"products": [{"xml_id": 16306, "q": 100}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+
+    async def test_flour_250g_to_1_pack(self, processor, price_cache):
+        """250г муки → q=250 для пачки 2 кг → q=1."""
+        await price_cache.set(
+            43204,
+            name="Мука пшеничная 2 кг",
+            price=135,
+            unit="шт",
+            weight_value=2.0,
+            weight_unit="кг",
+        )
+        args = {"products": [{"xml_id": 43204, "q": 250}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+
+    async def test_500g_for_200g_pack_needs_3(self, processor, price_cache):
+        """500г масла → q=500 для пачки 200г → q=3 (ceil(500/200))."""
+        await price_cache.set(
+            16306,
+            name="Масло 200 г",
+            price=282,
+            unit="шт",
+            weight_value=200.0,
+            weight_unit="г",
+        )
+        args = {"products": [{"xml_id": 16306, "q": 500}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 3  # ceil(500/200) = 3
+
+    async def test_q_below_threshold_not_corrected(self, processor, price_cache):
+        """q=3 (ниже порога) — НЕ пересчитывается по весу."""
+        await price_cache.set(
+            35192,
+            name="Сахар 1 кг",
+            price=85,
+            unit="шт",
+            weight_value=1.0,
+            weight_unit="кг",
+        )
+        args = {"products": [{"xml_id": 35192, "q": 3}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 3  # остаётся как есть
+
+    async def test_no_weight_falls_back_to_cap(self, processor, price_cache):
+        """Без weight → fallback на _MAX_Q_DISCRETE cap."""
+        await price_cache.set(
+            99999,
+            name="Товар без веса",
+            price=50,
+            unit="шт",
+        )
+        args = {"products": [{"xml_id": 99999, "q": 170}]}
+        result = await processor.fix_unit_quantities(args)
+        # Без weight → cap до _MAX_Q_DISCRETE = 10
+        assert result["products"][0]["q"] == 10
+
+    async def test_eggs_still_capped_at_1(self, processor, price_cache):
+        """Яйца: q > 1 → 1 (яичная логика приоритетнее весовой)."""
+        await price_cache.set(
+            22658,
+            name="Яйцо куриное С0",
+            price=144,
+            unit="шт",
+            weight_value=0.5,
+            weight_unit="кг",
+        )
+        args = {"products": [{"xml_id": 22658, "q": 3}]}
+        result = await processor.fix_unit_quantities(args)
+        assert result["products"][0]["q"] == 1
+
+    async def test_full_recipe_scenario(self, processor, price_cache):
+        """Полный сценарий «ромовая баба»: все ингредиенты корректируются."""
+        await price_cache.set(
+            49988,
+            name="Дрожжи сухие 7 г",
+            price=54,
+            unit="шт",
+            weight_value=7.0,
+            weight_unit="г",
+        )
+        await price_cache.set(
+            56510,
+            name="Молоко 2 л",
+            price=259,
+            unit="шт",
+            weight_value=2.0,
+            weight_unit="л",
+        )
+        await price_cache.set(
+            22658,
+            name="Яйцо куриное С0",
+            price=144,
+            unit="шт",
+            weight_value=0.5,
+            weight_unit="кг",
+        )
+        await price_cache.set(
+            35192,
+            name="Сахар 1 кг",
+            price=85,
+            unit="шт",
+            weight_value=1.0,
+            weight_unit="кг",
+        )
+        await price_cache.set(
+            16306,
+            name="Масло сливочное 200 г",
+            price=282,
+            unit="шт",
+            weight_value=200.0,
+            weight_unit="г",
+        )
+        await price_cache.set(
+            43204,
+            name="Мука 2 кг",
+            price=135,
+            unit="шт",
+            weight_value=2.0,
+            weight_unit="кг",
+        )
+
+        args = {
+            "products": [
+                {"xml_id": 49988, "q": 5},  # 5г дрожжей → ceil(5/7)=1
+                {"xml_id": 56510, "q": 250},  # 250мл молока → ceil(250/2000)=1
+                {"xml_id": 22658, "q": 1},  # 1 яйцо → 1 (яичная логика)
+                {"xml_id": 35192, "q": 170},  # 170г сахара → ceil(170/1000)=1
+                {"xml_id": 16306, "q": 100},  # 100г масла → ceil(100/200)=1
+                {"xml_id": 43204, "q": 250},  # 250г муки → ceil(250/2000)=1
+            ]
+        }
+        result = await processor.fix_unit_quantities(args)
+
+        products = result["products"]
+        assert products[0]["q"] == 1  # дрожжи
+        assert products[1]["q"] == 1  # молоко
+        assert products[2]["q"] == 1  # яйцо
+        assert products[3]["q"] == 1  # сахар
+        assert products[4]["q"] == 1  # масло
+        assert products[5]["q"] == 1  # мука
+
+
+# ============================================================================
 # add_verification
 # ============================================================================
 
