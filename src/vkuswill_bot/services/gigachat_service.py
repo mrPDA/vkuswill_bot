@@ -23,6 +23,7 @@ from vkuswill_bot.services.prompts import (
     ERROR_GIGACHAT,
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
+    NUTRITION_TOOL,
     RECIPE_TOOL,
 )
 from vkuswill_bot.services.recipe_service import RecipeService
@@ -63,6 +64,7 @@ class GigaChatService:
     _RECIPE_TOOL = RECIPE_TOOL
     _LOCAL_TOOLS = LOCAL_TOOLS
     _CART_PREVIOUS_TOOL = CART_PREVIOUS_TOOL
+    _NUTRITION_TOOL = NUTRITION_TOOL
 
     def __init__(
         self,
@@ -151,6 +153,8 @@ class GigaChatService:
             self._functions.append(self._RECIPE_TOOL)
         # Инструмент получения предыдущей корзины (всегда доступен)
         self._functions.append(self._CART_PREVIOUS_TOOL)
+        # КБЖУ через Open Food Facts (всегда доступен, без API key)
+        self._functions.append(self._NUTRITION_TOOL)
         logger.info("Функции для GigaChat: %s", [f["name"] for f in self._functions])
         return self._functions
 
