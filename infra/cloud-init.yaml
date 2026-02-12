@@ -3,6 +3,10 @@
 # Cloud-init: Docker + docker-compose на Ubuntu 22.04
 # ============================================================
 
+# ─── SSH hardening ──────────────────────────────────────────
+ssh_pwauth: false           # Отключить парольную аутентификацию SSH
+disable_root: true          # Запретить SSH-вход под root
+
 users:
   - name: deploy
     groups: sudo, docker

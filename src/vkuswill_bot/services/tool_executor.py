@@ -30,6 +30,9 @@ MAX_RESULT_PREVIEW_LENGTH = 500
 # Макс. повторных вызовов одного инструмента с одинаковыми аргументами
 MAX_IDENTICAL_TOOL_CALLS = 2
 
+# Макс. последовательных ошибок от одного инструмента (с любыми аргументами)
+MAX_CONSECUTIVE_ERRORS_PER_TOOL = 2
+
 # Имена локальных инструментов (для маршрутизации)
 LOCAL_TOOL_NAMES = frozenset(
     {
@@ -51,6 +54,8 @@ class CallTracker:
     def __init__(self) -> None:
         self.call_counts: dict[str, int] = {}
         self.call_results: dict[str, str] = {}
+        # Счётчик последовательных ошибок по имени инструмента
+        self.error_counts: dict[str, int] = {}
 
     def make_key(self, tool_name: str, args: dict) -> str:
         """Создать ключ для отслеживания вызова."""
@@ -60,6 +65,16 @@ class CallTracker:
         """Записать результат вызова."""
         key = self.make_key(tool_name, args)
         self.call_results[key] = result
+        # Отслеживаем последовательные ошибки по имени инструмента
+        if '"error"' in result:
+            self.error_counts[tool_name] = self.error_counts.get(tool_name, 0) + 1
+        else:
+            # Сбрасываем счётчик при успешном вызове
+            self.error_counts[tool_name] = 0
+
+    def is_tool_failing(self, tool_name: str) -> bool:
+        """Проверить, превышен ли лимит ошибок для инструмента."""
+        return self.error_counts.get(tool_name, 0) >= MAX_CONSECUTIVE_ERRORS_PER_TOOL
 
 
 class ToolExecutor:
@@ -178,12 +193,38 @@ class ToolExecutor:
     ) -> bool:
         """Проверить, не является ли вызов дублем, и обработать зацикливание.
 
-        Отслеживает повторные вызовы с идентичными аргументами.
-        При дубле возвращает закешированный результат предыдущего вызова.
+        Отслеживает:
+        - Повторные вызовы с идентичными аргументами (дубли).
+        - Инструменты, стабильно возвращающие ошибки (разные аргументы).
 
         Returns:
-            True если вызов дублирован и его нужно пропустить.
+            True если вызов нужно пропустить.
         """
+        # ── Проверка: инструмент стабильно возвращает ошибки ──
+        if call_tracker.is_tool_failing(tool_name):
+            logger.warning(
+                "Инструмент %s вернул %d последовательных ошибок, "
+                "пропускаю вызов и уведомляю модель",
+                tool_name,
+                call_tracker.error_counts[tool_name],
+            )
+            error_msg = json.dumps(
+                {
+                    "error": f"Инструмент {tool_name} временно недоступен. "
+                    "Не пытайся вызывать его снова. Продолжи без него.",
+                },
+                ensure_ascii=False,
+            )
+            history.append(
+                Messages(
+                    role=MessagesRole.FUNCTION,
+                    content=error_msg,
+                    name=tool_name,
+                )
+            )
+            return True
+
+        # ── Проверка: идентичный вызов (те же аргументы) ──
         call_key = call_tracker.make_key(tool_name, args)
         call_tracker.call_counts[call_key] = call_tracker.call_counts.get(call_key, 0) + 1
 
