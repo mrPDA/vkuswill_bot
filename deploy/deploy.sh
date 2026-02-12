@@ -239,6 +239,9 @@ fi
 # Директория для persistent-данных (SQLite preferences)
 DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
+# botuser в контейнере — непривилегированный; даём права на запись
+chmod a+rwx "$DATA_DIR"
+log "DATA_DIR=${DATA_DIR} — права: $(ls -ld "$DATA_DIR")"
 
 # SSL-сертификат для самоподписанного webhook
 SSL_DIR="/opt/vkuswill-bot/ssl"
