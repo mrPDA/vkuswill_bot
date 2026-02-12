@@ -329,9 +329,11 @@ class GigaChatService:
 
             # ── Если подряд слишком много дубликатов — направляем к корзине ──
             if consecutive_skips >= max_consecutive_skips and not cart_hint_injected:
-                # Первое срабатывание: вставляем подсказку, даём ещё шанс
+                # Первое срабатывание: вставляем подсказку, даём ещё один шанс.
+                # Сброс до (порог − 1), чтобы уже следующий дубликат
+                # поднял счётчик обратно до порога и включил force_text.
                 cart_hint_injected = True
-                consecutive_skips = 0
+                consecutive_skips = max_consecutive_skips - 1
                 history.append(
                     Messages(
                         role=MessagesRole.SYSTEM,
