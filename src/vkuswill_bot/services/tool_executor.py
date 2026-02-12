@@ -370,6 +370,36 @@ class ToolExecutor:
             total=total,
         )
 
+    @staticmethod
+    def _add_quantity_adjustments(args: dict, result: str) -> str:
+        """Добавить информацию о скорректированных количествах в результат корзины.
+
+        Если preprocess_args скорректировал количества штучных товаров
+        (дробное → целое), эта информация добавляется в результат,
+        чтобы GigaChat не пытался «исправить» корзину повторным вызовом.
+        """
+        adjustments = args.pop("_quantity_adjustments", None)
+        if not adjustments:
+            return result
+
+        try:
+            result_data = json.loads(result)
+            data = result_data.get("data")
+            if isinstance(data, dict):
+                data["quantity_adjustments"] = {
+                    "note": (
+                        "Количества некоторых товаров были автоматически скорректированы, "
+                        "потому что эти товары продаются поштучно и не могут иметь "
+                        "дробное количество. НЕ пытайся пересоздать корзину с дробными "
+                        "количествами — они будут снова округлены. Корзина уже корректна."
+                    ),
+                    "items": adjustments,
+                }
+                return json.dumps(result_data, ensure_ascii=False, indent=4)
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return result
+
     # ---- Маршрутизация локальных инструментов ----
 
     async def _call_local_tool(
