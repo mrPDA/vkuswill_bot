@@ -134,7 +134,7 @@ jobs:
           {
             echo "BOT_TOKEN=${_BOT_TOKEN}"
             echo "GIGACHAT_CREDENTIALS=${_GIGACHAT_CRED}"
-            echo "GIGACHAT_MODEL=GigaChat"
+            echo "GIGACHAT_MODEL=GigaChat-2-Max"
             echo "WEBHOOK_HOST=${_WEBHOOK_HOST}"
             echo "USE_WEBHOOK=true"
             echo "WEBHOOK_PORT=8080"

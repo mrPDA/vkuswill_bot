@@ -127,7 +127,7 @@ variable "admin_user_ids" {
 variable "gigachat_model" {
   description = "GigaChat model name"
   type        = string
-  default     = "GigaChat"
+  default     = "GigaChat-2-Max"
 }
 
 variable "webhook_host" {
