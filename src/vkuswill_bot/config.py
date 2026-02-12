@@ -69,9 +69,6 @@ class Config(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
     langfuse_anonymize_messages: bool = False  # полностью скрывать текст сообщений
 
-    # USDA FoodData Central API (КБЖУ)
-    usda_api_key: str = ""
-
     # Отладка
     debug: bool = False
 

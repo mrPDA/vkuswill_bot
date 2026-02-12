@@ -16,7 +16,6 @@ from gigachat.models import Messages, MessagesRole
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.cart_snapshot_store import CartSnapshotStore
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
-from vkuswill_bot.services.nutrition_service import NutritionService
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 
@@ -42,7 +41,6 @@ LOCAL_TOOL_NAMES = frozenset(
         "user_preferences_delete",
         "recipe_ingredients",
         "get_previous_cart",
-        "nutrition_lookup",
     }
 )
 
@@ -97,14 +95,12 @@ class ToolExecutor:
         cart_processor: CartProcessor,
         preferences_store: PreferencesStore | None = None,
         cart_snapshot_store: CartSnapshotStore | None = None,
-        nutrition_service: NutritionService | None = None,
     ) -> None:
         self._mcp_client = mcp_client
         self._search_processor = search_processor
         self._cart_processor = cart_processor
         self._prefs_store = preferences_store
         self._cart_snapshot_store = cart_snapshot_store
-        self._nutrition_service = nutrition_service
 
     # ---- Парсинг аргументов ----
 
@@ -492,14 +488,6 @@ class ToolExecutor:
                 {"ok": False, "error": "Кеш рецептов не настроен"},
                 ensure_ascii=False,
             )
-
-        if tool_name == "nutrition_lookup":
-            if self._nutrition_service is None:
-                return json.dumps(
-                    {"ok": False, "error": "Сервис КБЖУ не настроен (нет USDA API key)"},
-                    ensure_ascii=False,
-                )
-            return await self._nutrition_service.lookup(args)
 
         if tool_name == "get_previous_cart":
             return await self._get_previous_cart(user_id)

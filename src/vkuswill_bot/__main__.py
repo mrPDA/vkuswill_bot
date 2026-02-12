@@ -304,16 +304,6 @@ async def main() -> None:
     search_processor = SearchProcessor(price_cache)
     cart_processor = CartProcessor(price_cache)
 
-    # КБЖУ-сервис (USDA FoodData Central, опционально)
-    nutrition_service = None
-    if config.usda_api_key:
-        from vkuswill_bot.services.nutrition_service import NutritionService
-
-        nutrition_service = NutritionService(api_key=config.usda_api_key)
-        logger.info("NutritionService включён (USDA API)")
-    else:
-        logger.info("NutritionService отключён (USDA_API_KEY не задан)")
-
     # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
     tool_executor = ToolExecutor(
         mcp_client=mcp_client,
@@ -321,7 +311,6 @@ async def main() -> None:
         cart_processor=cart_processor,
         preferences_store=prefs_store,
         cart_snapshot_store=cart_snapshot_store,
-        nutrition_service=nutrition_service,
     )
 
     # Langfuse — LLM-observability (опционально)
@@ -347,7 +336,6 @@ async def main() -> None:
         tool_executor=tool_executor,
         gigachat_max_concurrent=config.gigachat_max_concurrent,
         langfuse_service=langfuse_service,
-        has_nutrition=nutrition_service is not None,
     )
 
     # Предзагрузка MCP-инструментов

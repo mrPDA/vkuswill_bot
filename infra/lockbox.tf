@@ -99,12 +99,6 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.langfuse_secret_key
   }
 
-  # USDA FoodData Central (КБЖУ)
-  entries {
-    key        = "USDA_API_KEY"
-    text_value = var.usda_api_key
-  }
-
   # S3 логирование
   entries {
     key        = "S3_LOG_ENABLED"
