@@ -349,7 +349,8 @@ class GigaChatService:
             force_text = consecutive_skips >= max_consecutive_skips and cart_hint_injected
             if force_text:
                 logger.warning(
-                    "User %d: %d дубликатов подряд (после подсказки), принудительный текстовый ответ",
+                    "User %d: %d дубликатов подряд (после подсказки), "
+                    "принудительный текстовый ответ",
                     user_id,
                     consecutive_skips,
                 )
