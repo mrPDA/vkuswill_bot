@@ -14,6 +14,7 @@ from vkuswill_bot.services.nutrition_service import (
     OFF_SEARCH_URL,
     SEARCH_PAGE_SIZE,
     _NUTRIENT_KEYS,
+    _WEIGHT_RE,
 )
 
 
@@ -277,6 +278,30 @@ class TestLookup:
         assert result["ok"] is False
 
     @pytest.mark.asyncio
+    async def test_lookup_normalizes_html_entities(
+        self,
+        service: NutritionService,
+    ) -> None:
+        """HTML-entities в запросе очищаются перед поиском."""
+        products = [
+            {
+                "product_name": "Молоко",
+                "brands": "ВкусВилл",
+                "nutriments": {"energy-kcal_100g": 60},
+                "serving_size": "",
+                "nutrition_grades": "",
+            },
+        ]
+        search_mock = AsyncMock(return_value=products)
+        with pytest.MonkeyPatch.context() as mp:
+            mp.setattr(service, "_search", search_mock)
+            result = json.loads(await service.lookup({"query": "Молоко 3,2%, 1\xa0л"}))
+
+        assert result["ok"] is True
+        # Запрос в _search должен быть нормализован (без &nbsp; и веса)
+        search_mock.assert_called_once_with("Молоко")
+
+    @pytest.mark.asyncio
     async def test_lookup_skips_empty_brand(
         self,
         service: NutritionService,
@@ -301,6 +326,61 @@ class TestLookup:
         assert "serving_size" not in item
 
 
+# ---- Тесты _normalize_query ----
+
+
+class TestNormalizeQuery:
+    """Тесты нормализации запросов (HTML-entities, вес, проценты)."""
+
+    def test_html_nbsp(self) -> None:
+        """&nbsp; декодируется в пробел и не ломает запрос."""
+        assert NutritionService._normalize_query("Молоко 3,2%, 1\xa0л") == "Молоко"
+        # &nbsp; в виде HTML entity
+        assert NutritionService._normalize_query("Плов с курицей, 600&nbsp;г") == "Плов с курицей"
+
+    def test_html_entities(self) -> None:
+        """HTML-entities декодируются."""
+        assert "грудка" in NutritionService._normalize_query("Куриная грудка &amp; филе")
+
+    def test_weight_grams(self) -> None:
+        """Удаление веса в граммах."""
+        assert NutritionService._normalize_query("Масло сливочное, 200 г") == "Масло сливочное"
+
+    def test_weight_kg(self) -> None:
+        """Удаление веса в кг."""
+        assert NutritionService._normalize_query("Борщ с говядиной, 1 кг") == "Борщ с говядиной"
+
+    def test_weight_ml(self) -> None:
+        """Удаление объёма в мл."""
+        assert NutritionService._normalize_query("Кефир, 500 мл") == "Кефир"
+
+    def test_weight_liters(self) -> None:
+        """Удаление объёма в литрах."""
+        assert NutritionService._normalize_query("Молоко, 1 л") == "Молоко"
+
+    def test_percentage(self) -> None:
+        """Удаление процентов жирности."""
+        assert NutritionService._normalize_query("Молоко 3,2%") == "Молоко"
+        assert NutritionService._normalize_query("Масло сливочное 82,5%, 200 г") == "Масло сливочное"
+
+    def test_clean_query_unchanged(self) -> None:
+        """Чистый запрос не меняется."""
+        assert NutritionService._normalize_query("куриная грудка") == "куриная грудка"
+        assert NutritionService._normalize_query("борщ") == "борщ"
+
+    def test_empty_string(self) -> None:
+        """Пустая строка."""
+        assert NutritionService._normalize_query("") == ""
+
+    def test_only_weight(self) -> None:
+        """Если остаётся пустая строка после нормализации."""
+        assert NutritionService._normalize_query("200 г") == ""
+
+    def test_multiple_spaces_collapsed(self) -> None:
+        """Множественные пробелы схлопываются."""
+        assert NutritionService._normalize_query("Творог  обезжиренный") == "Творог обезжиренный"
+
+
 # ---- Тесты _search ----
 
 
@@ -308,10 +388,12 @@ class TestSearch:
     """Тесты прямого вызова Open Food Facts API."""
 
     @pytest.mark.asyncio
-    async def test_search_params(self, service: NutritionService) -> None:
-        """Проверка параметров запроса к OFF."""
+    async def test_search_params_include_ru(self, service: NutritionService) -> None:
+        """Проверка параметров запроса — включает lc=ru, cc=ru."""
         mock_response = MagicMock()
-        mock_response.json.return_value = {"products": []}
+        mock_response.json.return_value = {
+            "products": [{"nutriments": {"energy-kcal_100g": 100}}],
+        }
         mock_response.raise_for_status = MagicMock()
 
         mock_client = AsyncMock(spec=httpx.AsyncClient)
@@ -329,6 +411,61 @@ class TestSearch:
         assert params["json"] == 1
         assert params["page_size"] == SEARCH_PAGE_SIZE
         assert params["fields"] == OFF_FIELDS
+        assert params["lc"] == "ru"
+        assert params["cc"] == "ru"
+
+    @pytest.mark.asyncio
+    async def test_search_fallback_no_nutrition(self, service: NutritionService) -> None:
+        """Fallback на глобальный поиск, если РФ не имеет КБЖУ."""
+        # Первый ответ (РФ) — без КБЖУ
+        resp_ru = MagicMock()
+        resp_ru.json.return_value = {
+            "products": [{"product_name": "Test", "nutriments": {}}],
+        }
+        resp_ru.raise_for_status = MagicMock()
+
+        # Второй ответ (глобальный) — с КБЖУ
+        resp_global = MagicMock()
+        resp_global.json.return_value = {
+            "products": [{"product_name": "Potato", "nutriments": {"energy-kcal_100g": 77}}],
+        }
+        resp_global.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+        mock_client.get.side_effect = [resp_ru, resp_global]
+        service._client = mock_client
+
+        result = await service._search("картофель")
+
+        assert mock_client.get.call_count == 2
+        # Второй вызов не должен содержать cc
+        second_params = mock_client.get.call_args_list[1][1]["params"]
+        assert "cc" not in second_params
+        assert second_params["lc"] == "ru"
+        # Результат из глобального поиска
+        assert result[0]["product_name"] == "Potato"
+
+    @pytest.mark.asyncio
+    async def test_search_no_fallback_when_nutrition_found(self, service: NutritionService) -> None:
+        """Не делает fallback, если РФ-поиск вернул КБЖУ."""
+        resp_ru = MagicMock()
+        resp_ru.json.return_value = {
+            "products": [
+                {"product_name": "Борщ", "nutriments": {"energy-kcal_100g": 50}},
+            ],
+        }
+        resp_ru.raise_for_status = MagicMock()
+
+        mock_client = AsyncMock(spec=httpx.AsyncClient)
+        mock_client.is_closed = False
+        mock_client.get.return_value = resp_ru
+        service._client = mock_client
+
+        result = await service._search("борщ")
+
+        mock_client.get.assert_called_once()  # Только 1 вызов
+        assert result[0]["product_name"] == "Борщ"
 
 
 # ---- Тесты промпта ----

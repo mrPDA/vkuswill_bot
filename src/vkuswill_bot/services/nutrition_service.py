@@ -12,8 +12,10 @@ Open Food Facts API: https://openfoodfacts.github.io/openfoodfacts-server/api/
 
 from __future__ import annotations
 
+import html
 import json
 import logging
+import re
 from typing import Any
 
 import httpx
@@ -32,6 +34,14 @@ READ_TIMEOUT = 15
 
 # Количество результатов поиска
 SEARCH_PAGE_SIZE = 5
+
+# Regex для удаления веса/объёма из названий (200 г, 1 л, 600 мл, 82,5% и т.п.)
+_WEIGHT_RE = re.compile(
+    r",?\s*\d+[.,]?\d*\s*(?:г|кг|мл|л|мг|шт)\b"
+    r"|,?\s*\d+[.,]\d+\s*%"
+    r"|,?\s*\d+\s*%",
+    re.IGNORECASE,
+)
 
 # Ключи нутриентов в Open Food Facts
 _NUTRIENT_KEYS = {
@@ -74,6 +84,25 @@ class NutritionService:
             await self._client.aclose()
             self._client = None
 
+    @staticmethod
+    def _normalize_query(raw: str) -> str:
+        """Нормализовать запрос: убрать HTML-entities, вес, проценты.
+
+        Примеры:
+            'Молоко 3,2%, 1&nbsp;л' → 'Молоко'
+            'Масло сливочное 82,5%, 200&nbsp;г' → 'Масло сливочное'
+            'Плов с курицей, 600&nbsp;г' → 'Плов с курицей'
+            'Филе грудки цыпленка-бройлера' → 'Филе грудки цыпленка-бройлера'
+        """
+        # 1. Декодировать HTML-entities (&nbsp; → пробел, &amp; → &, и т.д.)
+        q = html.unescape(raw)
+        # 2. Убрать вес/объём/проценты
+        q = _WEIGHT_RE.sub("", q)
+        # 3. Убрать висячие запятые и лишние пробелы
+        q = re.sub(r"\s*,\s*$", "", q)
+        q = re.sub(r"\s+", " ", q).strip()
+        return q
+
     async def lookup(self, args: dict) -> str:
         """Найти КБЖУ продукта по названию.
 
@@ -83,12 +112,16 @@ class NutritionService:
         Returns:
             JSON-строка с КБЖУ или ошибкой.
         """
-        query = args.get("query", "").strip()
-        if not query:
+        raw_query = args.get("query", "").strip()
+        if not raw_query:
             return json.dumps(
                 {"ok": False, "error": "Не указано название продукта (query)"},
                 ensure_ascii=False,
             )
+
+        query = self._normalize_query(raw_query)
+        if not query:
+            query = raw_query  # fallback если нормализация съела всё
 
         try:
             results = await self._search(query)
@@ -155,10 +188,14 @@ class NutritionService:
     async def _search(self, query: str) -> list[dict[str, Any]]:
         """Поиск продуктов в Open Food Facts.
 
+        Сначала ищем среди российских продуктов (lc=ru, cc=ru).
+        Если не нашли — делаем fallback-поиск без фильтра страны.
+
         Returns:
             Список найденных продуктов (до SEARCH_PAGE_SIZE).
         """
         client = await self._get_client()
+        # Основной поиск: только российские продукты
         params: dict[str, str | int] = {
             "search_terms": query,
             "search_simple": 1,
@@ -166,11 +203,23 @@ class NutritionService:
             "json": 1,
             "page_size": SEARCH_PAGE_SIZE,
             "fields": OFF_FIELDS,
+            "lc": "ru",
+            "cc": "ru",
         }
         response = await client.get(OFF_SEARCH_URL, params=params)
         response.raise_for_status()
         data = response.json()
-        return data.get("products", [])
+        products = data.get("products", [])
+
+        # Fallback: если среди РФ-продуктов нет КБЖУ — ищем глобально
+        if not any(self._has_nutrition(p) for p in products):
+            params.pop("cc", None)
+            response = await client.get(OFF_SEARCH_URL, params=params)
+            response.raise_for_status()
+            data = response.json()
+            products = data.get("products", [])
+
+        return products
 
     @staticmethod
     def _has_nutrition(product: dict) -> bool:
