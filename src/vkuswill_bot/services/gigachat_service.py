@@ -222,16 +222,41 @@ class GigaChatService:
         Raises:
             Exception: Если все retry исчерпаны или ошибка не связана с rate limit.
         """
+        return await self._call_gigachat_with_fc(history, functions, function_call="auto")
+
+    async def _call_gigachat_with_fc(
+        self,
+        history: list[Messages],
+        functions: list[dict],
+        *,
+        function_call: str = "auto",
+    ) -> ChatCompletion:
+        """Вызвать GigaChat API с указанным режимом function_call.
+
+        Args:
+            function_call: "auto" — модель решает сама, "none" — только текст.
+
+        Returns:
+            Ответ GigaChat (ChatCompletion-подобный объект).
+
+        Raises:
+            Exception: Если все retry исчерпаны или ошибка не связана с rate limit.
+        """
+        chat_kwargs: dict[str, Any] = {
+            "messages": history,
+            "function_call": function_call,
+        }
+        # Если function_call="none", не передаём functions
+        # (иначе некоторые модели всё равно пытаются вызвать)
+        if function_call != "none":
+            chat_kwargs["functions"] = functions
+
         for attempt in range(GIGACHAT_MAX_RETRIES):
             try:
                 async with self._api_semaphore:
                     return await asyncio.to_thread(
                         self._client.chat,
-                        Chat(
-                            messages=history,
-                            functions=functions,
-                            function_call="auto",
-                        ),
+                        Chat(**chat_kwargs),
                     )
             except Exception as e:
                 if attempt < GIGACHAT_MAX_RETRIES - 1 and self._is_rate_limit_error(e):
@@ -291,10 +316,26 @@ class GigaChatService:
         total_steps = 0
         max_total_steps = self._max_tool_calls * 2
         generation_idx = 0
+        consecutive_skips = 0  # подряд пропущенных дубликатов
+        max_consecutive_skips = 3  # порог для принудительного текстового ответа
 
         while real_calls < self._max_tool_calls and total_steps < max_total_steps:
             total_steps += 1
-            logger.info("Шаг %d для user %d (вызовов: %d)", total_steps, user_id, real_calls)
+
+            # ── Если подряд слишком много дубликатов — принудительно просим текстовый ответ ──
+            force_text = consecutive_skips >= max_consecutive_skips
+            if force_text:
+                logger.warning(
+                    "User %d: %d дубликатов подряд, принудительный текстовый ответ",
+                    user_id,
+                    consecutive_skips,
+                )
+
+            fc_mode = "none" if force_text else "auto"
+            logger.info(
+                "Шаг %d для user %d (вызовов: %d, дубликатов подряд: %d, fc=%s)",
+                total_steps, user_id, real_calls, consecutive_skips, fc_mode,
+            )
 
             # ── Langfuse: generation для каждого вызова LLM ──
             generation_idx += 1
@@ -302,12 +343,19 @@ class GigaChatService:
                 name=f"gigachat-{generation_idx}",
                 model=self._model_name,
                 input=_messages_to_langfuse(history),
-                model_parameters={"function_call": "auto"},
-                metadata={"step": total_steps, "real_calls": real_calls},
+                model_parameters={"function_call": fc_mode},
+                metadata={
+                    "step": total_steps,
+                    "real_calls": real_calls,
+                    "consecutive_skips": consecutive_skips,
+                    "force_text": force_text,
+                },
             )
 
             try:
-                response = await self._call_gigachat(history, functions)
+                response = await self._call_gigachat_with_fc(
+                    history, functions, function_call=fc_mode,
+                )
             except Exception as e:
                 logger.error("Ошибка GigaChat: %s", e, exc_info=True)
                 gen.end(
@@ -344,6 +392,7 @@ class GigaChatService:
                     metadata={
                         "total_steps": total_steps,
                         "tool_calls": real_calls,
+                        "consecutive_skips_at_end": consecutive_skips,
                     },
                 )
                 return final_text
@@ -354,7 +403,9 @@ class GigaChatService:
 
             args = await te.preprocess_args(tool_name, args, user_prefs)
             if te.is_duplicate_call(tool_name, args, call_tracker, history):
+                consecutive_skips += 1
                 continue
+            consecutive_skips = 0  # сброс при реальном вызове
             real_calls += 1
 
             # ── Langfuse: span для tool call ──
