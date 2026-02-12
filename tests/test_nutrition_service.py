@@ -14,7 +14,6 @@ from vkuswill_bot.services.nutrition_service import (
     OFF_SEARCH_URL,
     SEARCH_PAGE_SIZE,
     _NUTRIENT_KEYS,
-    _WEIGHT_RE,
 )
 
 
@@ -361,7 +360,8 @@ class TestNormalizeQuery:
     def test_percentage(self) -> None:
         """Удаление процентов жирности."""
         assert NutritionService._normalize_query("Молоко 3,2%") == "Молоко"
-        assert NutritionService._normalize_query("Масло сливочное 82,5%, 200 г") == "Масло сливочное"
+        result = NutritionService._normalize_query("Масло сливочное 82,5%, 200 г")
+        assert result == "Масло сливочное"
 
     def test_clean_query_unchanged(self) -> None:
         """Чистый запрос не меняется."""
