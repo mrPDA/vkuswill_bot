@@ -342,9 +342,7 @@ class GigaChatService:
                         ),
                     )
                 )
-                logger.info(
-                    "User %d: вставлена подсказка о создании корзины", user_id
-                )
+                logger.info("User %d: вставлена подсказка о создании корзины", user_id)
 
             force_text = consecutive_skips >= max_consecutive_skips and cart_hint_injected
             if force_text:
