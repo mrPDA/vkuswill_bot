@@ -77,12 +77,10 @@ class TestSystemPromptContent:
         assert "рецепт" in SYSTEM_PROMPT.lower() or "РЕЦЕПТ" in SYSTEM_PROMPT
 
     def test_forbids_adding_extra_items_for_recipes(self):
-        """Промпт запрещает добавлять от себя соль/перец/воду к рецептам."""
+        """Промпт запрещает добавлять от себя дополнительные ингредиенты к рецептам."""
         lower = SYSTEM_PROMPT.lower()
-        assert "не добавляй от себя" in lower or "не добавляй" in lower
-        assert "соль" in lower
-        assert "перец" in lower
-        assert "вод" in lower
+        assert "запрещено добавлять" in lower or "не добавляй" in lower
+        assert "не нужен" in lower
 
     def test_defines_quantity_calculation(self):
         """Промпт содержит инструкции по расчёту количества."""
