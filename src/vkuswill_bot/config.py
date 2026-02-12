@@ -16,7 +16,7 @@ class Config(BaseSettings):
 
     # GigaChat
     gigachat_credentials: str
-    gigachat_model: str = "GigaChat"
+    gigachat_model: str = "GigaChat-2-Max"
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_max_concurrent: int = 15  # макс. параллельных запросов к GigaChat
 
