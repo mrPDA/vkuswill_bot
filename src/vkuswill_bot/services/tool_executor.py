@@ -156,6 +156,10 @@ class ToolExecutor:
         """
         if tool_name == "vkusvill_cart_link_create":
             args = self._cart_processor.fix_cart_args(args)
+            # Проверяем, что xml_id были получены через поиск (есть в price_cache)
+            unknown = await self._find_unknown_xml_ids(args)
+            if unknown:
+                args["_unknown_xml_ids"] = unknown
             args = await self._cart_processor.fix_unit_quantities(args)
 
         if tool_name == "vkusvill_products_search":
@@ -322,6 +326,11 @@ class ToolExecutor:
             result = self._search_processor.trim_search_result(result)
 
         elif tool_name == "vkusvill_cart_link_create":
+            # Если были неизвестные xml_id — добавляем подсказку в ошибку
+            unknown_ids = args.pop("_unknown_xml_ids", None)
+            if unknown_ids and not self._is_cart_success(result):
+                result = self._add_unknown_ids_hint(result, unknown_ids)
+
             result = await self._cart_processor.calc_total(args, result)
             result = await self._cart_processor.add_duplicate_warning(
                 args,
@@ -333,9 +342,18 @@ class ToolExecutor:
                     result,
                     search_log,
                 )
-            # Сохраняем снимок корзины в Redis (если настроен)
+            # Добавляем информацию о скорректированных количествах
+            result = self._add_quantity_adjustments(args, result)
+            # Сохраняем снимок корзины ТОЛЬКО при успехе (ok: true),
+            # чтобы get_previous_cart не возвращал невалидные xml_id
             if self._cart_snapshot_store and user_id is not None:
-                await self._save_cart_snapshot(user_id, args, result)
+                if self._is_cart_success(result):
+                    await self._save_cart_snapshot(user_id, args, result)
+                else:
+                    logger.warning(
+                        "Корзина не сохранена (ошибка API): %s",
+                        result[:MAX_RESULT_PREVIEW_LENGTH],
+                    )
             logger.info(
                 "Расчёт корзины: %s",
                 result[:MAX_RESULT_PREVIEW_LENGTH],
@@ -369,6 +387,57 @@ class ToolExecutor:
             link=link,
             total=total,
         )
+
+    @staticmethod
+    def _add_unknown_ids_hint(result: str, unknown_ids: list[int]) -> str:
+        """Добавить подсказку о невалидных xml_id в результат ошибки корзины.
+
+        Когда GigaChat выдумывает xml_id (не из результатов поиска),
+        API возвращает ошибку. Добавляем явную инструкцию: искать через поиск.
+        """
+        try:
+            result_data = json.loads(result)
+            result_data["_fix_instruction"] = (
+                f"Ошибка: xml_id {unknown_ids} не существуют. "
+                "Ты НЕ МОЖЕШЬ знать xml_id товаров — их можно получить "
+                "ТОЛЬКО через vkusvill_products_search. "
+                "Найди каждый ингредиент через поиск, затем используй "
+                "xml_id из результатов для создания корзины."
+            )
+            return json.dumps(result_data, ensure_ascii=False)
+        except (json.JSONDecodeError, TypeError):
+            return result
+
+    async def _find_unknown_xml_ids(self, args: dict) -> list[int]:
+        """Найти xml_id в аргументах корзины, которых нет в price_cache.
+
+        Если xml_id нет в кеше — значит товар не был найден через поиск,
+        и GigaChat выдумал его. Такие товары вызовут ошибку API.
+        """
+        products = args.get("products", [])
+        unknown: list[int] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            if xml_id is not None:
+                cached = await self._cart_processor._price_cache.get(xml_id)
+                if cached is None:
+                    unknown.append(xml_id)
+        return unknown
+
+    @staticmethod
+    def _is_cart_success(result: str) -> bool:
+        """Проверить, успешно ли создана корзина (ok: true в результате).
+
+        Не сохраняем снимок при ошибке (невалидные xml_id и пр.),
+        чтобы get_previous_cart не возвращал мусорные данные.
+        """
+        try:
+            data = json.loads(result)
+            return bool(data.get("ok"))
+        except (json.JSONDecodeError, TypeError):
+            return False
 
     @staticmethod
     def _add_quantity_adjustments(args: dict, result: str) -> str:
