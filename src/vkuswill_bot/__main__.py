@@ -304,6 +304,12 @@ async def main() -> None:
     search_processor = SearchProcessor(price_cache)
     cart_processor = CartProcessor(price_cache)
 
+    # КБЖУ-сервис (Open Food Facts, бесплатный, без API key)
+    from vkuswill_bot.services.nutrition_service import NutritionService
+
+    nutrition_service = NutritionService()
+    logger.info("NutritionService включён (Open Food Facts)")
+
     # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
     tool_executor = ToolExecutor(
         mcp_client=mcp_client,
@@ -311,6 +317,7 @@ async def main() -> None:
         cart_processor=cart_processor,
         preferences_store=prefs_store,
         cart_snapshot_store=cart_snapshot_store,
+        nutrition_service=nutrition_service,
     )
 
     # Langfuse — LLM-observability (опционально)
