@@ -46,7 +46,7 @@ MAX_RESULT_LOG_LENGTH = 1000
 DEFAULT_GIGACHAT_MAX_CONCURRENT = 15
 
 # Макс. количество retry при 429 от GigaChat
-GIGACHAT_MAX_RETRIES = 3
+GIGACHAT_MAX_RETRIES = 5
 
 # Лимит количества поисковых запросов в search_log на пользователя
 MAX_SEARCH_LOG_QUERIES = 100
@@ -322,15 +322,34 @@ class GigaChatService:
         generation_idx = 0
         consecutive_skips = 0  # подряд пропущенных дубликатов
         max_consecutive_skips = 3  # порог для принудительного текстового ответа
+        cart_hint_injected = False  # флаг: подсказка о корзине уже вставлена
 
         while real_calls < self._max_tool_calls and total_steps < max_total_steps:
             total_steps += 1
 
-            # ── Если подряд слишком много дубликатов — принудительно просим текстовый ответ ──
-            force_text = consecutive_skips >= max_consecutive_skips
+            # ── Если подряд слишком много дубликатов — направляем к корзине ──
+            if consecutive_skips >= max_consecutive_skips and not cart_hint_injected:
+                # Первое срабатывание: вставляем подсказку, даём ещё шанс
+                cart_hint_injected = True
+                consecutive_skips = 0
+                history.append(
+                    Messages(
+                        role=MessagesRole.SYSTEM,
+                        content=(
+                            "Все товары уже найдены. Не повторяй поиск. "
+                            "Создай корзину через vkusvill_cart_link_create "
+                            "с найденными xml_id и покажи результат пользователю."
+                        ),
+                    )
+                )
+                logger.info(
+                    "User %d: вставлена подсказка о создании корзины", user_id
+                )
+
+            force_text = consecutive_skips >= max_consecutive_skips and cart_hint_injected
             if force_text:
                 logger.warning(
-                    "User %d: %d дубликатов подряд, принудительный текстовый ответ",
+                    "User %d: %d дубликатов подряд (после подсказки), принудительный текстовый ответ",
                     user_id,
                     consecutive_skips,
                 )
