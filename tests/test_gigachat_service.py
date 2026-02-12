@@ -1591,7 +1591,7 @@ class TestCallGigachat:
         assert call_count == 1
 
     async def test_exponential_backoff_delays(self, service):
-        """Retry использует exponential backoff (1s, 2s)."""
+        """Retry использует exponential backoff (1s, 2s, 4s, 8s)."""
         rate_limit_error = RuntimeError("429")
         sleep_calls = []
 
@@ -1619,8 +1619,8 @@ class TestCallGigachat:
                 functions=[],
             )
 
-        # delay = 2 ** attempt: attempt=0 → 1, attempt=1 → 2
-        assert sleep_calls == [1, 2]
+        # delay = 2 ** attempt: attempt=0 → 1, attempt=1 → 2, attempt=2 → 4, attempt=3 → 8
+        assert sleep_calls == [1, 2, 4, 8]
 
     async def test_semaphore_limits_concurrency(self, mock_mcp_client):
         """Семафор ограничивает параллельные вызовы."""
