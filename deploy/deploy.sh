@@ -21,6 +21,7 @@ NC='\033[0m'
 IMAGE=""
 TAG=""
 LOCKBOX_SECRET_ID=""
+GIGACHAT_MODEL_OVERRIDE=""
 CONTAINER_NAME="vkuswill-bot"
 HEALTH_PORT=8080
 HEALTH_RETRIES=10
@@ -31,6 +32,7 @@ while [[ $# -gt 0 ]]; do
     --image)   IMAGE="$2"; shift 2 ;;
     --tag)     TAG="$2"; shift 2 ;;
     --lockbox) LOCKBOX_SECRET_ID="$2"; shift 2 ;;
+    --model)   GIGACHAT_MODEL_OVERRIDE="$2"; shift 2 ;;
     *) echo -e "${RED}Неизвестный параметр: $1${NC}"; exit 1 ;;
   esac
 done
@@ -255,11 +257,19 @@ else
   warn "SSL-сертификат не найден в ${SSL_DIR}/cert.pem — webhook без сертификата"
 fi
 
+# Переопределение модели: --model имеет приоритет над Lockbox/.env
+MODEL_ENV=""
+if [[ -n "$GIGACHAT_MODEL_OVERRIDE" ]]; then
+  MODEL_ENV="-e GIGACHAT_MODEL=${GIGACHAT_MODEL_OVERRIDE}"
+  log "Модель GigaChat: ${GIGACHAT_MODEL_OVERRIDE} (override)"
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --network host \
   $ENV_FLAG \
+  $MODEL_ENV \
   -v "${DATA_DIR}:/app/data" \
   $SSL_MOUNT \
   $SSL_ENV \
