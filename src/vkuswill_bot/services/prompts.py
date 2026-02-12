@@ -91,6 +91,40 @@ CART_PREVIOUS_TOOL: dict = {
     "parameters": {"type": "object", "properties": {}},
 }
 
+NUTRITION_TOOL: dict = {
+    "name": "nutrition_lookup",
+    "description": (
+        "Получить КБЖУ (калории, белки, жиры, углеводы) продукта или блюда. "
+        "Данные из базы USDA на 100 г. "
+        "ВАЖНО: передавай query строго НА АНГЛИЙСКОМ (chicken breast, borscht, pilaf). "
+        "Используй этот инструмент только когда пользователь ЯВНО спрашивает "
+        "про калорийность, КБЖУ, БЖУ, диету, или просит подобрать еду "
+        "с ограничением по калориям."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": (
+                    "Название продукта или блюда НА АНГЛИЙСКОМ языке. "
+                    "Примеры: chicken breast, white rice, beef borscht, "
+                    "cottage cheese, apple, salmon fillet"
+                ),
+            },
+            "portion_g": {
+                "type": "integer",
+                "description": (
+                    "Размер порции в граммах для расчёта КБЖУ. "
+                    "По умолчанию 100 г. Если пользователь указал "
+                    "конкретный вес — передай его."
+                ),
+            },
+        },
+        "required": ["query"],
+    },
+}
+
 LOCAL_TOOLS: list[dict] = [
     {
         "name": "user_preferences_get",
