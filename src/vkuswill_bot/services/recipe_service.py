@@ -11,6 +11,7 @@
 import asyncio
 import json
 import logging
+import math
 
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
@@ -304,6 +305,16 @@ class RecipeService:
             if unit in ("кг", "л"):
                 continue
 
+            # Яйца: во ВкусВилл 1 шт = 1 упаковка (10 яиц)
+            if "яйц" in name or "яйко" in name:
+                packs = math.ceil(quantity / 10)
+                item["pack_equivalent"] = packs
+                item["pack_note"] = (
+                    f"Во ВкусВилл яйца продаются упаковками по 10 шт. "
+                    f"Для {quantity} яиц нужна {packs} упаковка → q={packs}"
+                )
+                continue
+
             # Штучные: ищем совпадение в таблице весов
             weight_per_piece = None
             for key, w in piece_weights.items():
@@ -338,16 +349,18 @@ class RecipeService:
                     "Затем из результатов поиска возьми xml_id лучшего товара "
                     "и создай корзину через vkusvill_cart_link_create. "
                     "НЕ пропускай ни одного ингредиента! "
-                    "НЕ ищи и НЕ добавляй от себя соль, молотый перец, "
-                    "воду и другие продукты, которых нет в списке! "
+                    "НЕ ищи и НЕ добавляй от себя продукты, "
+                    "которых НЕТ в этом списке ингредиентов! "
                     "РАСЧЁТ КОЛИЧЕСТВА (q): "
-                    "если у ингредиента есть kg_equivalent — "
+                    "если у ингредиента есть pack_equivalent — "
+                    "используй его как q (яйца продаются упаковками). "
+                    "Если есть kg_equivalent — "
                     "используй его как q для товаров в кг. "
                     "Если есть l_equivalent — используй его как q "
                     "для товаров в литрах. "
-                    "Примеры: kg_equivalent=0.2 → q=0.2 (для товара в кг); "
-                    "l_equivalent=0.5 → q=0.5 (для товара в л); "
-                    "Для штучных товаров (unit='шт') — q = целое число."
+                    "Примеры: pack_equivalent=1 → q=1; "
+                    "kg_equivalent=0.2 → q=0.2; "
+                    "l_equivalent=0.5 → q=0.5."
                 ),
             },
             ensure_ascii=False,

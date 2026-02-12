@@ -26,6 +26,9 @@ class CartProcessor:
     # Единицы измерения, для которых q должно быть целым числом
     _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
 
+    # Ключевые слова для определения яиц (продаются упаковками по 10)
+    _EGG_KEYWORDS = ("яйц", "яйко")
+
     def __init__(self, price_cache: PriceCache) -> None:
         self._price_cache = price_cache
 
@@ -131,6 +134,26 @@ class CartProcessor:
             cached = await self._price_cache.get(xml_id)
 
             if cached and cached.unit in self._DISCRETE_UNITS:
+                # Яйца: 1 шт = 1 упаковка (10 яиц).
+                # Если q > 1 и это яйца — скорее всего GigaChat
+                # перепутал количество яиц (шт) с количеством упаковок
+                name_lower = cached.name.lower()
+                is_egg = any(kw in name_lower for kw in self._EGG_KEYWORDS)
+                if is_egg and q > 1:
+                    old_q = q
+                    q = 1
+                    logger.info(
+                        "Яйца: q=%s → %s (1 упаковка = 10 яиц, хватит для рецепта)",
+                        old_q,
+                        q,
+                    )
+                    adjustments.append(
+                        f"{cached.name}: {old_q} → {q} {cached.unit} "
+                        f"(1 упаковка = 10 яиц, для рецепта достаточно)"
+                    )
+                    item["q"] = q
+                    continue
+
                 # Округление дробного q для штучных товаров
                 rounded = math.ceil(q)
                 if rounded != q:
