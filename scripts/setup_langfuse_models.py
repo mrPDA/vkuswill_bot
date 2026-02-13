@@ -181,6 +181,28 @@ def main() -> None:
                     elif key == "LANGFUSE_HOST" and args.host == "http://localhost:3000":
                         args.host = value
 
+    # ── Dry-run: не требует ключей ──
+    if args.dry_run:
+        print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
+        print()
+        print("Тарифы GigaChat API (₽ за 1М токенов):")
+        print("-" * 50)
+        for m in GIGACHAT_MODELS:
+            price = m.get("totalPrice") or m.get("inputPrice") or 0
+            price_per_m = price * 1_000_000
+            print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
+        print()
+        print("[DRY RUN] Детали model definitions:")
+        print()
+        for m in GIGACHAT_MODELS:
+            price = m.get("totalPrice") or m.get("inputPrice") or 0
+            print(f"  Модель: {m['modelName']}")
+            print(f"  Match:  {m['matchPattern']}")
+            print(f"  Total:  {price:.10f} ₽/token")
+            print(f"  Описание: {m.get('description', '-')}")
+            print()
+        return
+
     if not args.public_key or not args.secret_key:
         print(
             "ОШИБКА: Укажите LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY "
@@ -195,27 +217,6 @@ def main() -> None:
     print(f"Langfuse: {host}")
     print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
     print()
-
-    # ── Показать тарифы ──
-    print("Тарифы GigaChat API (₽ за 1М токенов):")
-    print("-" * 50)
-    for m in GIGACHAT_MODELS:
-        price = m.get("totalPrice") or m.get("inputPrice") or 0
-        price_per_m = price * 1_000_000
-        print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
-    print()
-
-    if args.dry_run:
-        print("[DRY RUN] Модели НЕ будут созданы.")
-        print()
-        for m in GIGACHAT_MODELS:
-            price = m.get("totalPrice") or m.get("inputPrice") or 0
-            print(f"  Модель: {m['modelName']}")
-            print(f"  Match:  {m['matchPattern']}")
-            print(f"  Total:  {price:.10f} ₽/token")
-            print(f"  Описание: {m.get('description', '-')}")
-            print()
-        return
 
     # ── Проверить существующие модели ──
     print("Проверяю существующие модели в Langfuse...")
