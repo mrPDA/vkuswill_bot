@@ -1835,7 +1835,10 @@ class TestExtractUsage:
 
         assert result is not None
         assert result["input"] == 100
-        # Проверяем что в лог попало precached_prompt_tokens
+        assert result["precached_tokens"] == 80
+        assert result["billable_tokens"] == 40  # 120 - 80
+        # Проверяем что в лог попало precached и billable
         log_output = " ".join(caplog.messages)
-        assert "precached_prompt_tokens" in log_output
+        assert "precached" in log_output
         assert "80" in log_output
+        assert "billable" in log_output
