@@ -243,9 +243,10 @@ DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
 # botuser в контейнере имеет UID/GID 10001 (Dockerfile)
 # Даём права только владельцу и группе — НЕ world-writable
-chown -R 10001:10001 "$DATA_DIR"
-chmod 750 "$DATA_DIR"
-chmod -R 640 "$DATA_DIR/"* 2>/dev/null || true
+# sudo нужен: deploy-пользователь не владеет файлами, созданными контейнером
+sudo chown -R 10001:10001 "$DATA_DIR" 2>/dev/null || warn "chown DATA_DIR не удался (нет sudo?), пропускаем"
+sudo chmod 750 "$DATA_DIR" 2>/dev/null || true
+sudo chmod -R 640 "$DATA_DIR/"* 2>/dev/null || true
 log "DATA_DIR=${DATA_DIR} — права: $(ls -ld "$DATA_DIR")"
 log "Файлы в DATA_DIR: $(ls -la "$DATA_DIR/" 2>/dev/null || echo '(пусто)')"
 
