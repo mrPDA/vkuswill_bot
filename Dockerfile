@@ -17,9 +17,10 @@ COPY pyproject.toml uv.lock ./
 # Установить зависимости (без dev/test/loadtest)
 RUN uv sync --frozen --no-dev --no-editable
 
-# Копировать исходный код и миграции
+# Копировать исходный код, миграции и скрипты
 COPY src/ src/
 COPY migrations/ migrations/
+COPY scripts/ scripts/
 
 # --- Stage 2: Runtime ---
 FROM python:3.12-slim AS runtime
@@ -33,10 +34,11 @@ RUN groupadd -r -g 10001 botuser && useradd -r -u 10001 -g botuser -d /app -s /s
 
 WORKDIR /app
 
-# Копировать venv, код и миграции из builder
+# Копировать venv, код, миграции и скрипты из builder
 COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/migrations /app/migrations
+COPY --from=builder /app/scripts /app/scripts
 
 # Создать директорию для данных (SQLite — legacy)
 RUN mkdir -p /app/data && chown -R botuser:botuser /app
