@@ -93,9 +93,7 @@ class UserMiddleware(BaseMiddleware):
 
         # --- Событие: начало сессии (>30 мин с последнего сообщения) ---
         last_msg_at = db_user.get("last_message_at")
-        if last_msg_at is None or (
-            datetime.now(UTC) - last_msg_at
-        ).total_seconds() > 1800:
+        if last_msg_at is None or (datetime.now(UTC) - last_msg_at).total_seconds() > 1800:
             try:
                 _created_at = db_user.get("created_at")
                 _day_number = 0

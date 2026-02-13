@@ -312,7 +312,9 @@ class UserStore:
     # ------------------------------------------------------------------
 
     async def check_cart_limit(
-        self, user_id: int, default_limit: int = 5,
+        self,
+        user_id: int,
+        default_limit: int = 5,
     ) -> dict[str, Any]:
         """Проверить, может ли пользователь создать корзину.
 

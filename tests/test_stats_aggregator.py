@@ -68,9 +68,7 @@ class TestEnsureSchema:
         pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
-        with patch(
-            "vkuswill_bot.services.migration_runner.MigrationRunner"
-        ) as MockRunner:
+        with patch("vkuswill_bot.services.migration_runner.MigrationRunner") as MockRunner:
             mock_runner = AsyncMock()
             MockRunner.return_value = mock_runner
 

@@ -221,8 +221,7 @@ async def cmd_survey(
         ]
     )
     await message.answer(
-        "<b>Короткий опрос (3 вопроса)</b>\n\n"
-        "Оцените бота от 1 до 5:",
+        "<b>Короткий опрос (3 вопроса)</b>\n\nОцените бота от 1 до 5:",
         reply_markup=keyboard,
     )
 
@@ -263,8 +262,7 @@ async def survey_nps_callback(callback: CallbackQuery) -> None:
         ]
     )
     await callback.message.edit_text(
-        f"Оценка: {'⭐' * nps}\n\n"
-        "Какая функция для вас самая полезная?",
+        f"Оценка: {'⭐' * nps}\n\nКакая функция для вас самая полезная?",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -807,9 +805,7 @@ async def cmd_admin_grant_carts(
 
     parts = message.text.split()
     if len(parts) < 3:
-        await message.answer(
-            "Использование: /admin_grant_carts &lt;user_id&gt; &lt;amount&gt;"
-        )
+        await message.answer("Использование: /admin_grant_carts &lt;user_id&gt; &lt;amount&gt;")
         return
 
     try:
@@ -836,8 +832,7 @@ async def cmd_admin_grant_carts(
             },
         )
         await message.answer(
-            f"Пользователю {target_id} добавлено {amount} корзин. "
-            f"Новый лимит: {new_limit}."
+            f"Пользователю {target_id} добавлено {amount} корзин. Новый лимит: {new_limit}."
         )
     else:
         await message.answer(f"Пользователь {target_id} не найден.")
@@ -872,9 +867,7 @@ async def cmd_admin_survey_stats(
         return
 
     avg_nps = stats["avg_nps"]
-    answers = "\n".join(
-        f"  {r['answer'] or '—'}: {r['cnt']}" for r in stats["will_continue"]
-    )
+    answers = "\n".join(f"  {r['answer'] or '—'}: {r['cnt']}" for r in stats["will_continue"])
     feats = "\n".join(
         f"  {_FEATURE_LABELS.get(r['feat'], r['feat'] or '—')}: {r['cnt']}"
         for r in stats["features"]

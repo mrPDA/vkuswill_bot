@@ -1417,7 +1417,11 @@ class TestFreemiumCartLimit:
 
     @pytest.fixture
     def executor_with_user_store(
-        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+        self,
+        mock_mcp_client,
+        search_processor,
+        cart_processor,
+        mock_user_store,
     ) -> ToolExecutor:
         """ToolExecutor с UserStore для freemium-тестов."""
         return ToolExecutor(
@@ -1428,7 +1432,9 @@ class TestFreemiumCartLimit:
         )
 
     async def test_cart_limit_blocks_when_exhausted(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """execute возвращает ошибку если лимит корзин исчерпан."""
         mock_user_store.check_cart_limit.return_value = {
@@ -1449,7 +1455,10 @@ class TestFreemiumCartLimit:
         assert data["cart_limit"] == 5
 
     async def test_cart_limit_allows_when_within_limit(
-        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_mcp_client,
+        mock_user_store,
     ):
         """execute пропускает запрос если лимит не исчерпан."""
         mock_user_store.check_cart_limit.return_value = {
@@ -1471,7 +1480,10 @@ class TestFreemiumCartLimit:
         assert "cart_limit_reached" not in result
 
     async def test_cart_limit_check_error_does_not_block(
-        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_mcp_client,
+        mock_user_store,
     ):
         """Ошибка проверки лимита не блокирует создание корзины."""
         mock_user_store.check_cart_limit.side_effect = Exception("DB error")
@@ -1489,7 +1501,10 @@ class TestFreemiumCartLimit:
         assert "cart_limit_reached" not in result
 
     async def test_cart_limit_not_checked_for_search(
-        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_mcp_client,
+        mock_user_store,
     ):
         """Лимит корзин не проверяется для поиска."""
         mock_mcp_client.call_tool.return_value = json.dumps(
@@ -1505,7 +1520,9 @@ class TestFreemiumCartLimit:
         mock_user_store.check_cart_limit.assert_not_called()
 
     async def test_cart_limit_logs_event_on_block(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """Логирует событие cart_limit_reached при блокировке."""
         mock_user_store.check_cart_limit.return_value = {
@@ -1541,7 +1558,11 @@ class TestFreemiumCartCreated:
 
     @pytest.fixture
     def executor_with_user_store(
-        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+        self,
+        mock_mcp_client,
+        search_processor,
+        cart_processor,
+        mock_user_store,
     ) -> ToolExecutor:
         return ToolExecutor(
             mcp_client=mock_mcp_client,
@@ -1551,7 +1572,9 @@ class TestFreemiumCartCreated:
         )
 
     async def test_adds_hint_with_remaining_carts(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """Добавляет хинт с оставшимися корзинами."""
         result_text = json.dumps(
@@ -1572,7 +1595,9 @@ class TestFreemiumCartCreated:
         assert "[Осталось 2 бесплатных корзин]" in result
 
     async def test_adds_limit_exhausted_hint(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """Добавляет предложение /survey когда лимит исчерпан."""
         result_text = json.dumps({"data": {"products": []}})
@@ -1582,14 +1607,18 @@ class TestFreemiumCartCreated:
         }
 
         result = await executor_with_user_store._handle_cart_created_freemium(
-            user_id=42, args={}, result=result_text,
+            user_id=42,
+            args={},
+            result=result_text,
         )
 
         assert "[Корзина 5 из 5]" in result
         assert "/survey" in result
 
     async def test_logs_cart_created_event(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """Логирует событие cart_created."""
         result_text = json.dumps(
@@ -1616,20 +1645,27 @@ class TestFreemiumCartCreated:
         assert metadata["total_sum"] == 1500
 
     async def test_returns_original_on_error(
-        self, executor_with_user_store, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_user_store,
     ):
         """При ошибке возвращает оригинальный результат."""
         mock_user_store.increment_carts.side_effect = Exception("DB error")
         original = '{"data": {"products": []}}'
 
         result = await executor_with_user_store._handle_cart_created_freemium(
-            user_id=42, args={}, result=original,
+            user_id=42,
+            args={},
+            result=original,
         )
 
         assert result == original
 
     async def test_no_hint_without_user_store(
-        self, mock_mcp_client, search_processor, cart_processor,
+        self,
+        mock_mcp_client,
+        search_processor,
+        cart_processor,
     ):
         """Без user_store — возвращает оригинальный результат."""
         executor = ToolExecutor(
@@ -1641,7 +1677,9 @@ class TestFreemiumCartCreated:
         original = '{"data": {"products": []}}'
 
         result = await executor._handle_cart_created_freemium(
-            user_id=42, args={}, result=original,
+            user_id=42,
+            args={},
+            result=original,
         )
 
         assert result == original
@@ -1658,7 +1696,11 @@ class TestProductSearchEventLogging:
 
     @pytest.fixture
     def executor_with_user_store(
-        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+        self,
+        mock_mcp_client,
+        search_processor,
+        cart_processor,
+        mock_user_store,
     ) -> ToolExecutor:
         return ToolExecutor(
             mcp_client=mock_mcp_client,
@@ -1668,7 +1710,10 @@ class TestProductSearchEventLogging:
         )
 
     async def test_logs_product_search_event(
-        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+        self,
+        executor_with_user_store,
+        mock_mcp_client,
+        mock_user_store,
     ):
         """Логирует событие product_search при поиске товаров."""
         mock_mcp_client.call_tool.return_value = json.dumps(
@@ -1691,7 +1736,10 @@ class TestProductSearchEventLogging:
         assert call_args[2]["query"] == "молоко"
 
     async def test_no_log_without_user_store(
-        self, mock_mcp_client, search_processor, cart_processor,
+        self,
+        mock_mcp_client,
+        search_processor,
+        cart_processor,
     ):
         """Без user_store — событие не логируется (не падает)."""
         executor = ToolExecutor(

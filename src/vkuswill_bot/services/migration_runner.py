@@ -98,8 +98,7 @@ class MigrationRunner:
                 async with conn.transaction():
                     await conn.execute(sql)
                     await conn.execute(
-                        "INSERT INTO schema_migrations (version, filename) "
-                        "VALUES ($1, $2)",
+                        "INSERT INTO schema_migrations (version, filename) VALUES ($1, $2)",
                         version,
                         path.name,
                     )
