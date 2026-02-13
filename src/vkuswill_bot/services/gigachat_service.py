@@ -56,10 +56,10 @@ MAX_SEARCH_LOG_QUERIES = 100
 # Источник: https://developers.sber.ru/docs/ru/gigachat/tariffs/legal-tariffs
 # Обновлено: февраль 2026
 GIGACHAT_TOKEN_PRICES: dict[str, float] = {
-    "GigaChat-2-Max": 650 / 1_000_000,   # 650 ₽ / 1M токенов
-    "GigaChat-2-Pro": 500 / 1_000_000,   # 500 ₽ / 1M токенов
-    "GigaChat-2-Lite": 65 / 1_000_000,   # 65 ₽ / 1M токенов
-    "GigaChat": 65 / 1_000_000,          # GigaChat (без версии) = Lite
+    "GigaChat-2-Max": 650 / 1_000_000,  # 650 ₽ / 1M токенов
+    "GigaChat-2-Pro": 500 / 1_000_000,  # 500 ₽ / 1M токенов
+    "GigaChat-2-Lite": 65 / 1_000_000,  # 65 ₽ / 1M токенов
+    "GigaChat": 65 / 1_000_000,  # GigaChat (без версии) = Lite
 }
 
 
