@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 from typing import TYPE_CHECKING
@@ -10,12 +11,17 @@ from typing import TYPE_CHECKING
 from aiogram import F, Router
 from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
-from aiogram.types import Message
+from aiogram.types import (
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+)
 
 from vkuswill_bot.services.gigachat_service import GigaChatService
-import contextlib
 
 if TYPE_CHECKING:
+    from vkuswill_bot.services.stats_aggregator import StatsAggregator
     from vkuswill_bot.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
@@ -100,8 +106,38 @@ admin_router = Router()
 
 
 @router.message(CommandStart())
-async def cmd_start(message: Message) -> None:
+async def cmd_start(
+    message: Message,
+    user_store: UserStore | None = None,
+    db_user: dict | None = None,
+) -> None:
     """Обработчик команды /start."""
+    # Парсинг deep link для определения источника
+    start_param: str | None = None
+    if message.text and message.text.startswith("/start "):
+        start_param = message.text.split(maxsplit=1)[1].strip()
+    source = "organic"
+    referrer_id: int | None = None
+    if start_param:
+        if start_param.startswith("ref_"):
+            try:
+                referrer_id = int(start_param[4:])
+                source = "referral"
+            except ValueError:
+                pass
+        elif start_param in ("habr", "vc", "telegram"):
+            source = start_param
+    is_new_user = (db_user or {}).get("message_count", 0) <= 1
+    metadata: dict = {"source": source, "is_new_user": is_new_user}
+    if referrer_id is not None:
+        metadata["referrer_id"] = referrer_id
+    if user_store is not None and message.from_user is not None:
+        with contextlib.suppress(Exception):
+            await user_store.log_event(
+                message.from_user.id,
+                "bot_start",
+                metadata,
+            )
     await message.answer(
         "<b>Привет! Я бот-помощник ВкусВилл.</b>\n\n"
         "Помогу подобрать продукты и собрать корзину. "
@@ -142,10 +178,217 @@ async def cmd_reset(
     await message.answer("Диалог сброшен. Напиши, что хочешь купить!")
 
 
+# ---------------------------------------------------------------------------
+# Survey Flow — опрос для получения бонусных корзин (freemium)
+# ---------------------------------------------------------------------------
+
+# Маппинг фич для отображения
+_FEATURE_LABELS = {
+    "search": "Поиск товаров",
+    "recipe": "Рецепты",
+    "kbju": "КБЖУ / калории",
+    "budget": "Подбор по бюджету",
+}
+
+
+@router.message(Command("survey"))
+async def cmd_survey(
+    message: Message,
+    user_store: UserStore | None = None,
+    db_user: dict | None = None,
+) -> None:
+    """Запуск опроса для получения бонусных корзин."""
+    if not message.from_user or not db_user:
+        return
+    if user_store is None:
+        await message.answer("Опрос временно недоступен.")
+        return
+
+    if db_user.get("survey_completed"):
+        await message.answer("Вы уже прошли опрос. Спасибо за обратную связь!")
+        return
+
+    # Шаг 1: NPS (1–5 звёзд)
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{'⭐' * i}",
+                    callback_data=f"survey_nps_{i}",
+                )
+            ]
+            for i in range(1, 6)
+        ]
+    )
+    await message.answer(
+        "<b>Короткий опрос (3 вопроса)</b>\n\nОцените бота от 1 до 5:",
+        reply_markup=keyboard,
+    )
+
+
+@router.callback_query(F.data.startswith("survey_nps_"))
+async def survey_nps_callback(callback: CallbackQuery) -> None:
+    """Шаг 1: NPS-оценка → переход к выбору полезной фичи."""
+    if not callback.data or not callback.message:
+        return
+    nps = max(1, min(5, int(callback.data.split("_")[-1])))
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="🔍 Поиск товаров",
+                    callback_data=f"survey_feat_search_{nps}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🍳 Рецепты",
+                    callback_data=f"survey_feat_recipe_{nps}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="📊 КБЖУ / калории",
+                    callback_data=f"survey_feat_kbju_{nps}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="💰 Подбор по бюджету",
+                    callback_data=f"survey_feat_budget_{nps}",
+                )
+            ],
+        ]
+    )
+    await callback.message.edit_text(
+        f"Оценка: {'⭐' * nps}\n\nКакая функция для вас самая полезная?",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("survey_feat_"))
+async def survey_feature_callback(callback: CallbackQuery) -> None:
+    """Шаг 2: Самая полезная функция → переход к вопросу о продолжении."""
+    if not callback.data or not callback.message:
+        return
+    parts = callback.data.split("_")
+    # survey_feat_<feature>_<nps>
+    feature = parts[2]
+    nps = int(parts[3])
+    feature_label = _FEATURE_LABELS.get(feature, feature)
+
+    keyboard = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="✅ Да, буду!",
+                    callback_data=f"survey_cont_yes_{nps}_{feature}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="🤔 Пока не уверен",
+                    callback_data=f"survey_cont_maybe_{nps}_{feature}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="❌ Нет",
+                    callback_data=f"survey_cont_no_{nps}_{feature}",
+                )
+            ],
+        ]
+    )
+    await callback.message.edit_text(
+        f"Оценка: {'⭐' * nps} | Полезнее всего: {feature_label}\n\n"
+        "Будете пользоваться ботом дальше?",
+        reply_markup=keyboard,
+    )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("survey_cont_"))
+async def survey_continue_callback(
+    callback: CallbackQuery,
+    user_store: UserStore | None = None,
+) -> None:
+    """Шаг 3: Готовность продолжать → завершение survey, выдача бонуса."""
+    if not callback.data or not callback.message or not callback.from_user:
+        return
+    if user_store is None:
+        await callback.answer("Ошибка сохранения.")
+        return
+
+    # survey_cont_<answer>_<nps>_<feature>
+    parts = callback.data.split("_")
+    will_continue = parts[2]  # yes / maybe / no
+    nps = int(parts[3])
+    feature = parts[4]
+    user_id = callback.from_user.id
+    feature_label = _FEATURE_LABELS.get(feature, feature)
+
+    will_labels = {"yes": "Да", "maybe": "Не уверен", "no": "Нет"}
+
+    # Атомарная проверка: survey ещё не пройден?
+    # Предотвращает race condition при двойном нажатии кнопки.
+    try:
+        was_marked = await user_store.mark_survey_completed_if_not(user_id)
+        if not was_marked:
+            await callback.message.edit_text("Вы уже прошли опрос. Спасибо!")
+            await callback.answer()
+            return
+
+        # Логируем результаты survey
+        await user_store.log_event(
+            user_id,
+            "survey_completed",
+            {
+                "nps": nps,
+                "useful_feature": feature,
+                "will_continue": will_continue,
+            },
+        )
+
+        # Выдаём бонусные корзины
+        from vkuswill_bot.config import config as app_config
+
+        bonus = app_config.bonus_cart_limit
+        new_limit = await user_store.grant_bonus_carts(user_id, bonus)
+        await user_store.log_event(
+            user_id,
+            "bonus_carts_granted",
+            {
+                "reason": "survey",
+                "amount": bonus,
+                "new_limit": new_limit,
+            },
+        )
+    except Exception as e:
+        logger.error("Ошибка сохранения survey для %d: %s", user_id, e)
+        await callback.message.edit_text(
+            "Произошла ошибка при сохранении. Попробуйте позже: /survey"
+        )
+        await callback.answer()
+        return
+
+    await callback.message.edit_text(
+        f"Оценка: {'⭐' * nps} | {feature_label} | "
+        f"{will_labels.get(will_continue, will_continue)}\n\n"
+        "<b>Спасибо за обратную связь!</b>\n\n"
+        f"🎁 Вам добавлено {bonus} корзин. "
+        f"Теперь доступно {new_limit} корзин.\n"
+        "Напишите, что хотите заказать!"
+    )
+    await callback.answer()
+
+
 @router.message(F.text)
 async def handle_text(
     message: Message,
     gigachat_service: GigaChatService,
+    user_store: UserStore | None = None,
 ) -> None:
     """Обработчик текстовых сообщений — основная логика бота."""
     if not message.from_user or not message.text:
@@ -166,6 +409,15 @@ async def handle_text(
             e,
             exc_info=True,
         )
+        if user_store is not None:
+            with contextlib.suppress(Exception):
+                await user_store.log_event(
+                    user_id,
+                    "bot_error",
+                    {
+                        "error_type": type(e).__name__,
+                    },
+                )
         response = (
             "Произошла ошибка при обработке запроса. "
             "Попробуйте позже или начните новый диалог: /reset"
@@ -402,4 +654,230 @@ async def cmd_admin_user(
         text += f"Причина блокировки: {blocked_reason}\n"
     text += f"\nСообщений: {msg_count}\nЗарегистрирован: {created}\nПоследнее сообщение: {last_msg}"
 
+    await message.answer(text)
+
+
+@admin_router.message(Command("admin_analytics"))
+async def cmd_admin_analytics(
+    message: Message,
+    db_user: dict | None = None,
+    stats_aggregator: StatsAggregator | None = None,
+) -> None:
+    """Аналитика за N дней: /admin_analytics [days].
+
+    Выводит агрегированные метрики из daily_stats:
+    DAU, новые пользователи, сессии, корзины, GMV, ошибки.
+    """
+    if not message.from_user:
+        return
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+    if stats_aggregator is None:
+        await message.answer("StatsAggregator не настроен.")
+        return
+
+    # Парсим количество дней (по умолчанию 7)
+    days = 7
+    if message.text:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1:
+            with contextlib.suppress(ValueError):
+                days = max(1, min(int(parts[1]), 365))
+
+    try:
+        s = await stats_aggregator.get_summary(days)
+    except Exception as e:
+        logger.error("Ошибка получения аналитики: %s", e)
+        await message.answer("Ошибка получения данных.")
+        return
+
+    avg_dau = float(s.get("avg_dau", 0))
+    total_new = int(s.get("total_new_users", 0))
+    total_sessions = int(s.get("total_sessions", 0))
+    total_carts = int(s.get("total_carts", 0))
+    total_gmv = float(s.get("total_gmv", 0))
+    avg_cart = float(s.get("avg_cart_value", 0))
+    total_searches = int(s.get("total_searches", 0))
+    total_errors = int(s.get("total_errors", 0))
+    total_limits = int(s.get("total_limits", 0))
+    total_surveys = int(s.get("total_surveys", 0))
+    period_start = s.get("period_start", "—")
+    period_end = s.get("period_end", "—")
+
+    # Конверсия: корзины / сессии
+    conv = (total_carts / total_sessions * 100) if total_sessions > 0 else 0
+
+    text = (
+        f"<b>Аналитика за {days} дн.</b>\n"
+        f"<i>{period_start} — {period_end}</i>\n\n"
+        f"DAU (средн.): <b>{avg_dau:.0f}</b>\n"
+        f"Новых пользователей: <b>{total_new}</b>\n"
+        f"Сессий: <b>{total_sessions}</b>\n\n"
+        f"Корзин создано: <b>{total_carts}</b>\n"
+        f"GMV: <b>{total_gmv:,.0f} ₽</b>\n"
+        f"Средний чек: <b>{avg_cart:,.0f} ₽</b>\n"
+        f"Конверсия (корзины/сессии): <b>{conv:.1f}%</b>\n\n"
+        f"Поисков: <b>{total_searches}</b>\n"
+        f"Ошибок: <b>{total_errors}</b>\n"
+        f"Лимитов корзин: <b>{total_limits}</b>\n"
+        f"Опросов: <b>{total_surveys}</b>"
+    )
+    await message.answer(text)
+
+
+@admin_router.message(Command("admin_funnel"))
+async def cmd_admin_funnel(
+    message: Message,
+    db_user: dict | None = None,
+    stats_aggregator: StatsAggregator | None = None,
+) -> None:
+    """Воронка за N дней: /admin_funnel [days].
+
+    Показывает пользовательскую воронку:
+    Старт → Активные → Искали → Создали корзину → Лимит → Опрос.
+    """
+    if not message.from_user:
+        return
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+    if stats_aggregator is None:
+        await message.answer("StatsAggregator не настроен.")
+        return
+
+    days = 7
+    if message.text:
+        parts = message.text.split(maxsplit=1)
+        if len(parts) > 1:
+            with contextlib.suppress(ValueError):
+                days = max(1, min(int(parts[1]), 365))
+
+    try:
+        f = await stats_aggregator.get_funnel(days)
+    except Exception as e:
+        logger.error("Ошибка получения воронки: %s", e)
+        await message.answer("Ошибка получения данных.")
+        return
+
+    started = int(f.get("started", 0))
+    active = int(f.get("active", 0))
+    searched = int(f.get("searched", 0))
+    carted = int(f.get("carted", 0))
+    hit_limit = int(f.get("hit_limit", 0))
+    surveyed = int(f.get("surveyed", 0))
+
+    def _pct(part: int, total: int) -> str:
+        if total == 0:
+            return "—"
+        return f"{part / total * 100:.0f}%"
+
+    text = (
+        f"<b>Воронка за {days} дн.</b>\n\n"
+        f"1. /start: <b>{started}</b>\n"
+        f"2. Активные (сессии): <b>{active}</b> ({_pct(active, started)})\n"
+        f"3. Искали товары: <b>{searched}</b> ({_pct(searched, active)})\n"
+        f"4. Создали корзину: <b>{carted}</b> ({_pct(carted, searched)})\n"
+        f"5. Достигли лимита: <b>{hit_limit}</b> ({_pct(hit_limit, carted)})\n"
+        f"6. Прошли опрос: <b>{surveyed}</b> ({_pct(surveyed, hit_limit)})\n\n"
+        f"<i>Конверсия start→cart: {_pct(carted, started)}</i>"
+    )
+    await message.answer(text)
+
+
+@admin_router.message(Command("admin_grant_carts"))
+async def cmd_admin_grant_carts(
+    message: Message,
+    user_store: UserStore | None = None,
+    db_user: dict | None = None,
+) -> None:
+    """Выдать корзины пользователю: /admin_grant_carts <user_id> <amount>."""
+    if not message.from_user:
+        return
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+    if user_store is None:
+        await message.answer("База данных недоступна.")
+        return
+    if not message.text:
+        return
+
+    parts = message.text.split()
+    if len(parts) < 3:
+        await message.answer("Использование: /admin_grant_carts &lt;user_id&gt; &lt;amount&gt;")
+        return
+
+    try:
+        target_id = int(parts[1])
+        amount = int(parts[2])
+    except ValueError:
+        await message.answer("user_id и amount должны быть числами.")
+        return
+
+    if amount < 1 or amount > 100:
+        await message.answer("amount должен быть от 1 до 100.")
+        return
+
+    new_limit = await user_store.grant_bonus_carts(target_id, amount)
+    if new_limit > 0:
+        await user_store.log_event(
+            target_id,
+            "bonus_carts_granted",
+            {
+                "reason": "admin",
+                "amount": amount,
+                "new_limit": new_limit,
+                "granted_by": message.from_user.id,
+            },
+        )
+        await message.answer(
+            f"Пользователю {target_id} добавлено {amount} корзин. Новый лимит: {new_limit}."
+        )
+    else:
+        await message.answer(f"Пользователь {target_id} не найден.")
+
+
+@admin_router.message(Command("admin_survey_stats"))
+async def cmd_admin_survey_stats(
+    message: Message,
+    user_store: UserStore | None = None,
+    db_user: dict | None = None,
+) -> None:
+    """Статистика по survey: /admin_survey_stats."""
+    if not message.from_user:
+        return
+    if not db_user or db_user.get("role") != "admin":
+        await message.answer("У вас нет прав администратора.")
+        return
+    if user_store is None:
+        await message.answer("База данных недоступна.")
+        return
+
+    try:
+        stats = await user_store.get_survey_stats()
+    except Exception as e:
+        logger.error("Ошибка получения survey статистики: %s", e)
+        await message.answer("Ошибка получения данных.")
+        return
+
+    total = stats["total"]
+    if total == 0:
+        await message.answer("Ни один пользователь ещё не прошёл опрос.")
+        return
+
+    avg_nps = stats["avg_nps"]
+    answers = "\n".join(f"  {r['answer'] or '—'}: {r['cnt']}" for r in stats["will_continue"])
+    feats = "\n".join(
+        f"  {_FEATURE_LABELS.get(r['feat'], r['feat'] or '—')}: {r['cnt']}"
+        for r in stats["features"]
+    )
+
+    text = (
+        f"<b>Survey статистика</b>\n\n"
+        f"Заполнили: <b>{total}</b>\n"
+        f"Средний NPS: <b>{avg_nps:.1f}</b>/5\n\n"
+        f"Будут пользоваться:\n{answers}\n\n"
+        f"Полезная фича:\n{feats}"
+    )
     await message.answer(text)
