@@ -50,27 +50,30 @@ GIGACHAT_MODELS: list[dict] = [
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Max)$",
         "description": "GigaChat 2 Max — 650₽/1M токенов",
         "unit": "TOKENS",
-        "inputPrice": 650 / 1_000_000,  # 0.00065 ₽/token
-        "outputPrice": 650 / 1_000_000,
-        "totalPrice": None,
+        # GigaChat: единая цена за токен (input = output).
+        # Используем totalPrice вместо inputPrice/outputPrice,
+        # т.к. Langfuse Server v2 не считает calculatedInputCost.
+        "inputPrice": None,
+        "outputPrice": None,
+        "totalPrice": 650 / 1_000_000,  # 0.00065 ₽/token
     },
     {
         "modelName": "GigaChat-2-Pro",
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Pro)$",
         "description": "GigaChat 2 Pro — 500₽/1M токенов",
         "unit": "TOKENS",
-        "inputPrice": 500 / 1_000_000,  # 0.0005 ₽/token
-        "outputPrice": 500 / 1_000_000,
-        "totalPrice": None,
+        "inputPrice": None,
+        "outputPrice": None,
+        "totalPrice": 500 / 1_000_000,  # 0.0005 ₽/token
     },
     {
         "modelName": "GigaChat-2-Lite",
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Lite|GigaChat)$",
         "description": "GigaChat 2 Lite — 65₽/1M токенов (включает GigaChat без версии)",
         "unit": "TOKENS",
-        "inputPrice": 65 / 1_000_000,  # 0.000065 ₽/token
-        "outputPrice": 65 / 1_000_000,
-        "totalPrice": None,
+        "inputPrice": None,
+        "outputPrice": None,
+        "totalPrice": 65 / 1_000_000,  # 0.000065 ₽/token
     },
 ]
 
@@ -178,27 +181,6 @@ def main() -> None:
                     elif key == "LANGFUSE_HOST" and args.host == "http://localhost:3000":
                         args.host = value
 
-    # ── Dry-run: не требует ключей ──
-    if args.dry_run:
-        print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
-        print()
-        print("Тарифы GigaChat API (₽ за 1М токенов):")
-        print("-" * 50)
-        for m in GIGACHAT_MODELS:
-            price_per_m = m["inputPrice"] * 1_000_000
-            print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
-        print()
-        print("[DRY RUN] Детали model definitions:")
-        print()
-        for m in GIGACHAT_MODELS:
-            print(f"  Модель: {m['modelName']}")
-            print(f"  Match:  {m['matchPattern']}")
-            print(f"  Input:  {m['inputPrice']:.10f} ₽/token")
-            print(f"  Output: {m['outputPrice']:.10f} ₽/token")
-            print(f"  Описание: {m.get('description', '-')}")
-            print()
-        return
-
     if not args.public_key or not args.secret_key:
         print(
             "ОШИБКА: Укажите LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY "
@@ -213,6 +195,27 @@ def main() -> None:
     print(f"Langfuse: {host}")
     print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
     print()
+
+    # ── Показать тарифы ──
+    print("Тарифы GigaChat API (₽ за 1М токенов):")
+    print("-" * 50)
+    for m in GIGACHAT_MODELS:
+        price = m.get("totalPrice") or m.get("inputPrice") or 0
+        price_per_m = price * 1_000_000
+        print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
+    print()
+
+    if args.dry_run:
+        print("[DRY RUN] Модели НЕ будут созданы.")
+        print()
+        for m in GIGACHAT_MODELS:
+            price = m.get("totalPrice") or m.get("inputPrice") or 0
+            print(f"  Модель: {m['modelName']}")
+            print(f"  Match:  {m['matchPattern']}")
+            print(f"  Total:  {price:.10f} ₽/token")
+            print(f"  Описание: {m.get('description', '-')}")
+            print()
+        return
 
     # ── Проверить существующие модели ──
     print("Проверяю существующие модели в Langfuse...")
