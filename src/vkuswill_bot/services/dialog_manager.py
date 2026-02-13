@@ -58,10 +58,10 @@ def _summarize_tool_result(name: str | None, content: str) -> str:
             first_name = first.get("name", "?")
             first_price = first.get("price", "?")
             return (
-                f"Поиск \"{query}\": найдено {len(products)} товаров, "
+                f'Поиск "{query}": найдено {len(products)} товаров, '
                 f"лучший: {first_name} ({first_price}₽)"
             )
-        return f"Поиск \"{query}\": найдено 0 товаров"
+        return f'Поиск "{query}": найдено 0 товаров'
 
     # vkusvill_cart_link_create → краткое резюме
     if name == "vkusvill_cart_link_create" or "cart_link" in data:
@@ -84,13 +84,13 @@ def _summarize_tool_result(name: str | None, content: str) -> str:
         dish = data.get("dish", "?")
         ingredients = data.get("ingredients", [])
         count = len(ingredients) if isinstance(ingredients, list) else "?"
-        return f"Рецепт \"{dish}\": {count} ингредиентов"
+        return f'Рецепт "{dish}": {count} ингредиентов'
 
     # nutrition_lookup → краткое резюме
     if name == "nutrition_lookup":
         product = data.get("product", data.get("query", "?"))
         kcal = data.get("kcal", data.get("calories", "?"))
-        return f"КБЖУ \"{product}\": {kcal} ккал/100г"
+        return f'КБЖУ "{product}": {kcal} ккал/100г'
 
     # Fallback: обрезка до MAX_SUMMARY_LENGTH
     if len(content) > MAX_SUMMARY_LENGTH:
