@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import signal
@@ -33,16 +34,17 @@ from vkuswill_bot.config import config
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.gigachat_service import GigaChatService
+from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+from vkuswill_bot.services.migration_runner import MigrationRunner
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.price_cache import PriceCache, TwoLevelPriceCache
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
-from vkuswill_bot.services.langfuse_tracing import LangfuseService
+from vkuswill_bot.services.stats_aggregator import StatsAggregator
 from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.user_store import UserStore
-import contextlib
 
 if TYPE_CHECKING:
     pass
@@ -215,8 +217,11 @@ async def main() -> None:
                 min_size=config.db_pool_min,
                 max_size=config.db_pool_max,
             )
+            # Применить все SQL-миграции (версионированно)
+            migration_runner = MigrationRunner(pg_pool)
+            await migration_runner.run()
+
             user_store = UserStore(pg_pool)
-            await user_store.ensure_schema()
 
             # Установить начальных админов из .env
             if config.admin_user_ids:
@@ -238,6 +243,15 @@ async def main() -> None:
             user_store = None
     else:
         logger.info("DATABASE_URL не задан — UserStore отключён")
+
+    # ------------------------------------------------------------------
+    # StatsAggregator: фоновая агрегация аналитики
+    # ------------------------------------------------------------------
+    stats_aggregator: StatsAggregator | None = None
+    if pg_pool is not None:
+        stats_aggregator = StatsAggregator(pg_pool)
+        stats_aggregator.start()
+        logger.info("StatsAggregator запущен")
 
     # Rate-limiting: 5 сообщений / 60 секунд на пользователя
     # (ThrottlingMiddleware идёт ПОСЛЕ UserMiddleware)
@@ -318,6 +332,7 @@ async def main() -> None:
         preferences_store=prefs_store,
         cart_snapshot_store=cart_snapshot_store,
         nutrition_service=nutrition_service,
+        user_store=user_store,
     )
 
     # Langfuse — LLM-observability (опционально)
@@ -357,6 +372,8 @@ async def main() -> None:
     dp["gigachat_service"] = gigachat_service
     if user_store is not None:
         dp["user_store"] = user_store
+    if stats_aggregator is not None:
+        dp["stats_aggregator"] = stats_aggregator
 
     # ------------------------------------------------------------------
     # Функция очистки ресурсов
@@ -369,6 +386,8 @@ async def main() -> None:
         await prefs_store.close()
         await close_redis_client(redis_client)
         await mcp_client.close()
+        if stats_aggregator is not None:
+            await stats_aggregator.stop()
         if pg_pool is not None:
             await pg_pool.close()
             logger.info("PostgreSQL pool закрыт")
