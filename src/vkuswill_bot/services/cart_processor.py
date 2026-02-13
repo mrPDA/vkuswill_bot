@@ -282,8 +282,7 @@ class CartProcessor:
                 # (&nbsp; и пр.), чтобы JSON оставался чистым для GigaChat.
                 clean_name = cached.name.replace("&nbsp;", " ").replace("&amp;", "&")
                 lines.append(
-                    f"  - {clean_name}: {cached.price} руб/{cached.unit}"
-                    f" x {q} = {subtotal:.2f} руб"
+                    f"  - {clean_name}: {cached.price} руб/{cached.unit} x {q} = {subtotal:.2f} руб"
                 )
             else:
                 all_found = False
