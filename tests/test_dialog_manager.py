@@ -7,13 +7,20 @@
 - Сброс диалога (reset / areset)
 - Per-user lock
 - Async API (aget_history, save_history, trim_list, areset)
+- Суммаризация tool results (_summarize_tool_result)
 """
 
 import asyncio
+import json
 
 from gigachat.models import Messages, MessagesRole
 
-from vkuswill_bot.services.dialog_manager import DialogManager, MAX_CONVERSATIONS
+from vkuswill_bot.services.dialog_manager import (
+    DialogManager,
+    MAX_CONVERSATIONS,
+    MAX_SUMMARY_LENGTH,
+    _summarize_tool_result,
+)
 from vkuswill_bot.services.prompts import SYSTEM_PROMPT
 
 
@@ -439,3 +446,200 @@ class TestAreset:
         assert 2 not in manager.conversations
         assert 1 not in manager._locks
         assert 2 not in manager._locks
+
+
+# ============================================================================
+# Суммаризация tool results: _summarize_tool_result
+# ============================================================================
+
+
+class TestSummarizeToolResult:
+    """Тесты _summarize_tool_result: диспетчеризация и форматирование."""
+
+    # ---- Диспетчеризация по name (приоритет) ----
+
+    def test_products_search_by_name(self):
+        """name='vkusvill_products_search' → суммаризация поиска."""
+        content = json.dumps(
+            {
+                "query": "молоко",
+                "products": [{"name": "Молоко 3.2%", "price": 89}],
+            }
+        )
+        result = _summarize_tool_result("vkusvill_products_search", content)
+        assert "Поиск" in result
+        assert "молоко" in result
+        assert "1 товаров" in result
+
+    def test_cart_link_by_name(self):
+        """name='vkusvill_cart_link_create' → суммаризация корзины."""
+        content = json.dumps(
+            {
+                "cart_link": "https://example.com/cart",
+                "price_summary": {"total": 450, "count": 3},
+            }
+        )
+        result = _summarize_tool_result("vkusvill_cart_link_create", content)
+        assert "Корзина" in result
+        assert "450" in result
+
+    def test_recipe_by_name(self):
+        """name='recipe_ingredients' → суммаризация рецепта."""
+        content = json.dumps(
+            {
+                "dish": "борщ",
+                "ingredients": [{"name": "свёкла"}, {"name": "капуста"}],
+            }
+        )
+        result = _summarize_tool_result("recipe_ingredients", content)
+        assert "Рецепт" in result
+        assert "борщ" in result
+        assert "2 ингредиентов" in result
+
+    def test_preferences_by_name(self):
+        """name='user_preferences_get' → суммаризация предпочтений."""
+        content = json.dumps({"preferences": {"diet": "вегетарианство"}})
+        result = _summarize_tool_result("user_preferences_get", content)
+        assert "Предпочтения" in result
+        assert "вегетарианство" in result
+
+    def test_nutrition_by_name(self):
+        """name='nutrition_lookup' → суммаризация КБЖУ."""
+        content = json.dumps({"product": "яблоко", "kcal": 52})
+        result = _summarize_tool_result("nutrition_lookup", content)
+        assert "КБЖУ" in result
+        assert "яблоко" in result
+        assert "52" in result
+
+    # ---- name имеет приоритет над ключами JSON (главный баг-фикс) ----
+
+    def test_name_priority_over_products_key(self):
+        """name='recipe_ingredients' не перехватывается ключом 'products'.
+
+        Регрессия: OR-условие ранее направляло на суммаризатор
+        поиска при наличии ключа 'products' в JSON.
+        """
+        content = json.dumps(
+            {
+                "dish": "салат",
+                "ingredients": [{"name": "огурец"}],
+                "products": [{"name": "Огурцы", "price": 50}],  # ключ-ловушка
+            }
+        )
+        result = _summarize_tool_result("recipe_ingredients", content)
+        assert "Рецепт" in result
+        assert "салат" in result
+        assert "Поиск" not in result  # НЕ суммаризатор поиска
+
+    def test_name_priority_over_cart_link_key(self):
+        """name='vkusvill_products_search' не перехватывается ключом 'cart_link'."""
+        content = json.dumps(
+            {
+                "query": "хлеб",
+                "products": [{"name": "Хлеб", "price": 45}],
+                "cart_link": "https://example.com",  # ключ-ловушка
+            }
+        )
+        result = _summarize_tool_result("vkusvill_products_search", content)
+        assert "Поиск" in result
+        assert "Корзина" not in result
+
+    def test_name_priority_over_ingredients_key(self):
+        """name='vkusvill_cart_link_create' не перехватывается ключом 'ingredients'."""
+        content = json.dumps(
+            {
+                "cart_link": "https://example.com/cart",
+                "price_summary": {"total": 200, "count": 2},
+                "ingredients": ["огурцы", "помидоры"],  # ключ-ловушка
+            }
+        )
+        result = _summarize_tool_result("vkusvill_cart_link_create", content)
+        assert "Корзина" in result
+        assert "Рецепт" not in result
+
+    # ---- Эвристика по ключам (name=None) ----
+
+    def test_key_heuristic_products(self):
+        """name=None + ключ 'products' → суммаризация поиска."""
+        content = json.dumps(
+            {
+                "query": "сыр",
+                "products": [{"name": "Сыр Голландский", "price": 320}],
+            }
+        )
+        result = _summarize_tool_result(None, content)
+        assert "Поиск" in result
+        assert "сыр" in result
+
+    def test_key_heuristic_cart_link(self):
+        """name=None + ключ 'cart_link' → суммаризация корзины."""
+        content = json.dumps(
+            {
+                "cart_link": "https://example.com/cart",
+                "price_summary": {"total": 100, "count": 1},
+            }
+        )
+        result = _summarize_tool_result(None, content)
+        assert "Корзина" in result
+
+    def test_key_heuristic_preferences(self):
+        """name=None + ключ 'preferences' → суммаризация предпочтений."""
+        content = json.dumps({"preferences": {"allergies": "орехи"}})
+        result = _summarize_tool_result(None, content)
+        assert "Предпочтения" in result
+
+    def test_key_heuristic_ingredients(self):
+        """name=None + ключ 'ingredients' → суммаризация рецепта."""
+        content = json.dumps(
+            {
+                "dish": "паста",
+                "ingredients": [{"name": "мука"}],
+            }
+        )
+        result = _summarize_tool_result(None, content)
+        assert "Рецепт" in result
+
+    # ---- Fallback ----
+
+    def test_unknown_name_no_keys_fallback(self):
+        """Неизвестный name + нет характерных ключей → fallback (обрезка)."""
+        content = json.dumps({"status": "ok", "data": "x" * 300})
+        result = _summarize_tool_result("unknown_tool", content)
+        assert len(result) <= MAX_SUMMARY_LENGTH + 5  # +5 для "…"
+
+    def test_none_name_no_keys_fallback(self):
+        """name=None + нет характерных ключей → fallback."""
+        content = json.dumps({"status": "ok"})
+        result = _summarize_tool_result(None, content)
+        assert result == content  # короткий JSON — без обрезки
+
+    def test_not_json_fallback(self):
+        """Не-JSON контент → fallback."""
+        content = "Просто текстовый ответ"
+        result = _summarize_tool_result("some_tool", content)
+        assert result == content
+
+    def test_long_not_json_truncated(self):
+        """Длинный не-JSON контент обрезается до MAX_SUMMARY_LENGTH."""
+        content = "A" * 500
+        result = _summarize_tool_result(None, content)
+        assert len(result) == MAX_SUMMARY_LENGTH + 1  # +1 для "…"
+        assert result.endswith("…")
+
+    def test_non_dict_json_fallback(self):
+        """JSON-массив (не dict) → fallback."""
+        content = json.dumps([1, 2, 3])
+        result = _summarize_tool_result("some_tool", content)
+        assert result == content
+
+    def test_products_search_empty_results(self):
+        """Поиск с пустым списком товаров."""
+        content = json.dumps({"query": "единорог", "products": []})
+        result = _summarize_tool_result("vkusvill_products_search", content)
+        assert "0 товаров" in result
+
+    def test_preferences_empty(self):
+        """Пустые предпочтения."""
+        content = json.dumps({"preferences": {}})
+        result = _summarize_tool_result("user_preferences_get", content)
+        assert "пусто" in result
