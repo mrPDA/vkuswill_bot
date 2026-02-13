@@ -28,8 +28,8 @@ FROM python:3.12-slim AS runtime
 LABEL maintainer="VkusVill Bot Team"
 LABEL description="Telegram bot for VkusVill — GigaChat + MCP"
 
-# Создать непривилегированного пользователя
-RUN groupadd -r botuser && useradd -r -g botuser -d /app -s /sbin/nologin botuser
+# Создать непривилегированного пользователя (фиксированный UID/GID для предсказуемых прав)
+RUN groupadd -r -g 10001 botuser && useradd -r -u 10001 -g botuser -d /app -s /sbin/nologin botuser
 
 WORKDIR /app
 

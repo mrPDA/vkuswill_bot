@@ -483,17 +483,26 @@ class GigaChatService:
         )
         return ERROR_TOO_MANY_STEPS
 
-    @staticmethod
-    def _extract_usage(response: ChatCompletion) -> dict[str, int] | None:
+    def _extract_usage(self, response: ChatCompletion) -> dict[str, int] | None:
         """Извлечь usage (токены) из ответа GigaChat, если доступно."""
         usage = getattr(response, "usage", None)
         if usage is None:
             return None
         result: dict[str, int] = {}
-        if hasattr(usage, "prompt_tokens") and usage.prompt_tokens is not None:
-            result["input"] = usage.prompt_tokens
-        if hasattr(usage, "completion_tokens") and usage.completion_tokens is not None:
-            result["output"] = usage.completion_tokens
-        if hasattr(usage, "total_tokens") and usage.total_tokens is not None:
-            result["total"] = usage.total_tokens
+        prompt = getattr(usage, "prompt_tokens", None)
+        completion = getattr(usage, "completion_tokens", None)
+        total = getattr(usage, "total_tokens", None)
+        if isinstance(prompt, int):
+            result["input"] = prompt
+        if isinstance(completion, int):
+            result["output"] = completion
+        if isinstance(total, int):
+            result["total"] = total
+        # Structured logging: токены и precached_prompt_tokens
+        if result:
+            log_data: dict[str, Any] = {"event": "llm_usage", **result}
+            precached = getattr(usage, "precached_prompt_tokens", None)
+            if isinstance(precached, int):
+                log_data["precached_prompt_tokens"] = precached
+            logger.info("LLM usage: %s", json.dumps(log_data, ensure_ascii=False))
         return result or None

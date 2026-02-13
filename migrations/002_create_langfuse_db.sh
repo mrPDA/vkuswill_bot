@@ -7,6 +7,8 @@ set -e
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-EOSQL
     CREATE DATABASE langfuse;
     GRANT ALL PRIVILEGES ON DATABASE langfuse TO $POSTGRES_USER;
+    CREATE DATABASE metabase;
+    GRANT ALL PRIVILEGES ON DATABASE metabase TO $POSTGRES_USER;
 EOSQL
 
-echo "Database 'langfuse' created successfully"
+echo "Databases 'langfuse' and 'metabase' created successfully"

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, UTC
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -11,7 +11,6 @@ from vkuswill_bot.services.user_store import (
     VALID_ROLES,
     VALID_STATUSES,
     UserStore,
-    _MIGRATION_PATH,
 )
 
 
@@ -57,18 +56,21 @@ class TestEnsureSchema:
     """Тесты инициализации схемы."""
 
     @pytest.mark.asyncio
-    async def test_ensure_schema_runs_migration(self, pool_and_conn):
-        """ensure_schema выполняет SQL из файла миграции."""
-        pool, conn = pool_and_conn
+    async def test_ensure_schema_delegates_to_migration_runner(self, pool_and_conn):
+        """ensure_schema делегирует MigrationRunner.run()."""
+        pool, _conn = pool_and_conn
         store = UserStore(pool)
         assert not store._schema_ready
 
-        await store.ensure_schema()
+        with patch("vkuswill_bot.services.migration_runner.MigrationRunner") as MockRunner:
+            mock_runner = AsyncMock()
+            MockRunner.return_value = mock_runner
 
-        conn.execute.assert_called_once()
-        sql_arg = conn.execute.call_args[0][0]
-        assert "CREATE TABLE IF NOT EXISTS users" in sql_arg
-        assert store._schema_ready
+            await store.ensure_schema()
+
+            MockRunner.assert_called_once_with(pool)
+            mock_runner.run.assert_awaited_once()
+            assert store._schema_ready
 
     @pytest.mark.asyncio
     async def test_ensure_schema_idempotent(self, pool_and_conn):
@@ -492,6 +494,187 @@ class TestAdminQueries:
 
 
 # ---------------------------------------------------------------------------
+# Тесты: Freemium — лимиты корзин
+# ---------------------------------------------------------------------------
+
+
+class TestFreemiumCartLimits:
+    """Тесты freemium-методов: лимиты корзин."""
+
+    @pytest.mark.asyncio
+    async def test_check_cart_limit_allowed(self, store):
+        """check_cart_limit возвращает allowed=True когда лимит не исчерпан."""
+        s, conn = store
+        conn.fetchrow.return_value = {"carts_created": 2, "cart_limit": 5}
+
+        result = await s.check_cart_limit(123)
+
+        assert result["allowed"] is True
+        assert result["carts_created"] == 2
+        assert result["cart_limit"] == 5
+
+    @pytest.mark.asyncio
+    async def test_check_cart_limit_denied(self, store):
+        """check_cart_limit возвращает allowed=False когда лимит исчерпан."""
+        s, conn = store
+        conn.fetchrow.return_value = {"carts_created": 5, "cart_limit": 5}
+
+        result = await s.check_cart_limit(123)
+
+        assert result["allowed"] is False
+        assert result["carts_created"] == 5
+
+    @pytest.mark.asyncio
+    async def test_check_cart_limit_nonexistent_user(self, store):
+        """check_cart_limit возвращает allowed=True для несуществующего пользователя."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        result = await s.check_cart_limit(999)
+
+        assert result["allowed"] is True
+        assert result["carts_created"] == 0
+
+    @pytest.mark.asyncio
+    async def test_check_cart_limit_custom_default(self, store):
+        """check_cart_limit принимает кастомный default_limit."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        result = await s.check_cart_limit(999, default_limit=10)
+
+        assert result["cart_limit"] == 10
+
+    @pytest.mark.asyncio
+    async def test_increment_carts(self, store):
+        """increment_carts увеличивает счётчик на 1."""
+        s, conn = store
+        conn.fetchrow.return_value = {"carts_created": 3, "cart_limit": 5}
+
+        result = await s.increment_carts(123)
+
+        assert result["carts_created"] == 3
+        sql = conn.fetchrow.call_args[0][0]
+        assert "carts_created = carts_created + 1" in sql
+
+    @pytest.mark.asyncio
+    async def test_increment_carts_nonexistent(self, store):
+        """increment_carts возвращает пустой dict для несуществующего пользователя."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        result = await s.increment_carts(999)
+
+        assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_grant_bonus_carts(self, store):
+        """grant_bonus_carts увеличивает лимит корзин."""
+        s, conn = store
+        conn.fetchrow.return_value = {"cart_limit": 10}
+
+        new_limit = await s.grant_bonus_carts(123, 5)
+
+        assert new_limit == 10
+        sql = conn.fetchrow.call_args[0][0]
+        assert "cart_limit = cart_limit + $2" in sql
+
+    @pytest.mark.asyncio
+    async def test_grant_bonus_carts_nonexistent(self, store):
+        """grant_bonus_carts возвращает 0 для несуществующего пользователя."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        new_limit = await s.grant_bonus_carts(999, 5)
+
+        assert new_limit == 0
+
+    @pytest.mark.asyncio
+    async def test_grant_bonus_carts_default_amount(self, store):
+        """grant_bonus_carts по умолчанию добавляет 5 корзин."""
+        s, conn = store
+        conn.fetchrow.return_value = {"cart_limit": 10}
+
+        await s.grant_bonus_carts(123)
+
+        args = conn.fetchrow.call_args[0]
+        assert args[2] == 5  # amount = 5
+
+
+# ---------------------------------------------------------------------------
+# Тесты: Freemium — survey
+# ---------------------------------------------------------------------------
+
+
+class TestFreemiumSurvey:
+    """Тесты survey-методов."""
+
+    @pytest.mark.asyncio
+    async def test_mark_survey_completed(self, store):
+        """mark_survey_completed выполняет UPDATE survey_completed = TRUE."""
+        s, conn = store
+
+        await s.mark_survey_completed(123)
+
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "survey_completed = TRUE" in sql
+
+    @pytest.mark.asyncio
+    async def test_mark_survey_completed_if_not_first_time(self, store):
+        """mark_survey_completed_if_not возвращает True при первом прохождении."""
+        s, conn = store
+        conn.fetchrow.return_value = {"user_id": 123}
+
+        result = await s.mark_survey_completed_if_not(123)
+
+        assert result is True
+        sql = conn.fetchrow.call_args[0][0]
+        assert "survey_completed = FALSE" in sql
+
+    @pytest.mark.asyncio
+    async def test_mark_survey_completed_if_not_already_done(self, store):
+        """mark_survey_completed_if_not возвращает False если уже пройден."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        result = await s.mark_survey_completed_if_not(123)
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_get_survey_stats(self, store):
+        """get_survey_stats возвращает агрегированную статистику."""
+        s, conn = store
+        conn.fetchval.side_effect = [42, 4.2]  # total, avg_nps
+        conn.fetch.side_effect = [
+            [{"answer": "yes", "cnt": 30}, {"answer": "maybe", "cnt": 10}],
+            [{"feat": "search", "cnt": 25}, {"feat": "recipe", "cnt": 15}],
+        ]
+
+        result = await s.get_survey_stats()
+
+        assert result["total"] == 42
+        assert result["avg_nps"] == 4.2
+        assert len(result["will_continue"]) == 2
+        assert len(result["features"]) == 2
+
+    @pytest.mark.asyncio
+    async def test_get_survey_stats_empty(self, store):
+        """get_survey_stats возвращает нули при отсутствии данных."""
+        s, conn = store
+        conn.fetchval.side_effect = [0, None]
+        conn.fetch.side_effect = [[], []]
+
+        result = await s.get_survey_stats()
+
+        assert result["total"] == 0
+        assert result["avg_nps"] == 0.0
+        assert result["will_continue"] == []
+        assert result["features"] == []
+
+
+# ---------------------------------------------------------------------------
 # Тесты: константы
 # ---------------------------------------------------------------------------
 
@@ -507,9 +690,13 @@ class TestConstants:
         """VALID_STATUSES содержит active, blocked, limited."""
         assert {"active", "blocked", "limited"} == VALID_STATUSES
 
-    def test_migration_file_exists(self):
-        """Файл миграции существует."""
-        assert _MIGRATION_PATH.exists()
+    def test_migration_files_exist(self):
+        """Файлы SQL-миграций существуют."""
+        from vkuswill_bot.services.migration_runner import MIGRATIONS_DIR
+
+        sql_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
+        assert len(sql_files) >= 1, "Нет SQL-миграций в migrations/"
+        assert any("001" in f.name for f in sql_files)
 
 
 # ---------------------------------------------------------------------------

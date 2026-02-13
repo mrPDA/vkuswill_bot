@@ -69,6 +69,11 @@ class Config(BaseSettings):
     langfuse_host: str = "https://cloud.langfuse.com"
     langfuse_anonymize_messages: bool = False  # полностью скрывать текст сообщений
 
+    # Freemium лимиты
+    free_cart_limit: int = 5  # Tier 1: бесплатные корзины
+    bonus_cart_limit: int = 5  # Tier 2: бонус за survey
+    referral_cart_bonus: int = 3  # Tier 3: бонус за приглашение друга
+
     # Отладка
     debug: bool = False
 

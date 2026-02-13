@@ -8,11 +8,13 @@
 - Нормализация категорий (lowercase, strip)
 - Лимиты длины строк и количества предпочтений (F-04)
 - WAL mode (F-03)
+- Readonly-защита и проверка записи при инициализации
 - Закрытие соединения
 """
 
 import json
 import os
+import stat
 
 import aiosqlite
 import pytest
@@ -439,3 +441,94 @@ class TestLengthLimits:
         result = await store.set(2, "мороженое", "пломбир")
         parsed = json.loads(result)
         assert parsed["ok"] is True
+
+
+# ============================================================================
+# Readonly-защита
+# ============================================================================
+
+
+class TestReadonly:
+    """Тесты обнаружения readonly БД и корректного отказа."""
+
+    async def test_set_rejected_when_readonly(self, tmp_path):
+        """set() возвращает ok=False если БД readonly."""
+        db_path = str(tmp_path / "ro2.db")
+        store = PreferencesStore(db_path)
+
+        # Эмулируем readonly: инициализируем и ставим флаг вручную
+        await store._ensure_db()
+        store._readonly = True
+
+        result = await store.set(1, "мороженое", "пломбир")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "недоступна на запись" in parsed["message"]
+        assert "НЕ сохранено" in parsed["message"]
+        await store.close()
+
+    async def test_delete_rejected_when_readonly(self, tmp_path):
+        """delete() возвращает ok=False если БД readonly."""
+        db_path = str(tmp_path / "ro3.db")
+        store = PreferencesStore(db_path)
+
+        await store._ensure_db()
+        store._readonly = True
+
+        result = await store.delete(1, "мороженое")
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "недоступна на запись" in parsed["message"]
+        await store.close()
+
+    async def test_writable_db_sets_readonly_false(self, tmp_path):
+        """Для нормальной БД _readonly = False."""
+        db_path = str(tmp_path / "ok.db")
+        store = PreferencesStore(db_path)
+        await store._ensure_db()
+        assert store._readonly is False
+        await store.close()
+
+    async def test_get_still_works_when_readonly(self, tmp_path):
+        """get_all/get_formatted работают даже в readonly режиме."""
+        db_path = str(tmp_path / "ro_get.db")
+        store = PreferencesStore(db_path)
+        # Сначала пишем данные нормально
+        await store.set(1, "мороженое", "пломбир")
+        # Затем помечаем readonly
+        store._readonly = True
+
+        # Чтение должно работать
+        prefs = await store.get_all(1)
+        assert len(prefs) == 1
+        assert prefs[0]["preference"] == "пломбир"
+
+        formatted = await store.get_formatted(1)
+        parsed = json.loads(formatted)
+        assert parsed["ok"] is True
+        assert len(parsed["preferences"]) == 1
+        await store.close()
+
+    async def test_fix_permissions_restores_write(self, tmp_path):
+        """_fix_permissions исправляет права на файл."""
+        db_path = str(tmp_path / "fix.db")
+
+        # Создаём файл и убираем запись
+        store1 = PreferencesStore(db_path)
+        await store1.set(1, "тест", "зн")
+        await store1.close()
+
+        os.chmod(db_path, stat.S_IRUSR)
+        assert not os.access(db_path, os.W_OK)
+
+        # _fix_permissions должен вернуть True и исправить права
+        ok = PreferencesStore._fix_permissions(db_path)
+        assert ok is True
+        assert os.access(db_path, os.W_OK)
+
+    async def test_fix_permissions_on_missing_file(self):
+        """_fix_permissions на несуществующем файле возвращает False."""
+        ok = PreferencesStore._fix_permissions(
+            "/tmp/nonexistent_12345.db",  # noqa: S108
+        )
+        assert ok is False

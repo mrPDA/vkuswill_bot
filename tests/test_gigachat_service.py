@@ -1753,3 +1753,89 @@ class TestGetPreviousCartTool:
         functions = await service._get_functions()
         names = [f["name"] for f in functions]
         assert "get_previous_cart" in names
+
+
+# ============================================================================
+# _extract_usage: structured logging + precached_prompt_tokens
+# ============================================================================
+
+
+class TestExtractUsage:
+    """Тесты _extract_usage — извлечение usage из ответа GigaChat."""
+
+    def test_basic_usage(self, service):
+        """Извлекает prompt/completion/total tokens."""
+        response = make_text_response("Привет")
+
+        result = service._extract_usage(response)
+
+        assert result is not None
+        assert result["input"] == 10
+        assert result["output"] == 5
+        assert result["total"] == 15
+
+    def test_none_usage(self, service):
+        """Возвращает None если usage отсутствует."""
+        response = make_text_response("Привет")
+        response.usage = None
+
+        result = service._extract_usage(response)
+
+        assert result is None
+
+    def test_partial_usage(self, service):
+        """Работает с частичным usage (только prompt_tokens)."""
+        response = make_text_response("Привет")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 50
+        response.usage.completion_tokens = None
+        response.usage.total_tokens = None
+
+        result = service._extract_usage(response)
+
+        assert result == {"input": 50}
+
+    def test_non_int_values_ignored(self, service):
+        """Нецелочисленные значения игнорируются."""
+        response = make_text_response("Привет")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = "not_a_number"
+        response.usage.completion_tokens = 5
+        response.usage.total_tokens = None
+
+        result = service._extract_usage(response)
+
+        assert result == {"output": 5}
+
+    def test_all_none_returns_none(self, service):
+        """Если все значения None — возвращает None."""
+        response = make_text_response("Привет")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = None
+        response.usage.completion_tokens = None
+        response.usage.total_tokens = None
+
+        result = service._extract_usage(response)
+
+        assert result is None
+
+    def test_precached_prompt_tokens_logged(self, service, caplog):
+        """precached_prompt_tokens логируется в structured logging."""
+        import logging
+
+        response = make_text_response("Привет")
+        response.usage = MagicMock()
+        response.usage.prompt_tokens = 100
+        response.usage.completion_tokens = 20
+        response.usage.total_tokens = 120
+        response.usage.precached_prompt_tokens = 80
+
+        with caplog.at_level(logging.INFO):
+            result = service._extract_usage(response)
+
+        assert result is not None
+        assert result["input"] == 100
+        # Проверяем что в лог попало precached_prompt_tokens
+        log_output = " ".join(caplog.messages)
+        assert "precached_prompt_tokens" in log_output
+        assert "80" in log_output
