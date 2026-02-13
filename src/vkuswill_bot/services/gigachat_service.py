@@ -373,8 +373,7 @@ class GigaChatService:
 
             if force_text:
                 logger.warning(
-                    "User %d: принудительный текстовый ответ "
-                    "(cart_created=%s, дубликатов=%d)",
+                    "User %d: принудительный текстовый ответ (cart_created=%s, дубликатов=%d)",
                     user_id,
                     cart_created,
                     consecutive_skips,
