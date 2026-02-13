@@ -336,9 +336,10 @@ class GigaChatService:
                 consecutive_skips = max_consecutive_skips - 1
                 history.append(
                     Messages(
-                        role=MessagesRole.SYSTEM,
+                        role=MessagesRole.USER,
                         content=(
-                            "Все товары уже найдены. Не повторяй поиск. "
+                            "[Системная подсказка] Все товары уже найдены. "
+                            "Не повторяй поиск. "
                             "Создай корзину через vkusvill_cart_link_create "
                             "с найденными xml_id и покажи результат пользователю."
                         ),
