@@ -5,7 +5,7 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
-## [0.6.0] — 2026-02-13
+## [0.5.13] — 2026-02-13
 
 ### Добавлено
 
