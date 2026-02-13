@@ -278,9 +278,12 @@ class CartProcessor:
             if cached:
                 subtotal = cached.price * q
                 total += subtotal
+                # Очищаем HTML-сущности из названий товаров MCP-сервера
+                # (&nbsp; и пр.), чтобы JSON оставался чистым для GigaChat.
+                clean_name = cached.name.replace("&nbsp;", " ").replace("&amp;", "&")
                 lines.append(
-                    f"  - {cached.name}: {cached.price} руб/{cached.unit}"
-                    f" × {q} = {subtotal:.2f} руб"
+                    f"  - {clean_name}: {cached.price} руб/{cached.unit}"
+                    f" x {q} = {subtotal:.2f} руб"
                 )
             else:
                 all_found = False

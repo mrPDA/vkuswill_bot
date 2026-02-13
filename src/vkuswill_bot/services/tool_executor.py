@@ -447,6 +447,10 @@ class ToolExecutor:
         Инкрементирует счётчик, логирует событие cart_created,
         добавляет хинт с остатком корзин для GigaChat.
 
+        ВАЖНО: хинт встраивается ВНУТРЬ JSON-структуры (поле ``data.freemium``),
+        а не дописывается как plain-text — иначе GigaChat отвергнет невалидный
+        JSON с ошибкой 422 ``invalid function result json string``.
+
         Returns:
             Обновлённый result с хинтом (или оригинальный при ошибке).
         """
@@ -461,7 +465,7 @@ class ToolExecutor:
                 if isinstance(price_summary, dict):
                     total_sum = price_summary.get("total")
             except (json.JSONDecodeError, TypeError, AttributeError):
-                pass
+                parsed = None
 
             from vkuswill_bot.config import config as _cfg
 
@@ -481,16 +485,28 @@ class ToolExecutor:
                 },
             )
 
-            hint = f"\n\n[Корзина {carts} из {limit}]"
+            # Встраиваем хинт ВНУТРЬ JSON-структуры (поле data.freemium),
+            # чтобы результат оставался валидным JSON для GigaChat API.
+            hint_text = f"Корзина {carts} из {limit}."
             if remaining == 0:
-                hint += (
-                    "\n[Лимит корзин исчерпан. "
-                    "Предложи пользователю команду /survey "
-                    "для получения дополнительных корзин]"
+                hint_text += (
+                    " Лимит корзин исчерпан."
+                    " Предложи пользователю команду /survey"
+                    " для получения дополнительных корзин."
                 )
             elif remaining <= 2:
-                hint += f"\n[Осталось {remaining} бесплатных корзин]"
-            return result + hint
+                hint_text += f" Осталось {remaining} бесплатных корзин."
+
+            if parsed is not None and isinstance(parsed.get("data"), dict):
+                parsed["data"]["freemium"] = {
+                    "cart_number": carts,
+                    "cart_limit": limit,
+                    "remaining": remaining,
+                    "hint": hint_text,
+                }
+                return json.dumps(parsed, ensure_ascii=False, indent=4)
+
+            return result
         except Exception:
             logger.debug("Ошибка логирования cart_created")
             return result
