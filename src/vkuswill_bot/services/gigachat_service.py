@@ -52,6 +52,16 @@ GIGACHAT_MAX_RETRIES = 5
 # Лимит количества поисковых запросов в search_log на пользователя
 MAX_SEARCH_LOG_QUERIES = 100
 
+# Тарифы GigaChat API (₽ за 1 токен)
+# Источник: https://developers.sber.ru/docs/ru/gigachat/tariffs/legal-tariffs
+# Обновлено: февраль 2026
+GIGACHAT_TOKEN_PRICES: dict[str, float] = {
+    "GigaChat-2-Max": 650 / 1_000_000,   # 650 ₽ / 1M токенов
+    "GigaChat-2-Pro": 500 / 1_000_000,   # 500 ₽ / 1M токенов
+    "GigaChat-2-Lite": 65 / 1_000_000,   # 65 ₽ / 1M токенов
+    "GigaChat": 65 / 1_000_000,          # GigaChat (без версии) = Lite
+}
+
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat и MCP-инструментами.
@@ -414,8 +424,12 @@ class GigaChatService:
                     "name": msg.function_call.name,
                     "arguments": msg.function_call.arguments,
                 }
-            usage = self._extract_usage(response)
-            gen.end(output=gen_output, usage=usage)
+            usage_details, cost_details = self._extract_usage(response)
+            gen.end(
+                output=gen_output,
+                usage_details=usage_details,
+                cost_details=cost_details,
+            )
 
             te.build_assistant_message(history, msg)
 
@@ -489,17 +503,22 @@ class GigaChatService:
         )
         return ERROR_TOO_MANY_STEPS
 
-    def _extract_usage(self, response: ChatCompletion) -> dict[str, int] | None:
-        """Извлечь usage (токены) из ответа GigaChat, если доступно.
+    def _extract_usage(
+        self, response: ChatCompletion
+    ) -> tuple[dict[str, int] | None, dict[str, float] | None]:
+        """Извлечь usage и cost из ответа GigaChat.
 
-        Возвращает словарь для Langfuse с ключами:
-        - input, output, total — стандартные метрики
-        - precached_tokens — кешированные prefix-токены (X-Session-ID)
-        - billable_tokens — тарифицируемые токены (total - precached)
+        Returns:
+            Кортеж (usage_details, cost_details):
+            - usage_details: токены по типам (input, output, total,
+              precached_tokens, billable_tokens)
+            - cost_details: стоимость в ₽ по типам (input, output, total)
+              с учётом вычета precached_tokens
         """
         usage = getattr(response, "usage", None)
         if usage is None:
-            return None
+            return None, None
+
         result: dict[str, int] = {}
         prompt = getattr(usage, "prompt_tokens", None)
         completion = getattr(usage, "completion_tokens", None)
@@ -515,20 +534,39 @@ class GigaChatService:
         precached = getattr(usage, "precached_prompt_tokens", None)
         if isinstance(precached, int):
             result["precached_tokens"] = precached
-            # Тарифицируемые = total - precached
             if isinstance(total, int):
                 result["billable_tokens"] = total - precached
 
-        # Structured logging: токены и кеширование
-        if result:
-            log_data: dict[str, Any] = {"event": "llm_usage", **result}
-            logger.info(
-                "Кеш: precached=%d, prompt=%d, completion=%d, total=%d, billable=%d",
-                result.get("precached_tokens", 0),
-                result.get("input", 0),
-                result.get("output", 0),
-                result.get("total", 0),
-                result.get("billable_tokens", result.get("total", 0)),
-            )
-            logger.info("LLM usage: %s", json.dumps(log_data, ensure_ascii=False))
-        return result or None
+        if not result:
+            return None, None
+
+        # ── Cost details (₽) ──
+        # Тарифы GigaChat: единая цена за токен (input = output).
+        # Precached токены бесплатны → вычитаем из input.
+        price = GIGACHAT_TOKEN_PRICES.get(self._model_name)
+        cost: dict[str, float] | None = None
+        if price is not None:
+            billable_input = result.get("input", 0)
+            if isinstance(precached, int):
+                billable_input = max(0, billable_input - precached)
+            output_tokens = result.get("output", 0)
+            cost = {
+                "input": billable_input * price,
+                "output": output_tokens * price,
+                "total": (billable_input + output_tokens) * price,
+            }
+
+        # Structured logging
+        log_data: dict[str, Any] = {"event": "llm_usage", **result}
+        if cost is not None:
+            log_data["cost_rub"] = round(cost["total"], 6)
+        logger.info(
+            "Кеш: precached=%d, prompt=%d, completion=%d, total=%d, billable=%d",
+            result.get("precached_tokens", 0),
+            result.get("input", 0),
+            result.get("output", 0),
+            result.get("total", 0),
+            result.get("billable_tokens", result.get("total", 0)),
+        )
+        logger.info("LLM usage: %s", json.dumps(log_data, ensure_ascii=False))
+        return result, cost
