@@ -93,6 +93,43 @@ _KEY_HEURISTICS: list[tuple[str, callable]] = [
 ]
 
 
+def _sanitize_history(history: list[Messages]) -> list[Messages]:
+    """Удалить осиротевшие FUNCTION-сообщения из истории.
+
+    GigaChat API требует, чтобы каждое FUNCTION-сообщение (tool result)
+    было предварено ASSISTANT-сообщением с function_call.
+    После обрезки (trim) пара может быть разорвана — ASSISTANT удалён,
+    а FUNCTION остался. Это вызывает ошибку 422:
+    "every assistant function result must have an assistant function call in history".
+
+    Алгоритм: проходим по истории и оставляем FUNCTION-сообщение
+    только если предыдущее сообщение — ASSISTANT с function_call.
+    """
+    if len(history) <= 1:
+        return history
+
+    result: list[Messages] = [history[0]]  # системный промпт всегда сохраняем
+    for i in range(1, len(history)):
+        msg = history[i]
+        if str(msg.role) == "function":
+            # FUNCTION допустимо только после ASSISTANT с function_call
+            if (
+                result
+                and str(result[-1].role) == "assistant"
+                and getattr(result[-1], "function_call", None) is not None
+            ):
+                result.append(msg)
+            else:
+                logger.warning(
+                    "Sanitize: удалено осиротевшее FUNCTION-сообщение (name=%s)",
+                    getattr(msg, "name", "?"),
+                )
+        else:
+            result.append(msg)
+
+    return result
+
+
 def _summarize_tool_result(name: str | None, content: str) -> str:
     """Суммаризировать tool result для экономии токенов в истории.
 
@@ -201,10 +238,12 @@ class DialogManager:
 
         Если история длиннее max_history, оставляем первый элемент
         (системный промпт) + последние (max_history - 1) сообщений.
+        После обрезки — санитизация осиротевших FUNCTION-сообщений.
         """
         history = self._conversations.get(user_id)
         if history and len(history) > self._max_history:
-            self._conversations[user_id] = [history[0], *history[-(self._max_history - 1) :]]
+            trimmed = [history[0], *history[-(self._max_history - 1) :]]
+            self._conversations[user_id] = _sanitize_history(trimmed)
 
     def reset(self, user_id: int) -> None:
         """Сбросить историю диалога пользователя."""
@@ -273,6 +312,10 @@ class DialogManager:
         # Финальная обрезка если всё ещё слишком длинная
         if len(result) > self._max_history:
             result = [system, *result[-(self._max_history - 1) :]]
+
+        # Санитизация: удаляем осиротевшие FUNCTION-сообщения
+        # (могут появиться после обрезки, если пара ASSISTANT+FUNCTION была разорвана)
+        result = _sanitize_history(result)
 
         return result
 

@@ -339,6 +339,7 @@ class GigaChatService:
         consecutive_skips = 0  # подряд пропущенных дубликатов
         max_consecutive_skips = 3  # порог для принудительного текстового ответа
         cart_hint_injected = False  # флаг: подсказка о корзине уже вставлена
+        cart_created = False  # флаг: корзина успешно создана → следующий шаг текстовый
 
         while real_calls < self._max_tool_calls and total_steps < max_total_steps:
             total_steps += 1
@@ -364,11 +365,18 @@ class GigaChatService:
                 logger.info("User %d: вставлена подсказка о создании корзины", user_id)
 
             force_text = consecutive_skips >= max_consecutive_skips and cart_hint_injected
+
+            # После успешного создания корзины — принудительный текстовый ответ,
+            # чтобы модель не продолжала цикл с товарами из предыдущих запросов.
+            if cart_created:
+                force_text = True
+
             if force_text:
                 logger.warning(
-                    "User %d: %d дубликатов подряд (после подсказки), "
-                    "принудительный текстовый ответ",
+                    "User %d: принудительный текстовый ответ "
+                    "(cart_created=%s, дубликатов=%d)",
                     user_id,
+                    cart_created,
                     consecutive_skips,
                 )
 
@@ -488,6 +496,20 @@ class GigaChatService:
 
             call_tracker.record_result(tool_name, args, result)
             history.append(Messages(role=MessagesRole.FUNCTION, content=result, name=tool_name))
+
+            # После успешного создания корзины — принудительно завершаем текстом,
+            # чтобы модель не продолжала собирать товары из старых запросов в истории.
+            if tool_name == "vkusvill_cart_link_create":
+                try:
+                    cart_data = json.loads(result)
+                    if cart_data.get("ok"):
+                        cart_created = True
+                        logger.info(
+                            "User %d: корзина создана, следующий шаг — текстовый ответ",
+                            user_id,
+                        )
+                except (json.JSONDecodeError, TypeError):
+                    pass
 
         self._save_search_log(user_id, search_log)
         history = dm.trim_list(history)

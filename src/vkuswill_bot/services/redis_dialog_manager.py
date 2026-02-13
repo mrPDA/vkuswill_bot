@@ -17,7 +17,7 @@ from collections import OrderedDict
 from gigachat.models import FunctionCall, Messages, MessagesRole
 from redis.asyncio import Redis
 
-from vkuswill_bot.services.dialog_manager import _summarize_tool_result
+from vkuswill_bot.services.dialog_manager import _sanitize_history, _summarize_tool_result
 from vkuswill_bot.services.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -157,6 +157,10 @@ class RedisDialogManager:
 
         if len(result) > self._max_history:
             result = [system, *result[-(self._max_history - 1) :]]
+
+        # Санитизация: удаляем осиротевшие FUNCTION-сообщения
+        # (могут появиться после обрезки, если пара ASSISTANT+FUNCTION была разорвана)
+        result = _sanitize_history(result)
 
         return result
 
