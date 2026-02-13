@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.5.22] — 2026-02-14
+
+### Исправлено
+
+- **Объединение 2 корзин в одну** — после успешного создания корзины (`vkusvill_cart_link_create ok:true`) следующий вызов GigaChat принудительно текстовый (`function_call=none`), чтобы модель не продолжала собирать товары из предыдущих запросов в истории
+- **Ошибка 422 при обрезке истории** — при `trim_list` финальный срез мог разорвать пару ASSISTANT(function_call) + FUNCTION, оставляя осиротевшее FUNCTION-сообщение. Добавлена санитизация `_sanitize_history()` после каждой обрезки (DialogManager, RedisDialogManager)
+
 ## [0.5.21] — 2026-02-14
 
 ### Исправлено
