@@ -188,6 +188,34 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.admin_user_ids == []
 
+    # --- Freemium лимиты ---
+
+    def test_free_cart_limit_default(self):
+        """free_cart_limit по умолчанию — 5."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.free_cart_limit == 5
+
+    def test_bonus_cart_limit_default(self):
+        """bonus_cart_limit по умолчанию — 5."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.bonus_cart_limit == 5
+
+    def test_referral_cart_bonus_default(self):
+        """referral_cart_bonus по умолчанию — 3."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.referral_cart_bonus == 3
+
+    def test_freemium_limits_reasonable(self):
+        """Freemium лимиты в разумных пределах [1, 100]."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 1 <= cfg.free_cart_limit <= 100
+        assert 1 <= cfg.bonus_cart_limit <= 100
+        assert 1 <= cfg.referral_cart_bonus <= 100
+
     def test_webhook_cert_path_default_empty(self):
         """webhook_cert_path по умолчанию — пустая строка."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -386,6 +414,20 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.database_url == "postgresql://user:pass@localhost:5432/bot"
+
+    def test_freemium_limits_customizable(self):
+        """Freemium лимиты настраиваются через переменные окружения."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "FREE_CART_LIMIT": "10",
+            "BONUS_CART_LIMIT": "8",
+            "REFERRAL_CART_BONUS": "5",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.free_cart_limit == 10
+        assert cfg.bonus_cart_limit == 8
+        assert cfg.referral_cart_bonus == 5
 
     def test_webhook_cert_path_customizable(self):
         """webhook_cert_path настраивается через env."""

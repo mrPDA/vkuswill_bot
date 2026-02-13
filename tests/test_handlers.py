@@ -5,6 +5,9 @@
 - Команды /start, /help, /reset
 - handle_text: основной обработчик с моком GigaChatService
 - _send_typing_periodically: периодический typing indicator
+- Deep-link парсинг в /start
+- Survey flow (cmd_survey, callbacks)
+- Admin-команды: analytics, funnel, grant_carts, survey_stats
 """
 
 import asyncio
@@ -18,7 +21,15 @@ from vkuswill_bot.bot.handlers import (
     cmd_help,
     cmd_reset,
     cmd_start,
+    cmd_survey,
+    cmd_admin_analytics,
+    cmd_admin_funnel,
+    cmd_admin_grant_carts,
+    cmd_admin_survey_stats,
     handle_text,
+    survey_nps_callback,
+    survey_feature_callback,
+    survey_continue_callback,
 )
 
 from helpers import make_message
@@ -455,3 +466,537 @@ class TestSendTypingPeriodically:
 
         # send_chat_action вызван 1 раз (до wait_for)
         msg.bot.send_chat_action.assert_called_once()
+
+
+# ============================================================================
+# Deep-link парсинг в /start
+# ============================================================================
+
+
+class TestCmdStartDeepLink:
+    """Тесты парсинга deep-link параметров в /start."""
+
+    async def test_start_organic(self):
+        """/start без параметров — organic source."""
+        msg = make_message("/start", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        msg.answer.assert_called_once()
+        assert "Привет" in msg.answer.call_args[0][0]
+        # log_event вызван с source=organic
+        mock_store.log_event.assert_called_once()
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "organic"
+        assert metadata["is_new_user"] is True
+
+    async def test_start_referral(self):
+        """/start ref_12345 — referral source."""
+        msg = make_message("/start ref_12345", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "referral"
+        assert metadata["referrer_id"] == 12345
+
+    async def test_start_habr_source(self):
+        """/start habr — source=habr."""
+        msg = make_message("/start habr", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "habr"
+
+    async def test_start_vc_source(self):
+        """/start vc — source=vc."""
+        msg = make_message("/start vc", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "vc"
+
+    async def test_start_telegram_source(self):
+        """/start telegram — source=telegram."""
+        msg = make_message("/start telegram", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "telegram"
+
+    async def test_start_invalid_ref(self):
+        """/start ref_abc — невалидный referrer_id, source=organic."""
+        msg = make_message("/start ref_abc", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["source"] == "organic"
+        assert "referrer_id" not in metadata
+
+    async def test_start_existing_user(self):
+        """/start для существующего пользователя — is_new_user=False."""
+        msg = make_message("/start", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(
+            msg, user_store=mock_store, db_user={"message_count": 10},
+        )
+
+        metadata = mock_store.log_event.call_args[0][2]
+        assert metadata["is_new_user"] is False
+
+    async def test_start_without_user_store(self):
+        """/start без user_store — не падает, не логирует."""
+        msg = make_message("/start", user_id=42)
+
+        await cmd_start(msg, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "Привет" in msg.answer.call_args[0][0]
+
+
+# ============================================================================
+# Survey Flow
+# ============================================================================
+
+
+def _make_callback_query(data: str, user_id: int = 42) -> MagicMock:
+    """Создать мок CallbackQuery."""
+    callback = MagicMock()
+    callback.data = data
+    callback.from_user = MagicMock()
+    callback.from_user.id = user_id
+    callback.message = MagicMock()
+    callback.message.edit_text = AsyncMock()
+    callback.answer = AsyncMock()
+    return callback
+
+
+class TestSurveyFlow:
+    """Тесты survey flow: опрос для бонусных корзин."""
+
+    async def test_cmd_survey_starts(self):
+        """/survey запускает опрос."""
+        msg = make_message("/survey", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_survey(
+            msg,
+            user_store=mock_store,
+            db_user={"survey_completed": False},
+        )
+
+        msg.answer.assert_called_once()
+        answer_text = msg.answer.call_args[0][0]
+        assert "Оцените бота" in answer_text
+
+    async def test_cmd_survey_already_completed(self):
+        """/survey если уже пройден — сообщение об этом."""
+        msg = make_message("/survey", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_survey(
+            msg,
+            user_store=mock_store,
+            db_user={"survey_completed": True},
+        )
+
+        msg.answer.assert_called_once()
+        assert "уже прошли" in msg.answer.call_args[0][0]
+
+    async def test_cmd_survey_no_store(self):
+        """/survey без user_store — недоступен."""
+        msg = make_message("/survey", user_id=42)
+
+        await cmd_survey(msg, user_store=None, db_user={"survey_completed": False})
+
+        msg.answer.assert_called_once()
+        assert "недоступен" in msg.answer.call_args[0][0]
+
+    async def test_nps_callback(self):
+        """survey_nps_callback переходит к выбору фичи."""
+        callback = _make_callback_query("survey_nps_3")
+
+        await survey_nps_callback(callback)
+
+        callback.message.edit_text.assert_called_once()
+        text = callback.message.edit_text.call_args[0][0]
+        assert "Оценка" in text
+        assert "функция" in text
+        callback.answer.assert_called_once()
+
+    async def test_feature_callback(self):
+        """survey_feature_callback переходит к вопросу о продолжении."""
+        callback = _make_callback_query("survey_feat_search_4")
+
+        await survey_feature_callback(callback)
+
+        callback.message.edit_text.assert_called_once()
+        text = callback.message.edit_text.call_args[0][0]
+        assert "Поиск товаров" in text
+        assert "пользоваться ботом" in text
+        callback.answer.assert_called_once()
+
+    async def test_continue_callback_completes_survey(self):
+        """survey_continue_callback завершает опрос и выдаёт бонус."""
+        callback = _make_callback_query("survey_cont_yes_5_recipe")
+        mock_store = AsyncMock()
+        mock_store.mark_survey_completed_if_not.return_value = True
+        mock_store.grant_bonus_carts.return_value = 10
+
+        await survey_continue_callback(callback, user_store=mock_store)
+
+        # survey помечен завершённым
+        mock_store.mark_survey_completed_if_not.assert_called_once_with(42)
+        # Логирование survey_completed
+        log_calls = [
+            c for c in mock_store.log_event.call_args_list
+            if c[0][1] == "survey_completed"
+        ]
+        assert len(log_calls) == 1
+        metadata = log_calls[0][0][2]
+        assert metadata["nps"] == 5
+        assert metadata["useful_feature"] == "recipe"
+        assert metadata["will_continue"] == "yes"
+        # Бонусные корзины выданы
+        mock_store.grant_bonus_carts.assert_called_once()
+        # Ответ пользователю
+        callback.message.edit_text.assert_called_once()
+        text = callback.message.edit_text.call_args[0][0]
+        assert "Спасибо" in text
+        assert "добавлено" in text
+
+    async def test_continue_callback_already_completed(self):
+        """survey_continue_callback при повторном нажатии — отказ."""
+        callback = _make_callback_query("survey_cont_yes_5_recipe")
+        mock_store = AsyncMock()
+        mock_store.mark_survey_completed_if_not.return_value = False
+
+        await survey_continue_callback(callback, user_store=mock_store)
+
+        callback.message.edit_text.assert_called_once()
+        text = callback.message.edit_text.call_args[0][0]
+        assert "уже прошли" in text
+
+    async def test_continue_callback_no_store(self):
+        """survey_continue_callback без user_store — ошибка."""
+        callback = _make_callback_query("survey_cont_yes_5_recipe")
+
+        await survey_continue_callback(callback, user_store=None)
+
+        callback.answer.assert_called_once()
+
+
+# ============================================================================
+# Admin Commands: analytics, funnel, grant_carts, survey_stats
+# ============================================================================
+
+
+class TestAdminAnalytics:
+    """Тесты /admin_analytics."""
+
+    async def test_admin_analytics_success(self):
+        """Администратор получает аналитику."""
+        msg = make_message("/admin_analytics 7", user_id=1)
+        mock_agg = AsyncMock()
+        mock_agg.get_summary.return_value = {
+            "avg_dau": 15,
+            "total_new_users": 50,
+            "total_sessions": 200,
+            "total_carts": 30,
+            "total_gmv": 45000,
+            "avg_cart_value": 1500,
+            "total_searches": 150,
+            "total_errors": 5,
+            "total_limits": 10,
+            "total_surveys": 3,
+            "period_start": "2026-02-06",
+            "period_end": "2026-02-12",
+        }
+
+        await cmd_admin_analytics(
+            msg,
+            db_user={"role": "admin"},
+            stats_aggregator=mock_agg,
+        )
+
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "Аналитика" in text
+        assert "DAU" in text
+
+    async def test_admin_analytics_not_admin(self):
+        """Не-админ не получает аналитику."""
+        msg = make_message("/admin_analytics", user_id=1)
+
+        await cmd_admin_analytics(
+            msg,
+            db_user={"role": "user"},
+            stats_aggregator=AsyncMock(),
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "нет прав" in text
+
+    async def test_admin_analytics_no_aggregator(self):
+        """Без StatsAggregator — сообщение об ошибке."""
+        msg = make_message("/admin_analytics", user_id=1)
+
+        await cmd_admin_analytics(
+            msg,
+            db_user={"role": "admin"},
+            stats_aggregator=None,
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "не настроен" in text
+
+    async def test_admin_analytics_default_days(self):
+        """По умолчанию 7 дней."""
+        msg = make_message("/admin_analytics", user_id=1)
+        mock_agg = AsyncMock()
+        mock_agg.get_summary.return_value = {
+            "avg_dau": 0, "total_new_users": 0, "total_sessions": 0,
+            "total_carts": 0, "total_gmv": 0, "avg_cart_value": 0,
+            "total_searches": 0, "total_errors": 0, "total_limits": 0,
+            "total_surveys": 0, "period_start": "—", "period_end": "—",
+        }
+
+        await cmd_admin_analytics(
+            msg,
+            db_user={"role": "admin"},
+            stats_aggregator=mock_agg,
+        )
+
+        mock_agg.get_summary.assert_called_once_with(7)
+
+
+class TestAdminFunnel:
+    """Тесты /admin_funnel."""
+
+    async def test_admin_funnel_success(self):
+        """Администратор получает воронку."""
+        msg = make_message("/admin_funnel 14", user_id=1)
+        mock_agg = AsyncMock()
+        mock_agg.get_funnel.return_value = {
+            "started": 100,
+            "active": 80,
+            "searched": 60,
+            "carted": 20,
+            "hit_limit": 5,
+            "surveyed": 3,
+        }
+
+        await cmd_admin_funnel(
+            msg,
+            db_user={"role": "admin"},
+            stats_aggregator=mock_agg,
+        )
+
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "Воронка" in text
+        assert "/start" in text
+
+    async def test_admin_funnel_not_admin(self):
+        """Не-админ не получает воронку."""
+        msg = make_message("/admin_funnel", user_id=1)
+
+        await cmd_admin_funnel(
+            msg,
+            db_user={"role": "user"},
+            stats_aggregator=AsyncMock(),
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "нет прав" in text
+
+
+class TestAdminGrantCarts:
+    """Тесты /admin_grant_carts."""
+
+    async def test_grant_carts_success(self):
+        """Администратор выдаёт корзины пользователю."""
+        msg = make_message("/admin_grant_carts 123 10", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.grant_bonus_carts.return_value = 15
+
+        await cmd_admin_grant_carts(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        mock_store.grant_bonus_carts.assert_called_once_with(123, 10)
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "добавлено 10" in text
+        assert "15" in text
+
+    async def test_grant_carts_user_not_found(self):
+        """Пользователь не найден."""
+        msg = make_message("/admin_grant_carts 999 5", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.grant_bonus_carts.return_value = 0
+
+        await cmd_admin_grant_carts(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "не найден" in text
+
+    async def test_grant_carts_not_admin(self):
+        """Не-админ не может выдавать корзины."""
+        msg = make_message("/admin_grant_carts 123 10", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_grant_carts(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "user"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "нет прав" in text
+
+    async def test_grant_carts_no_args(self):
+        """Без аргументов — сообщение об использовании."""
+        msg = make_message("/admin_grant_carts", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_grant_carts(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "Использование" in text
+
+    async def test_grant_carts_invalid_amount(self):
+        """amount вне диапазона [1, 100]."""
+        msg = make_message("/admin_grant_carts 123 200", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_grant_carts(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "от 1 до 100" in text
+
+
+class TestAdminSurveyStats:
+    """Тесты /admin_survey_stats."""
+
+    async def test_survey_stats_success(self):
+        """Администратор получает статистику survey."""
+        msg = make_message("/admin_survey_stats", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.get_survey_stats.return_value = {
+            "total": 10,
+            "avg_nps": 4.5,
+            "will_continue": [
+                {"answer": "yes", "cnt": 7},
+                {"answer": "maybe", "cnt": 3},
+            ],
+            "features": [
+                {"feat": "search", "cnt": 5},
+                {"feat": "recipe", "cnt": 4},
+            ],
+        }
+
+        await cmd_admin_survey_stats(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "Survey" in text
+        assert "4.5" in text
+
+    async def test_survey_stats_empty(self):
+        """Нет данных — сообщение об этом."""
+        msg = make_message("/admin_survey_stats", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.get_survey_stats.return_value = {
+            "total": 0,
+            "avg_nps": 0.0,
+            "will_continue": [],
+            "features": [],
+        }
+
+        await cmd_admin_survey_stats(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "admin"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "Ни один" in text
+
+    async def test_survey_stats_not_admin(self):
+        """Не-админ не получает статистику."""
+        msg = make_message("/admin_survey_stats", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_survey_stats(
+            msg,
+            user_store=mock_store,
+            db_user={"role": "user"},
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "нет прав" in text
+
+
+# ============================================================================
+# handle_text: логирование bot_error
+# ============================================================================
+
+
+class TestHandleTextErrorLogging:
+    """Тесты логирования bot_error при ошибке в handle_text."""
+
+    async def test_logs_bot_error_event(self):
+        """При ошибке process_message логируется bot_error."""
+        msg = make_message("Тест", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.side_effect = RuntimeError("Boom!")
+        mock_store = AsyncMock()
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+
+        mock_store.log_event.assert_called_once()
+        call_args = mock_store.log_event.call_args[0]
+        assert call_args[0] == 42
+        assert call_args[1] == "bot_error"
+        assert call_args[2]["error_type"] == "RuntimeError"
+
+    async def test_no_log_without_user_store(self):
+        """Без user_store ошибка не логируется (не падает)."""
+        msg = make_message("Тест", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.side_effect = RuntimeError("Boom!")
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "ошибка" in msg.answer.call_args[0][0].lower()

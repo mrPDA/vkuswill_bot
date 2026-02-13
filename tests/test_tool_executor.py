@@ -1389,3 +1389,327 @@ class TestGetPreviousCart:
         data = json.loads(result)
         assert data["ok"] is True
         assert "нет предыдущей корзины" in data["message"]
+
+
+# ============================================================================
+# Freemium: лимиты корзин
+# ============================================================================
+
+
+class TestFreemiumCartLimit:
+    """Тесты проверки лимита корзин перед созданием."""
+
+    @pytest.fixture
+    def mock_user_store(self) -> AsyncMock:
+        """Замоканный UserStore с freemium-методами."""
+        store = AsyncMock()
+        store.check_cart_limit.return_value = {
+            "allowed": True,
+            "carts_created": 2,
+            "cart_limit": 5,
+        }
+        store.increment_carts.return_value = {
+            "carts_created": 3,
+            "cart_limit": 5,
+        }
+        store.log_event = AsyncMock()
+        return store
+
+    @pytest.fixture
+    def executor_with_user_store(
+        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+    ) -> ToolExecutor:
+        """ToolExecutor с UserStore для freemium-тестов."""
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            user_store=mock_user_store,
+        )
+
+    async def test_cart_limit_blocks_when_exhausted(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """execute возвращает ошибку если лимит корзин исчерпан."""
+        mock_user_store.check_cart_limit.return_value = {
+            "allowed": False,
+            "carts_created": 5,
+            "cart_limit": 5,
+        }
+
+        result = await executor_with_user_store.execute(
+            tool_name="vkusvill_cart_link_create",
+            args={"products": [{"xml_id": 100, "q": 1}]},
+            user_id=42,
+        )
+
+        data = json.loads(result)
+        assert data["error"] == "cart_limit_reached"
+        assert data["carts_created"] == 5
+        assert data["cart_limit"] == 5
+
+    async def test_cart_limit_allows_when_within_limit(
+        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+    ):
+        """execute пропускает запрос если лимит не исчерпан."""
+        mock_user_store.check_cart_limit.return_value = {
+            "allowed": True,
+            "carts_created": 2,
+            "cart_limit": 5,
+        }
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"ok": True, "data": {"link": "https://test.com", "products": []}},
+        )
+
+        result = await executor_with_user_store.execute(
+            tool_name="vkusvill_cart_link_create",
+            args={"products": [{"xml_id": 100, "q": 1}]},
+            user_id=42,
+        )
+
+        # Не должен быть ошибкой cart_limit_reached
+        assert "cart_limit_reached" not in result
+
+    async def test_cart_limit_check_error_does_not_block(
+        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+    ):
+        """Ошибка проверки лимита не блокирует создание корзины."""
+        mock_user_store.check_cart_limit.side_effect = Exception("DB error")
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"ok": True, "data": {"link": "https://test.com", "products": []}},
+        )
+
+        result = await executor_with_user_store.execute(
+            tool_name="vkusvill_cart_link_create",
+            args={"products": [{"xml_id": 100, "q": 1}]},
+            user_id=42,
+        )
+
+        # Запрос должен пройти несмотря на ошибку
+        assert "cart_limit_reached" not in result
+
+    async def test_cart_limit_not_checked_for_search(
+        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+    ):
+        """Лимит корзин не проверяется для поиска."""
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"data": [{"name": "Молоко", "xml_id": 100}]},
+        )
+
+        await executor_with_user_store.execute(
+            tool_name="vkusvill_products_search",
+            args={"q": "молоко"},
+            user_id=42,
+        )
+
+        mock_user_store.check_cart_limit.assert_not_called()
+
+    async def test_cart_limit_logs_event_on_block(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """Логирует событие cart_limit_reached при блокировке."""
+        mock_user_store.check_cart_limit.return_value = {
+            "allowed": False,
+            "carts_created": 5,
+            "cart_limit": 5,
+        }
+
+        await executor_with_user_store.execute(
+            tool_name="vkusvill_cart_link_create",
+            args={"products": []},
+            user_id=42,
+        )
+
+        mock_user_store.log_event.assert_called_once()
+        event_call = mock_user_store.log_event.call_args
+        assert event_call[0][0] == 42  # user_id
+        assert event_call[0][1] == "cart_limit_reached"
+
+
+class TestFreemiumCartCreated:
+    """Тесты _handle_cart_created_freemium."""
+
+    @pytest.fixture
+    def mock_user_store(self) -> AsyncMock:
+        store = AsyncMock()
+        store.increment_carts.return_value = {
+            "carts_created": 3,
+            "cart_limit": 5,
+        }
+        store.log_event = AsyncMock()
+        return store
+
+    @pytest.fixture
+    def executor_with_user_store(
+        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+    ) -> ToolExecutor:
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            user_store=mock_user_store,
+        )
+
+    async def test_adds_hint_with_remaining_carts(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """Добавляет хинт с оставшимися корзинами."""
+        result_text = json.dumps(
+            {"data": {"link": "https://test.com", "products": [], "price_summary": {"total": 500}}},
+        )
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 3,
+            "cart_limit": 5,
+        }
+
+        result = await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42,
+            args={"products": [{"xml_id": 100}]},
+            result=result_text,
+        )
+
+        assert "[Корзина 3 из 5]" in result
+        assert "[Осталось 2 бесплатных корзин]" in result
+
+    async def test_adds_limit_exhausted_hint(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """Добавляет предложение /survey когда лимит исчерпан."""
+        result_text = json.dumps({"data": {"products": []}})
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 5,
+            "cart_limit": 5,
+        }
+
+        result = await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42, args={}, result=result_text,
+        )
+
+        assert "[Корзина 5 из 5]" in result
+        assert "/survey" in result
+
+    async def test_logs_cart_created_event(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """Логирует событие cart_created."""
+        result_text = json.dumps(
+            {"data": {"products": [], "price_summary": {"total": 1500}}},
+        )
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 1,
+            "cart_limit": 5,
+        }
+
+        await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42,
+            args={"products": [{"xml_id": 1}, {"xml_id": 2}]},
+            result=result_text,
+        )
+
+        mock_user_store.log_event.assert_called_once()
+        call_args = mock_user_store.log_event.call_args[0]
+        assert call_args[0] == 42
+        assert call_args[1] == "cart_created"
+        metadata = call_args[2]
+        assert metadata["cart_number"] == 1
+        assert metadata["items_count"] == 2
+        assert metadata["total_sum"] == 1500
+
+    async def test_returns_original_on_error(
+        self, executor_with_user_store, mock_user_store,
+    ):
+        """При ошибке возвращает оригинальный результат."""
+        mock_user_store.increment_carts.side_effect = Exception("DB error")
+        original = '{"data": {"products": []}}'
+
+        result = await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42, args={}, result=original,
+        )
+
+        assert result == original
+
+    async def test_no_hint_without_user_store(
+        self, mock_mcp_client, search_processor, cart_processor,
+    ):
+        """Без user_store — возвращает оригинальный результат."""
+        executor = ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            user_store=None,
+        )
+        original = '{"data": {"products": []}}'
+
+        result = await executor._handle_cart_created_freemium(
+            user_id=42, args={}, result=original,
+        )
+
+        assert result == original
+
+
+class TestProductSearchEventLogging:
+    """Тесты логирования событий product_search."""
+
+    @pytest.fixture
+    def mock_user_store(self) -> AsyncMock:
+        store = AsyncMock()
+        store.log_event = AsyncMock()
+        return store
+
+    @pytest.fixture
+    def executor_with_user_store(
+        self, mock_mcp_client, search_processor, cart_processor, mock_user_store,
+    ) -> ToolExecutor:
+        return ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            user_store=mock_user_store,
+        )
+
+    async def test_logs_product_search_event(
+        self, executor_with_user_store, mock_mcp_client, mock_user_store,
+    ):
+        """Логирует событие product_search при поиске товаров."""
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"data": [{"name": "Молоко", "xml_id": 100, "price": 89}]},
+        )
+
+        await executor_with_user_store.postprocess_result(
+            tool_name="vkusvill_products_search",
+            args={"q": "молоко"},
+            result=mock_mcp_client.call_tool.return_value,
+            user_prefs={},
+            search_log={},
+            user_id=42,
+        )
+
+        mock_user_store.log_event.assert_called_once()
+        call_args = mock_user_store.log_event.call_args[0]
+        assert call_args[0] == 42
+        assert call_args[1] == "product_search"
+        assert call_args[2]["query"] == "молоко"
+
+    async def test_no_log_without_user_store(
+        self, mock_mcp_client, search_processor, cart_processor,
+    ):
+        """Без user_store — событие не логируется (не падает)."""
+        executor = ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            user_store=None,
+        )
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"data": [{"name": "Молоко", "xml_id": 100}]},
+        )
+
+        # Не должно упасть
+        await executor.postprocess_result(
+            tool_name="vkusvill_products_search",
+            args={"q": "молоко"},
+            result=mock_mcp_client.call_tool.return_value,
+            user_prefs={},
+            search_log={},
+            user_id=42,
+        )

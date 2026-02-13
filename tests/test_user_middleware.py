@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, UTC
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -237,3 +238,116 @@ class TestUserMiddlewareEdgeCases:
         assert result == "ok"
         store.get_or_create.assert_not_called()
         store.increment_message_count.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Тесты: session_start event
+# ---------------------------------------------------------------------------
+
+
+class TestUserMiddlewareSessionStart:
+    """Тесты логирования session_start."""
+
+    @pytest.mark.asyncio
+    async def test_session_start_on_first_message(self):
+        """session_start логируется при первом сообщении (last_message_at=None)."""
+        user_data = {
+            "user_id": 123,
+            "status": "active",
+            "rate_limit": None,
+            "rate_period": None,
+            "last_message_at": None,
+            "created_at": datetime.now(UTC) - timedelta(days=1),
+        }
+        store = _make_user_store(user_data)
+        store.log_event = AsyncMock()
+        mw = UserMiddleware(store)
+        handler = AsyncMock(return_value="ok")
+        msg = _make_message()
+
+        await mw(handler, msg, {})
+
+        # log_event вызван с session_start
+        log_calls = [
+            c for c in store.log_event.call_args_list
+            if c[0][1] == "session_start"
+        ]
+        assert len(log_calls) == 1
+        metadata = log_calls[0][0][2]
+        assert metadata["is_first_session"] is True
+        assert metadata["day_number"] == 1
+
+    @pytest.mark.asyncio
+    async def test_session_start_after_30_min_gap(self):
+        """session_start логируется если >30 мин с последнего сообщения."""
+        user_data = {
+            "user_id": 123,
+            "status": "active",
+            "rate_limit": None,
+            "rate_period": None,
+            "last_message_at": datetime.now(UTC) - timedelta(minutes=35),
+            "created_at": datetime.now(UTC) - timedelta(days=5),
+        }
+        store = _make_user_store(user_data)
+        store.log_event = AsyncMock()
+        mw = UserMiddleware(store)
+        handler = AsyncMock(return_value="ok")
+        msg = _make_message()
+
+        await mw(handler, msg, {})
+
+        log_calls = [
+            c for c in store.log_event.call_args_list
+            if c[0][1] == "session_start"
+        ]
+        assert len(log_calls) == 1
+        metadata = log_calls[0][0][2]
+        assert metadata["is_first_session"] is False
+        assert metadata["day_number"] == 5
+
+    @pytest.mark.asyncio
+    async def test_no_session_start_within_30_min(self):
+        """session_start НЕ логируется если <30 мин с последнего сообщения."""
+        user_data = {
+            "user_id": 123,
+            "status": "active",
+            "rate_limit": None,
+            "rate_period": None,
+            "last_message_at": datetime.now(UTC) - timedelta(minutes=5),
+            "created_at": datetime.now(UTC) - timedelta(days=1),
+        }
+        store = _make_user_store(user_data)
+        store.log_event = AsyncMock()
+        mw = UserMiddleware(store)
+        handler = AsyncMock(return_value="ok")
+        msg = _make_message()
+
+        await mw(handler, msg, {})
+
+        log_calls = [
+            c for c in store.log_event.call_args_list
+            if c[0][1] == "session_start"
+        ]
+        assert len(log_calls) == 0
+
+    @pytest.mark.asyncio
+    async def test_session_start_error_does_not_block(self):
+        """Ошибка логирования session_start не блокирует обработку."""
+        user_data = {
+            "user_id": 123,
+            "status": "active",
+            "rate_limit": None,
+            "rate_period": None,
+            "last_message_at": None,
+            "created_at": None,
+        }
+        store = _make_user_store(user_data)
+        store.log_event = AsyncMock(side_effect=RuntimeError("DB error"))
+        mw = UserMiddleware(store)
+        handler = AsyncMock(return_value="ok")
+        msg = _make_message()
+
+        result = await mw(handler, msg, {})
+
+        assert result == "ok"
+        handler.assert_called_once()
