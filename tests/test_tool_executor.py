@@ -1576,7 +1576,7 @@ class TestFreemiumCartCreated:
         executor_with_user_store,
         mock_user_store,
     ):
-        """Добавляет хинт с оставшимися корзинами."""
+        """Добавляет хинт с оставшимися корзинами внутри JSON."""
         result_text = json.dumps(
             {"data": {"link": "https://test.com", "products": [], "price_summary": {"total": 500}}},
         )
@@ -1591,8 +1591,14 @@ class TestFreemiumCartCreated:
             result=result_text,
         )
 
-        assert "[Корзина 3 из 5]" in result
-        assert "[Осталось 2 бесплатных корзин]" in result
+        # Результат должен быть валидным JSON
+        parsed = json.loads(result)
+        freemium = parsed["data"]["freemium"]
+        assert freemium["cart_number"] == 3
+        assert freemium["cart_limit"] == 5
+        assert freemium["remaining"] == 2
+        assert "Корзина 3 из 5" in freemium["hint"]
+        assert "Осталось 2" in freemium["hint"]
 
     async def test_adds_limit_exhausted_hint(
         self,
@@ -1612,8 +1618,13 @@ class TestFreemiumCartCreated:
             result=result_text,
         )
 
-        assert "[Корзина 5 из 5]" in result
-        assert "/survey" in result
+        # Результат должен быть валидным JSON
+        parsed = json.loads(result)
+        freemium = parsed["data"]["freemium"]
+        assert freemium["cart_number"] == 5
+        assert freemium["remaining"] == 0
+        assert "Корзина 5 из 5" in freemium["hint"]
+        assert "/survey" in freemium["hint"]
 
     async def test_logs_cart_created_event(
         self,
