@@ -58,7 +58,7 @@ class TestEnsureSchema:
     @pytest.mark.asyncio
     async def test_ensure_schema_delegates_to_migration_runner(self, pool_and_conn):
         """ensure_schema делегирует MigrationRunner.run()."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         store = UserStore(pool)
         assert not store._schema_ready
 
