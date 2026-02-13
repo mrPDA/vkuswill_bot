@@ -7,6 +7,7 @@
 import json
 import logging
 import os
+import stat
 
 import aiosqlite
 
@@ -34,6 +35,35 @@ class PreferencesStore:
     def __init__(self, db_path: str) -> None:
         self._db_path = db_path
         self._db: aiosqlite.Connection | None = None
+        self._readonly = False
+
+    # ------------------------------------------------------------------
+    # Инициализация и проверка доступа
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _fix_permissions(path: str) -> bool:
+        """Попытаться сделать файл доступным на запись (u+w).
+
+        Returns:
+            True если удалось исправить или файл уже writable.
+        """
+        try:
+            st = os.stat(path)
+            if not (st.st_mode & stat.S_IWUSR):
+                os.chmod(path, st.st_mode | stat.S_IWUSR)
+                logger.info("Исправлены права на запись: %s", path)
+            return True
+        except OSError as e:
+            logger.warning("Не удалось исправить права %s: %s", path, e)
+            return False
+
+    def _ensure_writable_paths(self) -> None:
+        """Проверить и исправить права на .db, .db-wal, .db-shm."""
+        for suffix in ("", "-wal", "-shm"):
+            p = self._db_path + suffix
+            if os.path.exists(p):
+                self._fix_permissions(p)
 
     async def _ensure_db(self) -> aiosqlite.Connection:
         """Открыть или переиспользовать соединение с БД."""
@@ -42,13 +72,46 @@ class PreferencesStore:
             db_dir = os.path.dirname(self._db_path)
             if db_dir:
                 os.makedirs(db_dir, exist_ok=True)
+
+            # Попытка исправить права на существующие файлы БД
+            self._ensure_writable_paths()
+
             self._db = await aiosqlite.connect(self._db_path)
             self._db.row_factory = aiosqlite.Row
             await self._db.execute("PRAGMA journal_mode=WAL")
             await self._db.execute(_CREATE_TABLE_SQL)
             await self._db.commit()
             logger.info("SQLite база предпочтений открыта: %s", self._db_path)
+
+            # Проверка записи: пробный INSERT + DELETE
+            await self._check_write_access()
         return self._db
+
+    async def _check_write_access(self) -> None:
+        """Проверить, что БД доступна на запись (пробный INSERT + DELETE)."""
+        try:
+            if self._db is None:
+                self._readonly = True
+                logger.error("SQLite: _check_write_access вызван до инициализации _db")
+                return
+            await self._db.execute(
+                "INSERT OR REPLACE INTO preferences "
+                "(user_id, category, preference) VALUES (0, '__write_test__', 'ok')",
+            )
+            await self._db.execute(
+                "DELETE FROM preferences WHERE user_id = 0 AND category = '__write_test__'",
+            )
+            await self._db.commit()
+            self._readonly = False
+            logger.info("SQLite: проверка записи — ОК")
+        except Exception as e:
+            self._readonly = True
+            logger.error(
+                "SQLite READONLY! БД %s недоступна на запись: %s. "
+                "Предпочтения НЕ будут сохраняться до перезапуска.",
+                self._db_path,
+                e,
+            )
 
     async def get_all(self, user_id: int) -> list[dict]:
         """Получить все предпочтения пользователя.
@@ -99,6 +162,24 @@ class PreferencesStore:
             )
 
         db = await self._ensure_db()
+
+        # Быстрый отказ если БД readonly (не повторяем бесполезные попытки)
+        if self._readonly:
+            logger.warning(
+                "Отклонена запись в readonly БД: user=%d, %s → %s",
+                user_id,
+                category,
+                preference,
+            )
+            return json.dumps(
+                {
+                    "ok": False,
+                    "message": "Не удалось сохранить предпочтение: база данных "
+                    "временно недоступна на запись. Предпочтение НЕ сохранено. "
+                    "Сообщи пользователю об этой проблеме.",
+                },
+                ensure_ascii=False,
+            )
 
         # Проверяем лимит количества предпочтений на пользователя
         # (только если это новая категория, а не обновление существующей)
@@ -158,6 +239,17 @@ class PreferencesStore:
             Подтверждение в формате JSON-строки для GigaChat.
         """
         db = await self._ensure_db()
+
+        if self._readonly:
+            return json.dumps(
+                {
+                    "ok": False,
+                    "message": "Не удалось удалить предпочтение: база данных "
+                    "временно недоступна на запись.",
+                },
+                ensure_ascii=False,
+            )
+
         cursor = await db.execute(
             "DELETE FROM preferences WHERE user_id = ? AND category = ?",
             (user_id, category.strip().lower()),

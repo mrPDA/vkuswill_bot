@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import datetime, UTC
 from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
@@ -89,6 +90,27 @@ class UserMiddleware(BaseMiddleware):
         # Пробрасываем в data для хендлеров и ThrottlingMiddleware
         data["db_user"] = db_user
         data["user_store"] = self._user_store
+
+        # --- Событие: начало сессии (>30 мин с последнего сообщения) ---
+        last_msg_at = db_user.get("last_message_at")
+        if last_msg_at is None or (
+            datetime.now(UTC) - last_msg_at
+        ).total_seconds() > 1800:
+            try:
+                _created_at = db_user.get("created_at")
+                _day_number = 0
+                if _created_at:
+                    _day_number = (datetime.now(UTC) - _created_at).days
+                await self._user_store.log_event(
+                    tg_user.id,
+                    "session_start",
+                    {
+                        "day_number": _day_number,
+                        "is_first_session": last_msg_at is None,
+                    },
+                )
+            except Exception:
+                logger.debug("Ошибка логирования session_start")
 
         # Персональные лимиты (если заданы)
         if db_user.get("rate_limit") is not None:

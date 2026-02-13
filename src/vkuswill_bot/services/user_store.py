@@ -9,15 +9,11 @@ from __future__ import annotations
 import json
 import logging
 from datetime import datetime, UTC
-from pathlib import Path
 from typing import Any
 
 import asyncpg
 
 logger = logging.getLogger(__name__)
-
-# Путь к SQL-миграции (рядом с корнем проекта)
-_MIGRATION_PATH = Path(__file__).resolve().parents[3] / "migrations" / "001_create_users.sql"
 
 # Допустимые значения для CHECK-ограничений
 VALID_ROLES = frozenset({"user", "admin"})
@@ -39,14 +35,22 @@ class UserStore:
     # ------------------------------------------------------------------
 
     async def ensure_schema(self) -> None:
-        """Создать таблицы, если они ещё не существуют."""
+        """Применить все SQL-миграции через MigrationRunner.
+
+        Безопасно вызывать многократно — уже применённые миграции
+        пропускаются (отслеживаются в таблице ``schema_migrations``).
+
+        В production миграции запускаются один раз из ``__main__.py``;
+        повторный вызов здесь — подстраховка для standalone-скриптов.
+        """
         if self._schema_ready:
             return
-        sql = _MIGRATION_PATH.read_text(encoding="utf-8")
-        async with self._pool.acquire() as conn:
-            await conn.execute(sql)
+        from vkuswill_bot.services.migration_runner import MigrationRunner
+
+        runner = MigrationRunner(self._pool)
+        await runner.run()
         self._schema_ready = True
-        logger.info("PostgreSQL: схема users/user_events готова")
+        logger.info("PostgreSQL: схема актуальна (MigrationRunner)")
 
     # ------------------------------------------------------------------
     # CRUD
@@ -301,6 +305,128 @@ class UserStore:
             "created_at": user_row["created_at"],
             "last_message_at": user_row["last_message_at"],
             "events": events_summary,
+        }
+
+    # ------------------------------------------------------------------
+    # Freemium: лимиты корзин
+    # ------------------------------------------------------------------
+
+    async def check_cart_limit(
+        self, user_id: int, default_limit: int = 5,
+    ) -> dict[str, Any]:
+        """Проверить, может ли пользователь создать корзину.
+
+        Args:
+            default_limit: лимит по умолчанию, если пользователь не найден.
+
+        Returns:
+            ``{"allowed": bool, "carts_created": int, "cart_limit": int}``
+        """
+        await self.ensure_schema()
+        sql = "SELECT carts_created, cart_limit FROM users WHERE user_id = $1"
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id)
+        if not row:
+            return {"allowed": True, "carts_created": 0, "cart_limit": default_limit}
+        return {
+            "allowed": row["carts_created"] < row["cart_limit"],
+            "carts_created": row["carts_created"],
+            "cart_limit": row["cart_limit"],
+        }
+
+    async def increment_carts(self, user_id: int) -> dict[str, Any]:
+        """Увеличить счётчик корзин на 1.
+
+        Returns:
+            ``{"carts_created": int, "cart_limit": int}``
+        """
+        await self.ensure_schema()
+        sql = """
+            UPDATE users
+            SET carts_created = carts_created + 1, updated_at = NOW()
+            WHERE user_id = $1
+            RETURNING carts_created, cart_limit
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id)
+        return dict(row) if row else {}
+
+    async def grant_bonus_carts(self, user_id: int, amount: int = 5) -> int:
+        """Увеличить лимит корзин.
+
+        Returns:
+            Новый лимит корзин (0 если пользователь не найден).
+        """
+        await self.ensure_schema()
+        sql = """
+            UPDATE users
+            SET cart_limit = cart_limit + $2, updated_at = NOW()
+            WHERE user_id = $1
+            RETURNING cart_limit
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id, amount)
+        return row["cart_limit"] if row else 0
+
+    async def mark_survey_completed(self, user_id: int) -> None:
+        """Пометить, что пользователь заполнил survey."""
+        await self.ensure_schema()
+        sql = """
+            UPDATE users
+            SET survey_completed = TRUE, updated_at = NOW()
+            WHERE user_id = $1
+        """
+        async with self._pool.acquire() as conn:
+            await conn.execute(sql, user_id)
+
+    async def mark_survey_completed_if_not(self, user_id: int) -> bool:
+        """Атомарно пометить survey_completed, если ещё не пройден.
+
+        Предотвращает race condition при двойном нажатии кнопки.
+
+        Returns:
+            True если пометка выставлена (первый раз), False если уже был пройден.
+        """
+        await self.ensure_schema()
+        sql = """
+            UPDATE users SET survey_completed = TRUE, updated_at = NOW()
+            WHERE user_id = $1 AND survey_completed = FALSE
+            RETURNING user_id
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id)
+        return row is not None
+
+    async def get_survey_stats(self) -> dict[str, Any]:
+        """Агрегированная статистика по survey (для /admin_survey_stats).
+
+        Returns:
+            Словарь с total, avg_nps, will_continue (список), features (список).
+        """
+        await self.ensure_schema()
+        async with self._pool.acquire() as conn:
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_events WHERE event_type = 'survey_completed'"
+            )
+            avg_nps = await conn.fetchval(
+                "SELECT AVG((metadata->>'nps')::int) FROM user_events "
+                "WHERE event_type = 'survey_completed'"
+            )
+            will_continue = await conn.fetch(
+                "SELECT metadata->>'will_continue' AS answer, COUNT(*) AS cnt "
+                "FROM user_events WHERE event_type = 'survey_completed' "
+                "GROUP BY answer ORDER BY cnt DESC"
+            )
+            features = await conn.fetch(
+                "SELECT metadata->>'useful_feature' AS feat, COUNT(*) AS cnt "
+                "FROM user_events WHERE event_type = 'survey_completed' "
+                "GROUP BY feat ORDER BY cnt DESC"
+            )
+        return {
+            "total": total or 0,
+            "avg_nps": float(avg_nps) if avg_nps is not None else 0.0,
+            "will_continue": [dict(r) for r in will_continue],
+            "features": [dict(r) for r in features],
         }
 
     # ------------------------------------------------------------------
