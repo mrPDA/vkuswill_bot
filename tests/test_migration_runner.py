@@ -183,9 +183,7 @@ class TestMigrationRunner:
         pool, conn = pool_and_conn
         conn.fetch.return_value = []
 
-        runner = MigrationRunner(
-            pool, migrations_dir=tmp_path / "nonexistent"
-        )
+        runner = MigrationRunner(pool, migrations_dir=tmp_path / "nonexistent")
         applied = await runner.run()
 
         assert applied == []
@@ -214,7 +212,8 @@ class TestMigrationRunner:
         insert_calls = [
             call
             for call in conn.execute.call_args_list
-            if len(call[0]) >= 1 and "schema_migrations" in str(call[0][0])
+            if len(call[0]) >= 1
+            and "schema_migrations" in str(call[0][0])
             and "INSERT" in str(call[0][0])
         ]
         assert len(insert_calls) == 1

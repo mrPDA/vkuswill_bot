@@ -118,9 +118,7 @@ PERSONAS: dict[str, list[dict]] = {
             "dialog_id": "D-011",
             "persona": "Борис (папа, спешит)",
             "description": "Готовые обеды на 3 дня — минимальный ввод",
-            "messages": [
-                "Готовые обеды на 4 чел на 3 дня"
-            ],
+            "messages": ["Готовые обеды на 4 чел на 3 дня"],
             "checks": [
                 "не задаёт вопросов — сразу корзина",
                 "разнообразие (не одно блюдо)",
@@ -273,10 +271,12 @@ async def create_services() -> tuple[
 
     # КБЖУ-сервис
     from vkuswill_bot.services.nutrition_service import NutritionService
+
     nutrition_service = NutritionService()
 
     # Снимки корзины (in-memory для теста)
     from vkuswill_bot.services.cart_snapshot_store import InMemoryCartSnapshotStore
+
     cart_snapshot_store = InMemoryCartSnapshotStore()
 
     # Исполнитель инструментов
@@ -480,13 +480,15 @@ def generate_report(results: list[DialogResult]) -> str:
     partial = sum(1 for r in results if r.verdict.startswith("⚠️"))
     fail = sum(1 for r in results if r.verdict.startswith("❌"))
 
-    lines.extend([
-        "",
-        f"**Итого:** ✅ {success} успех | ⚠️ {partial} частично | ❌ {fail} провал",
-        "",
-        "---",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"**Итого:** ✅ {success} успех | ⚠️ {partial} частично | ❌ {fail} провал",
+            "",
+            "---",
+            "",
+        ]
+    )
 
     # Детали каждого диалога
     for r in results:

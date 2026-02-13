@@ -268,10 +268,7 @@ class TestUserMiddlewareSessionStart:
         await mw(handler, msg, {})
 
         # log_event вызван с session_start
-        log_calls = [
-            c for c in store.log_event.call_args_list
-            if c[0][1] == "session_start"
-        ]
+        log_calls = [c for c in store.log_event.call_args_list if c[0][1] == "session_start"]
         assert len(log_calls) == 1
         metadata = log_calls[0][0][2]
         assert metadata["is_first_session"] is True
@@ -296,10 +293,7 @@ class TestUserMiddlewareSessionStart:
 
         await mw(handler, msg, {})
 
-        log_calls = [
-            c for c in store.log_event.call_args_list
-            if c[0][1] == "session_start"
-        ]
+        log_calls = [c for c in store.log_event.call_args_list if c[0][1] == "session_start"]
         assert len(log_calls) == 1
         metadata = log_calls[0][0][2]
         assert metadata["is_first_session"] is False
@@ -324,10 +318,7 @@ class TestUserMiddlewareSessionStart:
 
         await mw(handler, msg, {})
 
-        log_calls = [
-            c for c in store.log_event.call_args_list
-            if c[0][1] == "session_start"
-        ]
+        log_calls = [c for c in store.log_event.call_args_list if c[0][1] == "session_start"]
         assert len(log_calls) == 0
 
     @pytest.mark.asyncio

@@ -298,8 +298,9 @@ class ToolExecutor:
                                 "carts_used": limit_info["carts_created"],
                                 "cart_limit": limit_info["cart_limit"],
                                 "tier": (
-                                    2 if limit_info["cart_limit"]
-                                    > app_config.free_cart_limit else 1
+                                    2
+                                    if limit_info["cart_limit"] > app_config.free_cart_limit
+                                    else 1
                                 ),
                             },
                         )
@@ -419,7 +420,9 @@ class ToolExecutor:
                     await self._save_cart_snapshot(user_id, args, result)
                     # --- Freemium: инкремент счётчика + событие ---
                     result = await self._handle_cart_created_freemium(
-                        user_id, args, result,
+                        user_id,
+                        args,
+                        result,
                     )
                 else:
                     logger.warning(

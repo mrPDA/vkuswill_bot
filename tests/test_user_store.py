@@ -62,9 +62,7 @@ class TestEnsureSchema:
         store = UserStore(pool)
         assert not store._schema_ready
 
-        with patch(
-            "vkuswill_bot.services.migration_runner.MigrationRunner"
-        ) as MockRunner:
+        with patch("vkuswill_bot.services.migration_runner.MigrationRunner") as MockRunner:
             mock_runner = AsyncMock()
             MockRunner.return_value = mock_runner
 

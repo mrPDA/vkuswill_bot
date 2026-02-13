@@ -549,7 +549,9 @@ class TestCmdStartDeepLink:
         mock_store = AsyncMock()
 
         await cmd_start(
-            msg, user_store=mock_store, db_user={"message_count": 10},
+            msg,
+            user_store=mock_store,
+            db_user={"message_count": 10},
         )
 
         metadata = mock_store.log_event.call_args[0][2]
@@ -660,8 +662,7 @@ class TestSurveyFlow:
         mock_store.mark_survey_completed_if_not.assert_called_once_with(42)
         # Логирование survey_completed
         log_calls = [
-            c for c in mock_store.log_event.call_args_list
-            if c[0][1] == "survey_completed"
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "survey_completed"
         ]
         assert len(log_calls) == 1
         metadata = log_calls[0][0][2]
@@ -766,10 +767,18 @@ class TestAdminAnalytics:
         msg = make_message("/admin_analytics", user_id=1)
         mock_agg = AsyncMock()
         mock_agg.get_summary.return_value = {
-            "avg_dau": 0, "total_new_users": 0, "total_sessions": 0,
-            "total_carts": 0, "total_gmv": 0, "avg_cart_value": 0,
-            "total_searches": 0, "total_errors": 0, "total_limits": 0,
-            "total_surveys": 0, "period_start": "—", "period_end": "—",
+            "avg_dau": 0,
+            "total_new_users": 0,
+            "total_sessions": 0,
+            "total_carts": 0,
+            "total_gmv": 0,
+            "avg_cart_value": 0,
+            "total_searches": 0,
+            "total_errors": 0,
+            "total_limits": 0,
+            "total_surveys": 0,
+            "period_start": "—",
+            "period_end": "—",
         }
 
         await cmd_admin_analytics(
