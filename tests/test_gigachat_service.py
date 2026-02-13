@@ -1761,27 +1761,34 @@ class TestGetPreviousCartTool:
 
 
 class TestExtractUsage:
-    """Тесты _extract_usage — извлечение usage из ответа GigaChat."""
+    """Тесты _extract_usage — извлечение usage и cost из ответа GigaChat."""
 
     def test_basic_usage(self, service):
-        """Извлекает prompt/completion/total tokens."""
+        """Извлекает prompt/completion/total tokens и рассчитывает cost."""
         response = make_text_response("Привет")
 
-        result = service._extract_usage(response)
+        usage, cost = service._extract_usage(response)
 
-        assert result is not None
-        assert result["input"] == 10
-        assert result["output"] == 5
-        assert result["total"] == 15
+        assert usage is not None
+        assert usage["input"] == 10
+        assert usage["output"] == 5
+        assert usage["total"] == 15
+        # cost_details: GigaChat = 65₽/1M, без precached
+        assert cost is not None
+        price = 65 / 1_000_000
+        assert cost["input"] == pytest.approx(10 * price)
+        assert cost["output"] == pytest.approx(5 * price)
+        assert cost["total"] == pytest.approx(15 * price)
 
     def test_none_usage(self, service):
-        """Возвращает None если usage отсутствует."""
+        """Возвращает (None, None) если usage отсутствует."""
         response = make_text_response("Привет")
         response.usage = None
 
-        result = service._extract_usage(response)
+        usage, cost = service._extract_usage(response)
 
-        assert result is None
+        assert usage is None
+        assert cost is None
 
     def test_partial_usage(self, service):
         """Работает с частичным usage (только prompt_tokens)."""
@@ -1791,9 +1798,14 @@ class TestExtractUsage:
         response.usage.completion_tokens = None
         response.usage.total_tokens = None
 
-        result = service._extract_usage(response)
+        usage, cost = service._extract_usage(response)
 
-        assert result == {"input": 50}
+        assert usage == {"input": 50}
+        # cost рассчитывается
+        assert cost is not None
+        price = 65 / 1_000_000
+        assert cost["input"] == pytest.approx(50 * price)
+        assert cost["output"] == pytest.approx(0)
 
     def test_non_int_values_ignored(self, service):
         """Нецелочисленные значения игнорируются."""
@@ -1803,24 +1815,25 @@ class TestExtractUsage:
         response.usage.completion_tokens = 5
         response.usage.total_tokens = None
 
-        result = service._extract_usage(response)
+        usage, _cost = service._extract_usage(response)
 
-        assert result == {"output": 5}
+        assert usage == {"output": 5}
 
     def test_all_none_returns_none(self, service):
-        """Если все значения None — возвращает None."""
+        """Если все значения None — возвращает (None, None)."""
         response = make_text_response("Привет")
         response.usage = MagicMock()
         response.usage.prompt_tokens = None
         response.usage.completion_tokens = None
         response.usage.total_tokens = None
 
-        result = service._extract_usage(response)
+        usage, cost = service._extract_usage(response)
 
-        assert result is None
+        assert usage is None
+        assert cost is None
 
-    def test_precached_prompt_tokens_logged(self, service, caplog):
-        """precached_prompt_tokens логируется в structured logging."""
+    def test_precached_tokens_reduce_cost(self, service, caplog):
+        """precached_tokens вычитаются из input cost (не тарифицируются)."""
         import logging
 
         response = make_text_response("Привет")
@@ -1831,14 +1844,35 @@ class TestExtractUsage:
         response.usage.precached_prompt_tokens = 80
 
         with caplog.at_level(logging.INFO):
-            result = service._extract_usage(response)
+            usage, cost = service._extract_usage(response)
 
-        assert result is not None
-        assert result["input"] == 100
-        assert result["precached_tokens"] == 80
-        assert result["billable_tokens"] == 40  # 120 - 80
-        # Проверяем что в лог попало precached и billable
+        assert usage is not None
+        assert usage["input"] == 100
+        assert usage["precached_tokens"] == 80
+        assert usage["billable_tokens"] == 40  # 120 - 80
+        # cost: billable_input = 100 - 80 = 20, output = 20
+        assert cost is not None
+        price = 65 / 1_000_000
+        assert cost["input"] == pytest.approx(20 * price)  # вычтены precached
+        assert cost["output"] == pytest.approx(20 * price)
+        assert cost["total"] == pytest.approx(40 * price)
+        # Лог содержит precached и billable
         log_output = " ".join(caplog.messages)
         assert "precached" in log_output
         assert "80" in log_output
         assert "billable" in log_output
+
+    def test_unknown_model_no_cost(self, mock_mcp_client):
+        """Для неизвестной модели cost_details = None."""
+        svc = GigaChatService(
+            credentials="test-creds",
+            model="UnknownModel-99",
+            scope="GIGACHAT_API_PERS",
+            mcp_client=mock_mcp_client,
+        )
+        response = make_text_response("Привет")
+
+        usage, cost = svc._extract_usage(response)
+
+        assert usage is not None
+        assert cost is None
