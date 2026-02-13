@@ -684,10 +684,8 @@ async def cmd_admin_analytics(
     if message.text:
         parts = message.text.split(maxsplit=1)
         if len(parts) > 1:
-            try:
+            with contextlib.suppress(ValueError):
                 days = max(1, min(int(parts[1]), 365))
-            except ValueError:
-                pass
 
     try:
         s = await stats_aggregator.get_summary(days)
@@ -754,10 +752,8 @@ async def cmd_admin_funnel(
     if message.text:
         parts = message.text.split(maxsplit=1)
         if len(parts) > 1:
-            try:
+            with contextlib.suppress(ValueError):
                 days = max(1, min(int(parts[1]), 365))
-            except ValueError:
-                pass
 
     try:
         f = await stats_aggregator.get_funnel(days)
@@ -794,7 +790,7 @@ async def cmd_admin_funnel(
 @admin_router.message(Command("admin_grant_carts"))
 async def cmd_admin_grant_carts(
     message: Message,
-    user_store: UserStore,
+    user_store: UserStore | None = None,
     db_user: dict | None = None,
 ) -> None:
     """Выдать корзины пользователю: /admin_grant_carts <user_id> <amount>."""
@@ -802,6 +798,9 @@ async def cmd_admin_grant_carts(
         return
     if not db_user or db_user.get("role") != "admin":
         await message.answer("У вас нет прав администратора.")
+        return
+    if user_store is None:
+        await message.answer("База данных недоступна.")
         return
     if not message.text:
         return
@@ -847,7 +846,7 @@ async def cmd_admin_grant_carts(
 @admin_router.message(Command("admin_survey_stats"))
 async def cmd_admin_survey_stats(
     message: Message,
-    user_store: UserStore,
+    user_store: UserStore | None = None,
     db_user: dict | None = None,
 ) -> None:
     """Статистика по survey: /admin_survey_stats."""
@@ -855,6 +854,9 @@ async def cmd_admin_survey_stats(
         return
     if not db_user or db_user.get("role") != "admin":
         await message.answer("У вас нет прав администратора.")
+        return
+    if user_store is None:
+        await message.answer("База данных недоступна.")
         return
 
     try:

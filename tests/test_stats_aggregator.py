@@ -13,7 +13,8 @@
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timedelta, UTC
+import contextlib
+from datetime import datetime, UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -64,7 +65,7 @@ class TestEnsureSchema:
     @pytest.mark.asyncio
     async def test_delegates_to_migration_runner(self, pool_and_conn):
         """ensure_schema делегирует MigrationRunner.run()."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
         with patch(
@@ -317,13 +318,13 @@ class TestLifecycle:
     @pytest.mark.asyncio
     async def test_start_creates_task(self, pool_and_conn):
         """start() создаёт asyncio задачу."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
         assert agg._task is None
 
         # Мокаем _loop чтобы задача не запускала реальный цикл
-        with patch.object(agg, "_loop", new_callable=AsyncMock) as mock_loop:
+        with patch.object(agg, "_loop", new_callable=AsyncMock):
             agg.start()
             assert agg._task is not None
             # Даём задаче шанс стартовать
@@ -332,15 +333,13 @@ class TestLifecycle:
         # Очищаем задачу
         if agg._task and not agg._task.done():
             agg._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await agg._task
-            except asyncio.CancelledError:
-                pass
 
     @pytest.mark.asyncio
     async def test_stop_cancels_task(self, pool_and_conn):
         """stop() отменяет задачу."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
         # Создаём задачу, которая просто ждёт отмены
@@ -356,7 +355,7 @@ class TestLifecycle:
     @pytest.mark.asyncio
     async def test_stop_no_task_safe(self, pool_and_conn):
         """stop() не падает если задача не запущена."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
         await agg.stop()  # Не должно упасть
@@ -364,7 +363,7 @@ class TestLifecycle:
     @pytest.mark.asyncio
     async def test_start_idempotent(self, pool_and_conn):
         """Повторный start() не создаёт вторую задачу."""
-        pool, conn = pool_and_conn
+        pool, _conn = pool_and_conn
         agg = StatsAggregator(pool)
 
         with patch.object(agg, "_loop", new_callable=AsyncMock):
@@ -378,10 +377,8 @@ class TestLifecycle:
         # Очищаем
         if agg._task and not agg._task.done():
             agg._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await agg._task
-            except asyncio.CancelledError:
-                pass
 
 
 # ---------------------------------------------------------------------------

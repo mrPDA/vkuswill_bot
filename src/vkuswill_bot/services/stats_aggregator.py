@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 from datetime import datetime, timedelta, UTC
@@ -171,10 +172,8 @@ class StatsAggregator:
         """Остановить фоновую задачу."""
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
             logger.info("StatsAggregator: фоновая задача остановлена")
 
     # ------------------------------------------------------------------
