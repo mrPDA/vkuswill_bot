@@ -54,13 +54,14 @@ def _summarize_tool_result(name: str | None, content: str) -> str:
         products = data.get("products", [])
         query = data.get("query", "")
         if products and isinstance(products, list):
-            first = products[0] if products else {}
+            first = products[0]
             first_name = first.get("name", "?")
             first_price = first.get("price", "?")
             return (
                 f"Поиск \"{query}\": найдено {len(products)} товаров, "
                 f"лучший: {first_name} ({first_price}₽)"
             )
+        return f"Поиск \"{query}\": найдено 0 товаров"
 
     # vkusvill_cart_link_create → краткое резюме
     if name == "vkusvill_cart_link_create" or "cart_link" in data:
