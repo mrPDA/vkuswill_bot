@@ -27,11 +27,82 @@ MAX_CONVERSATIONS = 1000
 MAX_SUMMARY_LENGTH = 200
 
 
+def _fmt_products_search(data: dict) -> str:
+    """Форматировать результат vkusvill_products_search."""
+    products = data.get("products", [])
+    query = data.get("query", "")
+    if products and isinstance(products, list):
+        first = products[0]
+        first_name = first.get("name", "?")
+        first_price = first.get("price", "?")
+        return (
+            f'Поиск "{query}": найдено {len(products)} товаров, '
+            f"лучший: {first_name} ({first_price}₽)"
+        )
+    return f'Поиск "{query}": найдено 0 товаров'
+
+
+def _fmt_cart_link(data: dict) -> str:
+    """Форматировать результат vkusvill_cart_link_create."""
+    ps = data.get("price_summary", {})
+    total = ps.get("total", data.get("total", "?"))
+    count = ps.get("count", len(data.get("items", [])))
+    link = data.get("cart_link", data.get("link", ""))
+    return f"Корзина: {count} товаров, итого {total}₽, ссылка: {link}"
+
+
+def _fmt_preferences(data: dict) -> str:
+    """Форматировать результат user_preferences_get."""
+    prefs = data.get("preferences", data)
+    if isinstance(prefs, dict):
+        items = [f"{k}: {v}" for k, v in list(prefs.items())[:5]]
+        return f"Предпочтения: {', '.join(items)}" if items else "Предпочтения: пусто"
+    return f"Предпочтения: {str(prefs)[:MAX_SUMMARY_LENGTH]}"
+
+
+def _fmt_recipe(data: dict) -> str:
+    """Форматировать результат recipe_ingredients."""
+    dish = data.get("dish", "?")
+    ingredients = data.get("ingredients", [])
+    count = len(ingredients) if isinstance(ingredients, list) else "?"
+    return f'Рецепт "{dish}": {count} ингредиентов'
+
+
+def _fmt_nutrition(data: dict) -> str:
+    """Форматировать результат nutrition_lookup."""
+    product = data.get("product", data.get("query", "?"))
+    kcal = data.get("kcal", data.get("calories", "?"))
+    return f'КБЖУ "{product}": {kcal} ккал/100г'
+
+
+# Диспетчер: name → форматтер (точное совпадение)
+_NAME_DISPATCH: dict[str, callable] = {
+    "vkusvill_products_search": _fmt_products_search,
+    "vkusvill_cart_link_create": _fmt_cart_link,
+    "user_preferences_get": _fmt_preferences,
+    "recipe_ingredients": _fmt_recipe,
+    "nutrition_lookup": _fmt_nutrition,
+}
+
+# Эвристика: ключ JSON → форматтер (порядок важен — первый совпавший ключ)
+_KEY_HEURISTICS: list[tuple[str, callable]] = [
+    ("products", _fmt_products_search),
+    ("cart_link", _fmt_cart_link),
+    ("preferences", _fmt_preferences),
+    ("ingredients", _fmt_recipe),
+]
+
+
 def _summarize_tool_result(name: str | None, content: str) -> str:
     """Суммаризировать tool result для экономии токенов в истории.
 
     Заменяет полные JSON-ответы инструментов на краткие резюме.
     Вызывается при обрезке истории для старых FUNCTION-сообщений.
+
+    Диспетчеризация:
+    1. По name (точное совпадение — приоритет).
+    2. По ключам JSON (эвристика — только если name is None).
+    3. Fallback: обрезка до MAX_SUMMARY_LENGTH.
 
     Returns:
         Краткое текстовое резюме результата инструмента.
@@ -49,50 +120,19 @@ def _summarize_tool_result(name: str | None, content: str) -> str:
             return content[:MAX_SUMMARY_LENGTH] + "…"
         return content
 
-    # vkusvill_products_search → краткое резюме
-    if name == "vkusvill_products_search" or "products" in data:
-        products = data.get("products", [])
-        query = data.get("query", "")
-        if products and isinstance(products, list):
-            first = products[0]
-            first_name = first.get("name", "?")
-            first_price = first.get("price", "?")
-            return (
-                f'Поиск "{query}": найдено {len(products)} товаров, '
-                f"лучший: {first_name} ({first_price}₽)"
-            )
-        return f'Поиск "{query}": найдено 0 товаров'
+    # ── 1. Точное совпадение по name (приоритет) ──
+    if name is not None:
+        formatter = _NAME_DISPATCH.get(name)
+        if formatter is not None:
+            return formatter(data)
+        # name известен, но нет форматтера — fallback
+    else:
+        # ── 2. Эвристика по ключам JSON (только если name is None) ──
+        for key, formatter in _KEY_HEURISTICS:
+            if key in data:
+                return formatter(data)
 
-    # vkusvill_cart_link_create → краткое резюме
-    if name == "vkusvill_cart_link_create" or "cart_link" in data:
-        ps = data.get("price_summary", {})
-        total = ps.get("total", data.get("total", "?"))
-        count = ps.get("count", len(data.get("items", [])))
-        link = data.get("cart_link", data.get("link", ""))
-        return f"Корзина: {count} товаров, итого {total}₽, ссылка: {link}"
-
-    # user_preferences_get → краткое резюме
-    if name == "user_preferences_get" or "preferences" in data:
-        prefs = data.get("preferences", data)
-        if isinstance(prefs, dict):
-            items = [f"{k}: {v}" for k, v in list(prefs.items())[:5]]
-            return f"Предпочтения: {', '.join(items)}" if items else "Предпочтения: пусто"
-        return f"Предпочтения: {str(prefs)[:MAX_SUMMARY_LENGTH]}"
-
-    # recipe_ingredients → краткое резюме
-    if name == "recipe_ingredients" or "ingredients" in data:
-        dish = data.get("dish", "?")
-        ingredients = data.get("ingredients", [])
-        count = len(ingredients) if isinstance(ingredients, list) else "?"
-        return f'Рецепт "{dish}": {count} ингредиентов'
-
-    # nutrition_lookup → краткое резюме
-    if name == "nutrition_lookup":
-        product = data.get("product", data.get("query", "?"))
-        kcal = data.get("kcal", data.get("calories", "?"))
-        return f'КБЖУ "{product}": {kcal} ккал/100г'
-
-    # Fallback: обрезка до MAX_SUMMARY_LENGTH
+    # ── 3. Fallback: обрезка до MAX_SUMMARY_LENGTH ──
     if len(content) > MAX_SUMMARY_LENGTH:
         return content[:MAX_SUMMARY_LENGTH] + "…"
     return content
