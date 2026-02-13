@@ -193,6 +193,15 @@ jobs:
           done
           echo "::warning::Health check failed after 5 attempts"
 
+      - name: Register Langfuse models
+        if: success()
+        run: |
+          # Скрипт читает LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_HOST
+          # из env-переменных контейнера (переданных через .env)
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+            "docker exec vkuswill-bot python scripts/setup_langfuse_models.py --force" \
+            2>&1 || echo "::warning::Langfuse model registration failed (non-critical)"
+
       - name: Cleanup SSH
         if: always()
         run: rm -f ~/.ssh/deploy_key

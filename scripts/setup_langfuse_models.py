@@ -50,7 +50,7 @@ GIGACHAT_MODELS: list[dict] = [
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Max)$",
         "description": "GigaChat 2 Max — 650₽/1M токенов",
         "unit": "TOKENS",
-        "inputPrice": 650 / 1_000_000,   # 0.00065 ₽/token
+        "inputPrice": 650 / 1_000_000,  # 0.00065 ₽/token
         "outputPrice": 650 / 1_000_000,
         "totalPrice": None,
     },
@@ -59,7 +59,7 @@ GIGACHAT_MODELS: list[dict] = [
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Pro)$",
         "description": "GigaChat 2 Pro — 500₽/1M токенов",
         "unit": "TOKENS",
-        "inputPrice": 500 / 1_000_000,   # 0.0005 ₽/token
+        "inputPrice": 500 / 1_000_000,  # 0.0005 ₽/token
         "outputPrice": 500 / 1_000_000,
         "totalPrice": None,
     },
@@ -68,7 +68,7 @@ GIGACHAT_MODELS: list[dict] = [
         "matchPattern": r"(?i)^(GigaChat[\-\s]?2[\-\s]?Lite|GigaChat)$",
         "description": "GigaChat 2 Lite — 65₽/1M токенов (включает GigaChat без версии)",
         "unit": "TOKENS",
-        "inputPrice": 65 / 1_000_000,    # 0.000065 ₽/token
+        "inputPrice": 65 / 1_000_000,  # 0.000065 ₽/token
         "outputPrice": 65 / 1_000_000,
         "totalPrice": None,
     },
@@ -104,9 +104,7 @@ def _api_request(
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         error_body = e.read().decode() if e.fp else ""
-        raise RuntimeError(
-            f"Langfuse API {method} {url} → {e.code}: {error_body}"
-        ) from e
+        raise RuntimeError(f"Langfuse API {method} {url} → {e.code}: {error_body}") from e
 
 
 def get_existing_models(host: str, auth_header: str) -> list[dict]:
@@ -180,6 +178,27 @@ def main() -> None:
                     elif key == "LANGFUSE_HOST" and args.host == "http://localhost:3000":
                         args.host = value
 
+    # ── Dry-run: не требует ключей ──
+    if args.dry_run:
+        print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
+        print()
+        print("Тарифы GigaChat API (₽ за 1М токенов):")
+        print("-" * 50)
+        for m in GIGACHAT_MODELS:
+            price_per_m = m["inputPrice"] * 1_000_000
+            print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
+        print()
+        print("[DRY RUN] Детали model definitions:")
+        print()
+        for m in GIGACHAT_MODELS:
+            print(f"  Модель: {m['modelName']}")
+            print(f"  Match:  {m['matchPattern']}")
+            print(f"  Input:  {m['inputPrice']:.10f} ₽/token")
+            print(f"  Output: {m['outputPrice']:.10f} ₽/token")
+            print(f"  Описание: {m.get('description', '-')}")
+            print()
+        return
+
     if not args.public_key or not args.secret_key:
         print(
             "ОШИБКА: Укажите LANGFUSE_PUBLIC_KEY и LANGFUSE_SECRET_KEY "
@@ -195,26 +214,6 @@ def main() -> None:
     print(f"Моделей для регистрации: {len(GIGACHAT_MODELS)}")
     print()
 
-    # ── Показать тарифы ──
-    print("Тарифы GigaChat API (₽ за 1М токенов):")
-    print("-" * 50)
-    for m in GIGACHAT_MODELS:
-        price_per_m = m["inputPrice"] * 1_000_000
-        print(f"  {m['modelName']:20s}  {price_per_m:>8.0f} ₽/1M токенов")
-    print()
-
-    if args.dry_run:
-        print("[DRY RUN] Модели НЕ будут созданы.")
-        print()
-        for m in GIGACHAT_MODELS:
-            print(f"  Модель: {m['modelName']}")
-            print(f"  Match:  {m['matchPattern']}")
-            print(f"  Input:  {m['inputPrice']:.10f} ₽/token")
-            print(f"  Output: {m['outputPrice']:.10f} ₽/token")
-            print(f"  Описание: {m.get('description', '-')}")
-            print()
-        return
-
     # ── Проверить существующие модели ──
     print("Проверяю существующие модели в Langfuse...")
     try:
@@ -224,10 +223,7 @@ def main() -> None:
         sys.exit(1)
 
     existing_names = {m["modelName"] for m in existing}
-    gigachat_existing = [
-        m for m in existing
-        if m["modelName"].startswith("GigaChat")
-    ]
+    gigachat_existing = [m for m in existing if m["modelName"].startswith("GigaChat")]
 
     if gigachat_existing:
         print(f"Найдено {len(gigachat_existing)} GigaChat модел(ей):")
@@ -244,10 +240,7 @@ def main() -> None:
                     print(f"  Ошибка удаления {m['modelName']}: {e}")
             existing_names -= {m["modelName"] for m in gigachat_existing}
         else:
-            print(
-                "\nДля перезаписи используйте --force. "
-                "Пропускаю существующие модели.\n"
-            )
+            print("\nДля перезаписи используйте --force. Пропускаю существующие модели.\n")
 
     # ── Создать модели ──
     created = 0
@@ -270,13 +263,9 @@ def main() -> None:
     print()
     print(f"Итого: создано {created}, пропущено {skipped}")
     print()
+    print('ВАЖНО: Langfuse показывает стоимость как "$", но все цены в РУБЛЯХ (₽).')
     print(
-        "ВАЖНО: Langfuse показывает стоимость как \"$\", "
-        "но все цены в РУБЛЯХ (₽)."
-    )
-    print(
-        "Стоимость рассчитывается автоматически для НОВЫХ traces. "
-        "Старые traces не пересчитываются."
+        "Стоимость рассчитывается автоматически для НОВЫХ traces. Старые traces не пересчитываются."
     )
 
 
