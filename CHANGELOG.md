@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.5.20] — 2026-02-14
+
+### Исправлено
+
+- **GigaChat 422 «invalid function result json string»** — freemium-хинт `[Корзина X из Y]` дописывался как plain-text к JSON-результату корзины, ломая валидность JSON для GigaChat API. Теперь хинт встраивается внутрь JSON-структуры (`data.freemium`)
+- **HTML-сущности в названиях товаров** — `&nbsp;` из MCP-сервера заменяется на пробел в price_summary, `×` → `x` для совместимости с JSON-парсером GigaChat
+
 ## [0.5.15] — 2026-02-13
 
 ### Улучшено
