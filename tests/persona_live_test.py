@@ -16,9 +16,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
-import json
 import logging
-import os
 import sys
 import time
 from dataclasses import dataclass, field
@@ -92,7 +90,8 @@ PERSONAS: dict[str, list[dict]] = {
             "persona": "Алина (ЗОЖ, фитнес)",
             "description": "Здоровый завтрак с КБЖУ — одно сообщение",
             "messages": [
-                "Собери мне здоровый завтрак — овсянка, ягоды, греческий йогурт и миндальное молоко. Покажи КБЖУ каждого продукта"
+                "Собери мне здоровый завтрак — овсянка, ягоды, "
+                "греческий йогурт и миндальное молоко. Покажи КБЖУ каждого продукта"
             ],
             "checks": [
                 "корзина со ссылкой",
@@ -119,9 +118,7 @@ PERSONAS: dict[str, list[dict]] = {
             "dialog_id": "D-011",
             "persona": "Борис (папа, спешит)",
             "description": "Готовые обеды на 3 дня — минимальный ввод",
-            "messages": [
-                "Готовые обеды на 4 чел на 3 дня"
-            ],
+            "messages": ["Готовые обеды на 4 чел на 3 дня"],
             "checks": [
                 "не задаёт вопросов — сразу корзина",
                 "разнообразие (не одно блюдо)",
@@ -224,7 +221,10 @@ PERSONAS: dict[str, list[dict]] = {
             "persona": "Захар (вечеринка на 10 чел)",
             "description": "Большой заказ закусок — одно сообщение",
             "messages": [
-                "Бро, вечеринка на 10 чел! Нужно: чипсы, орешки, сыр нарезка, колбаса, хумус, овощи для нарезки (огурцы помидоры перец), хлеб, соус, напитки — сок и газировка. И пиццу готовую пару штук!"
+                "Бро, вечеринка на 10 чел! Нужно: чипсы, орешки, "
+                "сыр нарезка, колбаса, хумус, овощи для нарезки "
+                "(огурцы помидоры перец), хлеб, соус, напитки — "
+                "сок и газировка. И пиццу готовую пару штук!"
             ],
             "checks": [
                 "найдено большинство позиций (8+)",
@@ -244,7 +244,9 @@ ALL_PERSONA_KEYS = list(PERSONAS.keys())
 # ---------------------------------------------------------------------------
 
 
-async def create_services() -> tuple[GigaChatService, PreferencesStore, RecipeStore, VkusvillMCPClient]:
+async def create_services() -> tuple[
+    GigaChatService, PreferencesStore, RecipeStore, VkusvillMCPClient
+]:
     """Создать все сервисы как в __main__.py, но без Telegram."""
     # Загружаем конфиг из .env
     cfg = Config()
@@ -269,10 +271,12 @@ async def create_services() -> tuple[GigaChatService, PreferencesStore, RecipeSt
 
     # КБЖУ-сервис
     from vkuswill_bot.services.nutrition_service import NutritionService
+
     nutrition_service = NutritionService()
 
     # Снимки корзины (in-memory для теста)
     from vkuswill_bot.services.cart_snapshot_store import InMemoryCartSnapshotStore
+
     cart_snapshot_store = InMemoryCartSnapshotStore()
 
     # Исполнитель инструментов
@@ -394,14 +398,16 @@ def analyze_dialog(dialog_result: DialogResult, checks: list[str]) -> None:
             issues.append(f"Шаг {s.step} упал с ошибкой: {s.error}")
 
     # Проверка: есть ли ссылка на корзину?
-    if "корзина со ссылкой" in checks or "ссылка на корзину" in checks:
-        if "href=" not in all_responses and "vkusvill.ru" not in all_responses:
-            issues.append("НЕТ ссылки на корзину в ответе")
+    if ("корзина со ссылкой" in checks or "ссылка на корзину" in checks) and (
+        "href=" not in all_responses and "vkusvill.ru" not in all_responses
+    ):
+        issues.append("НЕТ ссылки на корзину в ответе")
 
     # Проверка: есть ли дисклеймер?
-    if "дисклеймер о наличии" in checks:
-        if "наличие" not in all_responses and "уточняйте" not in all_responses:
-            issues.append("НЕТ дисклеймера о наличии товаров")
+    if "дисклеймер о наличии" in checks and (
+        "наличие" not in all_responses and "уточняйте" not in all_responses
+    ):
+        issues.append("НЕТ дисклеймера о наличии товаров")
 
     # Проверка: КБЖУ упомянут?
     if "КБЖУ/калории упомянуты" in checks or "КБЖУ через nutrition_lookup" in checks:
@@ -410,9 +416,12 @@ def analyze_dialog(dialog_result: DialogResult, checks: list[str]) -> None:
             issues.append("НЕТ данных о КБЖУ/калориях в ответе")
 
     # Проверка: рецепт?
-    if any("recipe" in c.lower() or "ингредиент" in c.lower() for c in checks):
-        if "ингредиент" not in all_responses and len(all_responses) < 200:
-            issues.append("Ответ слишком короткий для рецепта")
+    if (
+        any("recipe" in c.lower() or "ингредиент" in c.lower() for c in checks)
+        and "ингредиент" not in all_responses
+        and len(all_responses) < 200
+    ):
+        issues.append("Ответ слишком короткий для рецепта")
 
     # Проверка: предупреждение для аллергиков?
     if "предупреждение о проверке состава" in checks:
@@ -471,13 +480,15 @@ def generate_report(results: list[DialogResult]) -> str:
     partial = sum(1 for r in results if r.verdict.startswith("⚠️"))
     fail = sum(1 for r in results if r.verdict.startswith("❌"))
 
-    lines.extend([
-        "",
-        f"**Итого:** ✅ {success} успех | ⚠️ {partial} частично | ❌ {fail} провал",
-        "",
-        "---",
-        "",
-    ])
+    lines.extend(
+        [
+            "",
+            f"**Итого:** ✅ {success} успех | ⚠️ {partial} частично | ❌ {fail} провал",
+            "",
+            "---",
+            "",
+        ]
+    )
 
     # Детали каждого диалога
     for r in results:

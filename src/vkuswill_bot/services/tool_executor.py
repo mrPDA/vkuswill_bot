@@ -8,10 +8,16 @@
 - Парсинг предпочтений из результатов
 """
 
+from __future__ import annotations
+
 import json
 import logging
+from typing import TYPE_CHECKING
 
 from gigachat.models import Messages, MessagesRole
+
+if TYPE_CHECKING:
+    from vkuswill_bot.services.user_store import UserStore
 
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.cart_snapshot_store import CartSnapshotStore
@@ -98,6 +104,7 @@ class ToolExecutor:
         preferences_store: PreferencesStore | None = None,
         cart_snapshot_store: CartSnapshotStore | None = None,
         nutrition_service: NutritionService | None = None,
+        user_store: UserStore | None = None,
     ) -> None:
         self._mcp_client = mcp_client
         self._search_processor = search_processor
@@ -105,6 +112,7 @@ class ToolExecutor:
         self._prefs_store = preferences_store
         self._cart_snapshot_store = cart_snapshot_store
         self._nutrition_service = nutrition_service
+        self._user_store = user_store
 
     # ---- Парсинг аргументов ----
 
@@ -274,6 +282,50 @@ class ToolExecutor:
         Returns:
             Строковый результат вызова (JSON).
         """
+        # --- Freemium: проверка лимита корзин ---
+        if tool_name == "vkusvill_cart_link_create" and self._user_store is not None:
+            try:
+                limit_info = await self._user_store.check_cart_limit(user_id)
+                if not limit_info["allowed"]:
+                    from vkuswill_bot.config import config as app_config
+
+                    # Логируем событие cart_limit_reached
+                    try:
+                        await self._user_store.log_event(
+                            user_id,
+                            "cart_limit_reached",
+                            {
+                                "carts_used": limit_info["carts_created"],
+                                "cart_limit": limit_info["cart_limit"],
+                                "tier": (
+                                    2
+                                    if limit_info["cart_limit"] > app_config.free_cart_limit
+                                    else 1
+                                ),
+                            },
+                        )
+                    except Exception:
+                        logger.debug("Ошибка логирования cart_limit_reached")
+
+                    return json.dumps(
+                        {
+                            "error": "cart_limit_reached",
+                            "message": (
+                                f"Вы использовали все "
+                                f"{limit_info['cart_limit']} бесплатных корзин. "
+                                "Заполните короткий опрос /survey — "
+                                f"и получите ещё {app_config.bonus_cart_limit} "
+                                "корзин в подарок!"
+                            ),
+                            "carts_created": limit_info["carts_created"],
+                            "cart_limit": limit_info["cart_limit"],
+                        },
+                        ensure_ascii=False,
+                    )
+            except Exception as e:
+                # Если проверка лимита упала — пропускаем, не блокируем бота
+                logger.warning("Ошибка проверки лимита корзин: %s", e)
+
         try:
             if tool_name in LOCAL_TOOL_NAMES:
                 return await self._call_local_tool(tool_name, args, user_id)
@@ -327,6 +379,19 @@ class ToolExecutor:
             found_ids = self._search_processor.extract_xml_ids(result)
             if query and found_ids:
                 search_log[query] = found_ids
+            if self._user_store is not None and user_id is not None:
+                try:
+                    await self._user_store.log_event(
+                        user_id,
+                        "product_search",
+                        {
+                            "query": args.get("q", "")[:100],
+                            "results_count": len(found_ids),
+                            "had_results": bool(found_ids),
+                        },
+                    )
+                except Exception:
+                    logger.debug("Ошибка логирования product_search")
             result = self._search_processor.trim_search_result(result)
 
         elif tool_name == "vkusvill_cart_link_create":
@@ -353,6 +418,12 @@ class ToolExecutor:
             if self._cart_snapshot_store and user_id is not None:
                 if self._is_cart_success(result):
                     await self._save_cart_snapshot(user_id, args, result)
+                    # --- Freemium: инкремент счётчика + событие ---
+                    result = await self._handle_cart_created_freemium(
+                        user_id,
+                        args,
+                        result,
+                    )
                 else:
                     logger.warning(
                         "Корзина не сохранена (ошибка API): %s",
@@ -364,6 +435,65 @@ class ToolExecutor:
             )
 
         return result
+
+    async def _handle_cart_created_freemium(
+        self,
+        user_id: int,
+        args: dict,
+        result: str,
+    ) -> str:
+        """Freemium-логика после успешного создания корзины.
+
+        Инкрементирует счётчик, логирует событие cart_created,
+        добавляет хинт с остатком корзин для GigaChat.
+
+        Returns:
+            Обновлённый result с хинтом (или оригинальный при ошибке).
+        """
+        if self._user_store is None:
+            return result
+        try:
+            # Извлекаем сумму корзины
+            total_sum = None
+            try:
+                parsed = json.loads(result)
+                price_summary = parsed.get("data", {}).get("price_summary", {})
+                if isinstance(price_summary, dict):
+                    total_sum = price_summary.get("total")
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                pass
+
+            from vkuswill_bot.config import config as _cfg
+
+            cart_info = await self._user_store.increment_carts(user_id)
+            carts = cart_info.get("carts_created", 0)
+            limit = cart_info.get("cart_limit", _cfg.free_cart_limit)
+            remaining = limit - carts
+
+            await self._user_store.log_event(
+                user_id,
+                "cart_created",
+                {
+                    "cart_number": carts,
+                    "cart_limit": limit,
+                    "items_count": len(args.get("products", [])),
+                    "total_sum": total_sum,
+                },
+            )
+
+            hint = f"\n\n[Корзина {carts} из {limit}]"
+            if remaining == 0:
+                hint += (
+                    "\n[Лимит корзин исчерпан. "
+                    "Предложи пользователю команду /survey "
+                    "для получения дополнительных корзин]"
+                )
+            elif remaining <= 2:
+                hint += f"\n[Осталось {remaining} бесплатных корзин]"
+            return result + hint
+        except Exception:
+            logger.debug("Ошибка логирования cart_created")
+            return result
 
     async def _save_cart_snapshot(
         self,
