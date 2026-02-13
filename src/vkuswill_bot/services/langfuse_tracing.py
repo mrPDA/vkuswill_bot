@@ -122,7 +122,7 @@ class LangfuseGeneration:
         self,
         *,
         output: Any = None,
-        usage: dict[str, int] | None = None,
+        usage: dict[str, Any] | None = None,
         usage_details: dict[str, int] | None = None,
         cost_details: dict[str, float] | None = None,
         metadata: dict[str, Any] | None = None,
@@ -131,11 +131,15 @@ class LangfuseGeneration:
     ) -> None:
         """Завершить generation (фиксирует output, usage и cost).
 
+        Отправляет данные в двух форматах одновременно:
+        - ``usage`` (старый) — для совместимости с Langfuse Server v2
+        - ``usage_details`` + ``cost_details`` (новый) — для Server v3+
+
         Args:
-            usage: Устаревший формат (input/output/total).
+            usage: Старый формат ModelUsage (input/output/total/unit + cost).
+                Если не передан, автоматически строится из usage_details + cost_details.
             usage_details: Новый формат с произвольными ключами.
             cost_details: Стоимость по типам (₽ для GigaChat).
-                Приоритет: cost_details > inferred from model definition.
         """
         kwargs: dict[str, Any] = {
             "output": output,
@@ -143,13 +147,30 @@ class LangfuseGeneration:
             "level": level,
             "status_message": status_message,
         }
-        # Передаём usage_details если есть, иначе usage (обратная совместимость)
+
+        # ── Новый формат (Server v3+) ──
         if usage_details is not None:
             kwargs["usage_details"] = usage_details
-        elif usage is not None:
-            kwargs["usage"] = usage
         if cost_details is not None:
             kwargs["cost_details"] = cost_details
+
+        # ── Старый формат (Server v2) ──
+        # Если usage не передан явно, строим из usage_details для обратной совместимости
+        if usage is not None:
+            kwargs["usage"] = usage
+        elif usage_details is not None:
+            legacy: dict[str, Any] = {
+                "input": usage_details.get("input", 0),
+                "output": usage_details.get("output", 0),
+                "total": usage_details.get("total", 0),
+                "unit": "TOKENS",
+            }
+            if cost_details is not None:
+                legacy["inputCost"] = cost_details.get("input", 0)
+                legacy["outputCost"] = cost_details.get("output", 0)
+                legacy["totalCost"] = cost_details.get("total", 0)
+            kwargs["usage"] = legacy
+
         self._generation.end(**kwargs)
 
     @property
