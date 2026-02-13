@@ -344,23 +344,10 @@ class RecipeService:
                 "ingredients": ingredients,
                 "cached": cached,
                 "hint": (
-                    "ТВОЙ СЛЕДУЮЩИЙ ШАГ: вызови vkusvill_products_search "
-                    "для КАЖДОГО ингредиента из списка, используя search_query. "
-                    "Затем из результатов поиска возьми xml_id лучшего товара "
-                    "и создай корзину через vkusvill_cart_link_create. "
-                    "НЕ пропускай ни одного ингредиента! "
-                    "НЕ ищи и НЕ добавляй от себя продукты, "
-                    "которых НЕТ в этом списке ингредиентов! "
-                    "РАСЧЁТ КОЛИЧЕСТВА (q): "
-                    "если у ингредиента есть pack_equivalent — "
-                    "используй его как q (яйца продаются упаковками). "
-                    "Если есть kg_equivalent — "
-                    "используй его как q для товаров в кг. "
-                    "Если есть l_equivalent — используй его как q "
-                    "для товаров в литрах. "
-                    "Примеры: pack_equivalent=1 → q=1; "
-                    "kg_equivalent=0.2 → q=0.2; "
-                    "l_equivalent=0.5 → q=0.5."
+                    "Вызови vkusvill_products_search для КАЖДОГО ингредиента "
+                    "(используй search_query). "
+                    "Для q используй kg_equivalent/l_equivalent/pack_equivalent. "
+                    "Затем vkusvill_cart_link_create."
                 ),
             },
             ensure_ascii=False,

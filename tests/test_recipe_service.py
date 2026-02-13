@@ -397,8 +397,8 @@ class TestFormatResult:
         assert "hint" in parsed
         assert "kg_equivalent" in parsed["hint"]
 
-    def test_hint_forbids_extra_items(self):
-        """Hint явно запрещает добавлять товары не из списка."""
+    def test_hint_contains_key_instructions(self):
+        """Hint содержит ключевые инструкции: поиск и создание корзины."""
         result = RecipeService._format_result(
             dish="блинчики",
             servings=5,
@@ -407,8 +407,9 @@ class TestFormatResult:
         )
         parsed = json.loads(result)
         hint = parsed["hint"].lower()
-        assert "только" in hint or "не добавляй" in hint
-        assert "не ищи" in hint or "нет в списке" in hint
+        assert "vkusvill_products_search" in hint
+        assert "vkusvill_cart_link_create" in hint
+        assert "каждого" in hint or "search_query" in hint
 
     def test_cached_false(self):
         result = RecipeService._format_result(
