@@ -8,6 +8,7 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from gigachat import GigaChat
+from gigachat.context import session_id_cvar
 from gigachat.models import Chat, ChatCompletion, Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
@@ -297,6 +298,11 @@ class GigaChatService:
 
     async def _process_message_locked(self, user_id: int, text: str) -> str:
         """Цикл function calling (под per-user lock)."""
+        # ── X-Session-ID: кеширование prefix-токенов между вызовами ──
+        # Все API-вызовы в рамках одного сообщения используют общий
+        # session_id → system prompt + tools кешируются и НЕ тарифицируются.
+        session_id_cvar.set(f"user-{user_id}")
+
         dm = self._dialog_manager
         history = await dm.aget_history(user_id)
         history.append(Messages(role=MessagesRole.USER, content=text))
@@ -484,7 +490,13 @@ class GigaChatService:
         return ERROR_TOO_MANY_STEPS
 
     def _extract_usage(self, response: ChatCompletion) -> dict[str, int] | None:
-        """Извлечь usage (токены) из ответа GigaChat, если доступно."""
+        """Извлечь usage (токены) из ответа GigaChat, если доступно.
+
+        Возвращает словарь для Langfuse с ключами:
+        - input, output, total — стандартные метрики
+        - precached_tokens — кешированные prefix-токены (X-Session-ID)
+        - billable_tokens — тарифицируемые токены (total - precached)
+        """
         usage = getattr(response, "usage", None)
         if usage is None:
             return None
@@ -498,11 +510,25 @@ class GigaChatService:
             result["output"] = completion
         if isinstance(total, int):
             result["total"] = total
-        # Structured logging: токены и precached_prompt_tokens
+
+        # X-Session-ID кеширование: precached_prompt_tokens
+        precached = getattr(usage, "precached_prompt_tokens", None)
+        if isinstance(precached, int):
+            result["precached_tokens"] = precached
+            # Тарифицируемые = total - precached
+            if isinstance(total, int):
+                result["billable_tokens"] = total - precached
+
+        # Structured logging: токены и кеширование
         if result:
             log_data: dict[str, Any] = {"event": "llm_usage", **result}
-            precached = getattr(usage, "precached_prompt_tokens", None)
-            if isinstance(precached, int):
-                log_data["precached_prompt_tokens"] = precached
+            logger.info(
+                "Кеш: precached=%d, prompt=%d, completion=%d, total=%d, billable=%d",
+                result.get("precached_tokens", 0),
+                result.get("input", 0),
+                result.get("output", 0),
+                result.get("total", 0),
+                result.get("billable_tokens", result.get("total", 0)),
+            )
             logger.info("LLM usage: %s", json.dumps(log_data, ensure_ascii=False))
         return result or None
