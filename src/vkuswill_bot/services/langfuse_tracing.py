@@ -123,18 +123,34 @@ class LangfuseGeneration:
         *,
         output: Any = None,
         usage: dict[str, int] | None = None,
+        usage_details: dict[str, int] | None = None,
+        cost_details: dict[str, float] | None = None,
         metadata: dict[str, Any] | None = None,
         level: str = "DEFAULT",
         status_message: str | None = None,
     ) -> None:
-        """Завершить generation (фиксирует output и usage)."""
-        self._generation.end(
-            output=output,
-            usage=usage,
-            metadata=metadata,
-            level=level,
-            status_message=status_message,
-        )
+        """Завершить generation (фиксирует output, usage и cost).
+
+        Args:
+            usage: Устаревший формат (input/output/total).
+            usage_details: Новый формат с произвольными ключами.
+            cost_details: Стоимость по типам (₽ для GigaChat).
+                Приоритет: cost_details > inferred from model definition.
+        """
+        kwargs: dict[str, Any] = {
+            "output": output,
+            "metadata": metadata,
+            "level": level,
+            "status_message": status_message,
+        }
+        # Передаём usage_details если есть, иначе usage (обратная совместимость)
+        if usage_details is not None:
+            kwargs["usage_details"] = usage_details
+        elif usage is not None:
+            kwargs["usage"] = usage
+        if cost_details is not None:
+            kwargs["cost_details"] = cost_details
+        self._generation.end(**kwargs)
 
     @property
     def latency_ms(self) -> float:
