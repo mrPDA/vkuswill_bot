@@ -5,6 +5,29 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.6.0] — 2026-02-13
+
+### Добавлено
+
+- **MigrationRunner** — версионированная система SQL-миграций (заменяет `ensure_schema()`), отслеживает применённые миграции в таблице `schema_migrations`
+- **StatsAggregator** — фоновая агрегация `user_events → daily_stats` (DAU, новые пользователи, сессии) с периодом 1 час
+- **Survey flow** — опрос для получения бонусных корзин (freemium-модель): `/survey`, inline-кнопки, `SURVEY_BONUS_CARTS` в конфиге
+- **Deep link tracking** — `/start habr`, `/start ref_123`, `/start vc` — атрибуция источника трафика через `user_events`
+- **Лимиты корзин** — `FREE_CART_LIMIT` / `SURVEY_BONUS_CARTS` в config, проверка в `ToolExecutor`
+- **Admin-команды аналитики** — `/admin_analytics [N]`, `/admin_funnel [N]` с агрегированными данными
+- **UserStore: расширенные методы** — `log_event()`, `get_cart_count()`, `get_events()`, `complete_survey()`, admin-статистика
+- **Metabase** — BI-дашборды в `docker-compose.yml` для локальной аналитики (daily_stats, user_events, users)
+- **SQL-миграции** — `003_daily_stats`, `004_add_cart_limits`, `005_add_user_events_index`
+
+### Изменено
+
+- **Dockerfile** — фиксированный UID/GID 10001 для предсказуемых прав на файловую систему
+- **deploy.sh** — `chown 10001:10001` + `chmod 750` вместо `chmod a+rwx` (безопасность DATA_DIR)
+
+### Исправлено
+
+- **ruff lint** — SIM105, RUF059, F401, E501, SIM102 в коде и тестах (включая pre-existing в persona_live_test)
+
 ## [0.5.12] — 2026-02-13
 
 ### Исправлено
