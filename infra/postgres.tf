@@ -81,12 +81,18 @@ resource "yandex_mdb_postgresql_user" "metabase" {
   name       = "metabase"
   password   = var.metabase_pg_password
   conn_limit = 10
+  grants     = ["mdb_admin"]
 }
 
 resource "yandex_mdb_postgresql_database" "metabase" {
   cluster_id = yandex_mdb_postgresql_cluster.bot.id
   name       = "metabase"
   owner      = yandex_mdb_postgresql_user.metabase.name
+
+  # Metabase требует citext для миграций (CREATE EXTENSION citext)
+  extension {
+    name = "citext"
+  }
 
   depends_on = [yandex_mdb_postgresql_user.metabase]
 }
