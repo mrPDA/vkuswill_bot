@@ -109,6 +109,15 @@ jobs:
         run: |
           scp -i ~/.ssh/deploy_key deploy/deploy.sh "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/deploy.sh"
 
+      - name: Cleanup disk on VM
+        run: |
+          echo "Очистка Docker на VM для освобождения места..."
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" bash -s <<'CLEANUP'
+            docker system prune -af --filter "until=48h" 2>/dev/null || true
+            docker builder prune -af 2>/dev/null || true
+            echo "Свободно на диске: $(df -h / | awk 'NR==2 {print $4}')"
+          CLEANUP
+
       - name: Docker login on VM
         run: |
           # Убрать yc credential helper из Docker config (если остался от предыдущих деплоев)
