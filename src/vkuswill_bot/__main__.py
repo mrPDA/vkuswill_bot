@@ -227,6 +227,9 @@ async def main() -> None:
 
             # Мидлварь: UserMiddleware → ThrottlingMiddleware (порядок важен!)
             dp.message.middleware(UserMiddleware(user_store))
+            # Callback queries тоже получают db_user (облегчённый путь,
+            # без upsert и инкремента — только read + инъекция).
+            dp.callback_query.middleware(UserMiddleware(user_store))
             logger.info(
                 "PostgreSQL подключён, UserStore готов (pool %d-%d)",
                 config.db_pool_min,
