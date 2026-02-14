@@ -151,9 +151,7 @@ class AdminFilter(BaseFilter):
         message: Message,
         db_user: dict | None = None,
     ) -> bool:
-        if db_user is not None and db_user.get("role") == "admin":
-            return True
-        return False
+        return db_user is not None and db_user.get("role") == "admin"
 
 
 # Применяем фильтр на весь admin_router — больше не нужно
