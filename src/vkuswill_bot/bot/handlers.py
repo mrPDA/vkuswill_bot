@@ -60,6 +60,12 @@ _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)(/?\s*)>")
 # Regex: валидирует атрибут href с http/https URL (для <a>)
 _SAFE_HREF_RE = re.compile(r'^\s+href\s*=\s*"https?://[^"]*"\s*$')
 
+# Regex: извлекает URL из ссылки «Открыть корзину» в ответе GigaChat
+_CART_LINK_RE = re.compile(
+    r'<a\s+href="(https?://[^"]+)"[^>]*>[^<]*(?:корзин|[Cc]art)[^<]*</a>',
+    re.IGNORECASE,
+)
+
 
 def _sanitize_telegram_html(text: str) -> str:
     """Санитизация HTML по whitelist-принципу.
@@ -101,6 +107,28 @@ def _sanitize_telegram_html(text: str) -> str:
     return _TAG_RE.sub(_check_tag, text)
 
 
+def _build_cart_keyboard(text: str) -> InlineKeyboardMarkup | None:
+    """Извлечь URL корзины из HTML и вернуть inline-кнопку.
+
+    Если в тексте найдена ссылка с текстом, содержащим «корзин» / «cart»,
+    создаём InlineKeyboardMarkup с URL-кнопкой. Иначе — None.
+    """
+    match = _CART_LINK_RE.search(text)
+    if not match:
+        return None
+    cart_url = match.group(1)
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="\U0001f6d2 Открыть корзину",
+                    url=cart_url,
+                ),
+            ],
+        ],
+    )
+
+
 router = Router()
 admin_router = Router()
 
@@ -123,9 +151,7 @@ class AdminFilter(BaseFilter):
         message: Message,
         db_user: dict | None = None,
     ) -> bool:
-        if db_user is not None and db_user.get("role") == "admin":
-            return True
-        return False
+        return db_user is not None and db_user.get("role") == "admin"
 
 
 # Применяем фильтр на весь admin_router — больше не нужно
@@ -669,10 +695,15 @@ async def handle_text(
     # экранируем опасные (script, img, iframe и пр.)
     safe_response = _sanitize_telegram_html(response)
 
+    # Извлекаем URL корзины для inline-кнопки (до разбиения на чанки)
+    cart_keyboard = _build_cart_keyboard(safe_response)
+
     # Разбиваем длинные сообщения по лимиту Telegram
     chunks = _split_message(safe_response, MAX_TELEGRAM_MESSAGE_LENGTH)
-    for chunk in chunks:
-        await message.answer(chunk)
+    for i, chunk in enumerate(chunks):
+        is_last = i == len(chunks) - 1
+        # Inline-кнопку прикрепляем к последнему чанку
+        await message.answer(chunk, reply_markup=cart_keyboard if is_last else None)
 
 
 async def _send_typing_periodically(

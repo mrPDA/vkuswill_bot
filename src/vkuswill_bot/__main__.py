@@ -107,9 +107,7 @@ def _setup_logging() -> None:
             )
             logging.getLogger().addHandler(s3_handler)
         except Exception as exc:
-            logging.getLogger(__name__).warning(
-                "S3 логирование не запущено: %s", exc
-            )
+            logging.getLogger(__name__).warning("S3 логирование не запущено: %s", exc)
 
 
 _setup_logging()
