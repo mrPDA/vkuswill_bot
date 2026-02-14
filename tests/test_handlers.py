@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from vkuswill_bot.bot.handlers import (
-    _build_cart_keyboard,
+    _extract_cart_link,
     _sanitize_telegram_html,
     _send_typing_periodically,
     _split_message,
@@ -250,19 +250,35 @@ class TestHandleText:
 
         msg.answer.assert_called_once_with("Ответ", reply_markup=None)
 
-    async def test_html_safe_link_preserved(self):
-        """F-02: Безопасная ссылка <a href="https://..."> сохраняется."""
+    async def test_html_safe_link_moved_to_button(self):
+        """F-02: Ссылка на корзину заменяется inline-кнопкой."""
         msg = make_message("Запрос", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.return_value = (
-            '<a href="https://vkusvill.ru/?share_basket=123">Корзина</a>'
+            'Итого: 500 руб\n<a href="https://vkusvill.ru/?share_basket=123">Корзина</a>'
         )
 
         await handle_text(msg, gigachat_service=mock_service)
 
+        # Текстовая ссылка убрана из сообщения
         response = msg.answer.call_args[0][0]
-        assert '<a href="https://vkusvill.ru/?share_basket=123">' in response
-        assert "</a>" in response
+        assert "share_basket" not in response
+        # Но inline-кнопка с URL присутствует
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is not None
+        assert markup.inline_keyboard[0][0].url == "https://vkusvill.ru/?share_basket=123"
+
+    async def test_html_non_cart_link_preserved(self):
+        """F-02: Безопасная НЕ-корзинная ссылка сохраняется в тексте."""
+        msg = make_message("Запрос", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = '<a href="https://example.com">Подробнее</a>'
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        response = msg.answer.call_args[0][0]
+        assert '<a href="https://example.com">' in response
 
     async def test_html_script_injection_blocked(self):
         """F-02: XSS через <script> экранируется."""
@@ -413,54 +429,74 @@ class TestSanitizeTelegramHtml:
 
 
 # ============================================================================
-# _build_cart_keyboard
+# _extract_cart_link
 # ============================================================================
 
 
-class TestBuildCartKeyboard:
-    """Тесты извлечения URL корзины и создания inline-кнопки."""
+class TestExtractCartLink:
+    """Тесты извлечения URL корзины, удаления текстовой ссылки и создания кнопки."""
 
-    def test_extracts_cart_url(self):
-        """Ссылка «Открыть корзину» → inline-кнопка с URL."""
+    def test_extracts_url_and_removes_link(self):
+        """Ссылка «Открыть корзину» → кнопка + ссылка удалена из текста."""
         html = (
-            "Вот ваша корзина:\n"
+            "Вот ваша корзина:\n\n"
+            "1. Молоко — 79 руб\n\n"
             '<a href="https://vkusvill.ru/?share_basket=abc123">Открыть корзину</a>'
         )
-        kb = _build_cart_keyboard(html)
+        cleaned, kb = _extract_cart_link(html)
         assert kb is not None
         btn = kb.inline_keyboard[0][0]
         assert btn.url == "https://vkusvill.ru/?share_basket=abc123"
-        assert "корзину" in btn.text.lower() or "\U0001f6d2" in btn.text
+        assert "Открыть корзину" not in cleaned
+        assert "share_basket" not in cleaned
+        assert "Молоко" in cleaned
 
     def test_no_cart_link_returns_none(self):
-        """Без ссылки на корзину — None."""
+        """Без ссылки на корзину — текст без изменений, None."""
         html = "Вот молоко за 79 руб!"
-        assert _build_cart_keyboard(html) is None
+        cleaned, kb = _extract_cart_link(html)
+        assert kb is None
+        assert cleaned == html
 
-    def test_non_cart_link_returns_none(self):
-        """Ссылка без слова «корзин» — None."""
+    def test_non_cart_link_unchanged(self):
+        """Ссылка без слова «корзин» — не трогаем."""
         html = '<a href="https://example.com">Подробнее</a>'
-        assert _build_cart_keyboard(html) is None
+        cleaned, kb = _extract_cart_link(html)
+        assert kb is None
+        assert cleaned == html
 
     def test_cart_link_case_insensitive(self):
         """Регистр текста ссылки не важен."""
         html = '<a href="https://vkusvill.ru/?basket=1">КОРЗИНА</a>'
-        kb = _build_cart_keyboard(html)
+        _cleaned, kb = _extract_cart_link(html)
         assert kb is not None
         assert kb.inline_keyboard[0][0].url == "https://vkusvill.ru/?basket=1"
 
-    def test_cart_link_with_emoji(self):
-        """Ссылка с эмодзи 🛒 перед текстом."""
-        html = '<a href="https://vkusvill.ru/?basket=1">\U0001f6d2 Открыть корзину</a>'
-        kb = _build_cart_keyboard(html)
+    def test_emoji_prefix_removed(self):
+        """Эмодзи 🛒 перед ссылкой тоже убирается."""
+        html = (
+            "Итого: 500 руб\n\n"
+            '\U0001f6d2 <a href="https://vkusvill.ru/?basket=1">Открыть корзину</a>\n\n'
+            "Дисклеймер"
+        )
+        cleaned, kb = _extract_cart_link(html)
         assert kb is not None
+        assert "\U0001f6d2" not in cleaned
+        assert "Открыть корзину" not in cleaned
+        assert "Дисклеймер" in cleaned
+
+    def test_no_triple_newlines(self):
+        """После удаления ссылки не остаётся тройных переносов."""
+        html = 'Текст\n\n<a href="https://vkusvill.ru/?b=1">Открыть корзину</a>\n\nДисклеймер'
+        cleaned, _ = _extract_cart_link(html)
+        assert "\n\n\n" not in cleaned
 
 
 class TestHandleTextCartButton:
     """Тесты inline-кнопки корзины в handle_text."""
 
     async def test_cart_response_has_inline_button(self):
-        """Ответ с корзиной → inline-кнопка «Открыть корзину»."""
+        """Ответ с корзиной → inline-кнопка, текстовая ссылка убрана."""
         msg = make_message("Собери корзину", user_id=1)
         mock_service = AsyncMock()
         mock_service.process_message.return_value = (
@@ -472,12 +508,14 @@ class TestHandleTextCartButton:
 
         await handle_text(msg, gigachat_service=mock_service)
 
-        # Проверяем, что reply_markup — InlineKeyboardMarkup с URL-кнопкой
         call_kwargs = msg.answer.call_args
         markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
         assert markup is not None
         btn = markup.inline_keyboard[0][0]
         assert btn.url == "https://vkusvill.ru/?share_basket=xyz"
+        # Текстовая ссылка убрана из сообщения
+        sent_text = call_kwargs[0][0]
+        assert "Открыть корзину" not in sent_text
 
     async def test_no_cart_no_button(self):
         """Обычный ответ без корзины → reply_markup=None."""
