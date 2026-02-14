@@ -15,45 +15,15 @@ NoOpTracer — все вызовы трейсинга становятся no-op
 
 from __future__ import annotations
 
-import hashlib
 import json
 import logging
-import re
 import time
 from typing import Any
 
+from vkuswill_bot.services.pii_utils import hash_user_id as _anonymize_user_id
+from vkuswill_bot.services.pii_utils import mask_pii as _mask_pii
+
 logger = logging.getLogger(__name__)
-
-
-# ── Анонимизация ─────────────────────────────────────────────────────
-
-
-def _anonymize_user_id(user_id: str | int) -> str:
-    """Хешировать Telegram user_id (SHA-256, 12 символов).
-
-    Одинаковый user_id всегда даёт одинаковый хеш — можно группировать
-    сессии одного пользователя без раскрытия Telegram ID.
-    """
-    raw = str(user_id).encode("utf-8")
-    return hashlib.sha256(raw).hexdigest()[:12]
-
-
-# Паттерны PII для маскировки в тексте сообщений
-_PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
-    # Телефоны: +7..., 8..., и вариации
-    (re.compile(r"(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"), "[PHONE]"),
-    # Email
-    (re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"), "[EMAIL]"),
-    # Номера карт (16 цифр, возможно через пробелы/дефисы)
-    (re.compile(r"\b\d{4}[\s\-]?\d{4}[\s\-]?\d{4}[\s\-]?\d{4}\b"), "[CARD]"),
-]
-
-
-def _mask_pii(text: str) -> str:
-    """Маскировать PII (телефоны, email, номера карт) в тексте."""
-    for pattern, replacement in _PII_PATTERNS:
-        text = pattern.sub(replacement, text)
-    return text
 
 
 class LangfuseTrace:

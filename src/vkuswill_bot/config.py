@@ -62,13 +62,14 @@ class Config(BaseSettings):
     s3_log_secret_key: str = ""
     s3_log_flush_interval: int = 60  # секунд
     s3_log_flush_size: int = 500  # записей
+    s3_log_retention_days: int = 90  # автоудаление логов через N дней (152-ФЗ)
 
     # Langfuse (LLM-observability)
     langfuse_enabled: bool = False
     langfuse_public_key: str = ""
     langfuse_secret_key: str = ""
     langfuse_host: str = "https://cloud.langfuse.com"
-    langfuse_anonymize_messages: bool = False  # полностью скрывать текст сообщений
+    langfuse_anonymize_messages: bool = True  # полностью скрывать текст сообщений (152-ФЗ)
 
     # Freemium лимиты
     free_cart_limit: int = 5  # Tier 1: бесплатные корзины

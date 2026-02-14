@@ -4,6 +4,8 @@
 - Буферизацию записей логов (emit)
 - Формат NDJSON (timestamp, level, logger, message, hostname, pid)
 - Извлечение extra-полей (user_id, request_id, chat_id)
+- Анонимизацию user_id/chat_id (хеширование SHA-256)
+- PII-маскировку в message (телефоны, email, карты)
 - Сброс буфера по порогу (flush_size)
 - Сброс буфера вручную (flush)
 - Защиту от переполнения буфера (_MAX_BUFFER_SIZE)
@@ -11,6 +13,7 @@
 - Закрытие handler (close) — остановка таймера + финальный сброс
 - Фабрику create_s3_log_handler: валидация параметров
 - Формат S3-ключей
+- Lifecycle Policy (ensure_lifecycle_policy)
 """
 
 import json
@@ -19,6 +22,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from vkuswill_bot.services.pii_utils import hash_user_id
 from vkuswill_bot.services.s3_log_handler import (
     S3LogHandler,
     _MAX_BUFFER_SIZE,
@@ -101,8 +105,8 @@ class TestEmit:
         assert entry["logger"] == "test.logger"
         assert entry["message"] == "Test message"
 
-    def test_extra_fields_user_id(self, handler):
-        """Extra-поле user_id включается в запись."""
+    def test_extra_fields_user_id_hashed(self, handler):
+        """Extra-поле user_id хешируется (SHA-256, 12 символов)."""
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
@@ -115,10 +119,13 @@ class TestEmit:
         record.user_id = 42  # type: ignore[attr-defined]
         handler.emit(record)
         entry = json.loads(handler._buffer[0])
-        assert entry["user_id"] == 42
+        # Проверяем: user_id хеширован, а не открытый
+        assert entry["user_id"] == hash_user_id(42)
+        assert entry["user_id"] != 42
+        assert len(entry["user_id"]) == 12
 
-    def test_extra_fields_chat_id(self, handler):
-        """Extra-поле chat_id включается в запись."""
+    def test_extra_fields_chat_id_hashed(self, handler):
+        """Extra-поле chat_id хешируется (SHA-256, 12 символов)."""
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
@@ -131,10 +138,12 @@ class TestEmit:
         record.chat_id = 100  # type: ignore[attr-defined]
         handler.emit(record)
         entry = json.loads(handler._buffer[0])
-        assert entry["chat_id"] == 100
+        assert entry["chat_id"] == hash_user_id(100)
+        assert entry["chat_id"] != 100
+        assert len(entry["chat_id"]) == 12
 
-    def test_extra_fields_request_id(self, handler):
-        """Extra-поле request_id включается в запись."""
+    def test_extra_fields_request_id_not_hashed(self, handler):
+        """Extra-поле request_id сохраняется как есть (не ПД)."""
         record = logging.LogRecord(
             name="test",
             level=logging.INFO,
@@ -148,6 +157,54 @@ class TestEmit:
         handler.emit(record)
         entry = json.loads(handler._buffer[0])
         assert entry["request_id"] == "req-abc"
+
+    def test_pii_masking_phone(self, handler):
+        """Телефон в message маскируется."""
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Позвоните +7 (999) 123-45-67",
+            args=None,
+            exc_info=None,
+        )
+        handler.emit(record)
+        entry = json.loads(handler._buffer[0])
+        assert "[PHONE]" in entry["message"]
+        assert "999" not in entry["message"]
+
+    def test_pii_masking_email(self, handler):
+        """Email в message маскируется."""
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Контакт: user@example.com",
+            args=None,
+            exc_info=None,
+        )
+        handler.emit(record)
+        entry = json.loads(handler._buffer[0])
+        assert "[EMAIL]" in entry["message"]
+        assert "user@example.com" not in entry["message"]
+
+    def test_pii_masking_card(self, handler):
+        """Номер карты в message маскируется."""
+        record = logging.LogRecord(
+            name="test",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg="Карта: 4111 1111 1111 1111",
+            args=None,
+            exc_info=None,
+        )
+        handler.emit(record)
+        entry = json.loads(handler._buffer[0])
+        assert "[CARD]" in entry["message"]
+        assert "4111" not in entry["message"]
 
     def test_no_extra_fields_by_default(self, handler, log_record):
         """Без extra-полей они не попадают в запись."""
@@ -662,3 +719,68 @@ class TestCreateS3LogHandler:
             )
         assert h.level == logging.INFO
         h._closed = True
+
+    def test_default_retention_days(self):
+        """retention_days по умолчанию — 90."""
+        with patch.object(S3LogHandler, "_start_flush_timer"):
+            h = create_s3_log_handler(
+                bucket="test",
+                access_key="ak",
+                secret_key="sk",
+            )
+        assert h._retention_days == 90
+        h._closed = True
+
+    def test_custom_retention_days(self):
+        """Кастомный retention_days передаётся в handler."""
+        with patch.object(S3LogHandler, "_start_flush_timer"):
+            h = create_s3_log_handler(
+                bucket="test",
+                access_key="ak",
+                secret_key="sk",
+                retention_days=30,
+            )
+        assert h._retention_days == 30
+        h._closed = True
+
+
+# ============================================================================
+# Lifecycle Policy
+# ============================================================================
+
+
+class TestLifecyclePolicy:
+    """Тесты ensure_lifecycle_policy."""
+
+    def test_lifecycle_policy_applied(self, handler):
+        """ensure_lifecycle_policy вызывает put_bucket_lifecycle_configuration."""
+        result = handler.ensure_lifecycle_policy()
+        assert result is True
+        handler._client.put_bucket_lifecycle_configuration.assert_called_once()
+
+        call_kwargs = handler._client.put_bucket_lifecycle_configuration.call_args.kwargs
+        assert call_kwargs["Bucket"] == "test-bucket"
+        rules = call_kwargs["LifecycleConfiguration"]["Rules"]
+        assert len(rules) == 1
+        assert rules[0]["Expiration"]["Days"] == 90
+        assert rules[0]["Filter"]["Prefix"] == "logs/"
+
+    def test_lifecycle_policy_disabled_when_zero(self):
+        """retention_days=0 отключает Lifecycle Policy."""
+        with patch.object(S3LogHandler, "_start_flush_timer"):
+            h = S3LogHandler(
+                bucket="test",
+                retention_days=0,
+            )
+        h._client = MagicMock()
+        result = h.ensure_lifecycle_policy()
+        assert result is False
+        h._client.put_bucket_lifecycle_configuration.assert_not_called()
+
+    def test_lifecycle_policy_error_returns_false(self, handler):
+        """Ошибка S3 при установке политики → False."""
+        handler._client.put_bucket_lifecycle_configuration.side_effect = RuntimeError(
+            "access denied"
+        )
+        result = handler.ensure_lifecycle_policy()
+        assert result is False
