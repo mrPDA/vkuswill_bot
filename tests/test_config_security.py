@@ -615,3 +615,33 @@ class TestMCPClientSecurity:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.mcp_server_url.startswith("https://"), "MCP URL должен использовать HTTPS"
+
+
+class TestAdminUserIdsValidator:
+    """Тесты валидатора admin_user_ids — парсинг из разных форматов.
+
+    pydantic-settings JSON-парсит env-строку для complex-типов (list[int])
+    ДО передачи в pydantic field_validator. Поэтому:
+    - "391887253" → json.loads → int 391887253 → validator → [391887253]
+    - "[111,222]" → json.loads → list [111,222] → validator → [111,222]
+    """
+
+    def test_single_int_from_env(self):
+        """Lockbox передаёт одно число — должен стать списком из 1 элемента."""
+        env = {**MINIMAL_ENV, "ADMIN_USER_IDS": "391887253"}
+        with patch.dict(os.environ, env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == [391887253]
+
+    def test_json_array_from_env(self):
+        """JSON-массив — несколько админов."""
+        env = {**MINIMAL_ENV, "ADMIN_USER_IDS": "[111, 222, 333]"}
+        with patch.dict(os.environ, env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == [111, 222, 333]
+
+    def test_not_set_default(self):
+        """Не задан → пустой список (дефолт)."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.admin_user_ids == []
