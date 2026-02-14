@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.12.4] — 2026-02-14
+
+### Исправлено
+
+- **AdminFilter: inner → outer middleware** — в aiogram 3 inner middleware (`dp.message.middleware`) запускается ПОСЛЕ `check_root_filters` в `_propagate_event()`, поэтому `AdminFilter` не видел `db_user` и все `/admin_*` команды отклонялись; заменён на `outer_middleware`, который оборачивает `propagate_event` целиком и запускается ДО root-фильтров
+
 ## [0.12.3] — 2026-02-14
 
 ### Исправлено
