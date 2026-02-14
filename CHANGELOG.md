@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.12.1] — 2026-02-14
+
+### Исправлено
+
+- **Перехват admin-команд** — заменён `F.text.startswith` (magic-filter) на явный `BaseFilter` для надёжного перехвата `/admin_*` от неавторизованных пользователей; добавлено логирование решений `AdminFilter`
+- **UserMiddleware для callback queries** — зарегистрирован `dp.callback_query.middleware` с облегчённой обработкой (read-only, без upsert); survey-кнопки и consent-кнопка теперь получают `db_user`
+
 ## [0.12.0] — 2026-02-14
 
 ### Добавлено
