@@ -791,6 +791,35 @@ class TestSurveyFlow:
         msg.answer.assert_called_once()
         assert "Спасибо" in msg.answer.call_args[0][0]
 
+    async def test_text_feedback_no_store_clears_pending(self):
+        """Текст при pending + user_store=None: pending очищается, не застревает."""
+        _survey_pending[42] = {"pmf": "very", "feature": "search"}
+        msg = make_message("Мой отзыв", user_id=42)
+        mock_service = AsyncMock()
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+
+        # pending очищен — пользователь не застрянет
+        assert 42 not in _survey_pending
+        # GigaChat НЕ вызван (сообщение перехвачено, но survey не завершён)
+        mock_service.process_message.assert_not_called()
+        # Пользователь получил сообщение об ошибке
+        msg.answer.assert_called_once()
+        assert "/survey" in msg.answer.call_args[0][0]
+
+    async def test_text_after_failed_pending_goes_to_gigachat(self):
+        """После очистки pending следующее сообщение уходит в GigaChat."""
+        # Имитируем: pending был, user_store=None → pending очищен
+        _survey_pending.pop(42, None)
+        msg = make_message("Хочу купить молоко", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Вот молоко!"
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+
+        # Теперь GigaChat вызван нормально
+        mock_service.process_message.assert_called_once_with(42, "Хочу купить молоко")
+
     async def test_text_without_pending_goes_to_gigachat(self):
         """Обычный текст (без pending) обрабатывается GigaChat."""
         # Убеждаемся что нет pending
