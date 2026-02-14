@@ -76,6 +76,17 @@ class UserMiddleware(BaseMiddleware):
             logger.error("UserMiddleware: ошибка upsert для %d: %s", tg_user.id, exc)
             return await handler(event, data)
 
+        # Диагностика: логируем роль для admin-команд
+        _text = getattr(event, "text", None)
+        if _text and _text.startswith("/admin_"):
+            logger.info(
+                "UserMiddleware: user=%d role=%s status=%s cmd=%s",
+                tg_user.id,
+                db_user.get("role"),
+                db_user.get("status"),
+                _text.split()[0],
+            )
+
         # Проверка блокировки
         if db_user.get("status") == "blocked":
             reason = db_user.get("blocked_reason") or ""
