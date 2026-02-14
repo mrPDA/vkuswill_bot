@@ -160,7 +160,19 @@ class AdminFilter(BaseFilter):
         message: Message,
         db_user: dict | None = None,
     ) -> bool:
-        return db_user is not None and db_user.get("role") == "admin"
+        is_admin = db_user is not None and db_user.get("role") == "admin"
+        # Логируем ТОЛЬКО для admin-команд — не спамим на обычные сообщения
+        if message.text and message.text.startswith("/admin_"):
+            user_id = message.from_user.id if message.from_user else "?"
+            role = db_user.get("role") if db_user else "no_db_user"
+            logger.info(
+                "AdminFilter: user=%s role=%s is_admin=%s cmd=%s",
+                user_id,
+                role,
+                is_admin,
+                message.text.split()[0],
+            )
+        return is_admin
 
 
 # Применяем фильтр на весь admin_router — больше не нужно
@@ -725,7 +737,19 @@ async def survey_done_callback(
     await callback.answer()
 
 
-@router.message(F.text.startswith("/admin_"))
+class _IsAdminCommandFilter(BaseFilter):
+    """Фильтр: сообщение начинается с /admin_.
+
+    Используем явный BaseFilter вместо F.text.startswith —
+    magic-filter может не вызывать startswith корректно
+    в некоторых версиях aiogram/magic-filter.
+    """
+
+    async def __call__(self, message: Message) -> bool:
+        return bool(message.text and message.text.startswith("/admin_"))
+
+
+@router.message(_IsAdminCommandFilter())
 async def handle_admin_unauthorized(message: Message) -> None:
     """Перехват admin-команд от неавторизованных пользователей.
 
@@ -734,6 +758,13 @@ async def handle_admin_unauthorized(message: Message) -> None:
     Этот хендлер ловит /admin_* и отправляет корректный отказ,
     не пропуская команду в GigaChat.
     """
+    user_id = message.from_user.id if message.from_user else "?"
+    cmd = message.text.split()[0] if message.text else "?"
+    logger.warning(
+        "Admin-команда отклонена: user=%s cmd=%s",
+        user_id,
+        cmd,
+    )
     await message.answer("У вас нет прав администратора.")
 
 
