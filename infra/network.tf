@@ -59,6 +59,14 @@ resource "yandex_vpc_security_group" "bot" {
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
+  # Metabase BI (self-hosted)
+  ingress {
+    description    = "Metabase UI"
+    protocol       = "TCP"
+    port           = 3001
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Внутренний трафик (Redis, PG)
   ingress {
     description       = "Internal: all within SG"

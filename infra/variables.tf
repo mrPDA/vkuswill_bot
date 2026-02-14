@@ -168,6 +168,14 @@ variable "langfuse_secret_key" {
   default     = ""
 }
 
+# ─── Metabase ─────────────────────────────────────────────────
+
+variable "metabase_pg_password" {
+  description = "PostgreSQL password for Metabase user"
+  type        = string
+  sensitive   = true
+}
+
 # ─── S3 Logs ─────────────────────────────────────────────────
 
 variable "s3_log_bucket" {
