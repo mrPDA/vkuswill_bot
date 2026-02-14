@@ -505,9 +505,7 @@ class TestCmdStartDeepLink:
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
 
         # Находим вызов log_event с "bot_start"
-        bot_start_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
-        ]
+        bot_start_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"]
         assert len(bot_start_calls) == 1
         metadata = bot_start_calls[0][0][2]
         assert metadata["source"] == "referral"
@@ -518,9 +516,7 @@ class TestCmdStartDeepLink:
 
         # Бонус залогирован
         referral_calls = [
-            c
-            for c in mock_store.log_event.call_args_list
-            if c[0][1] == "referral_bonus_granted"
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "referral_bonus_granted"
         ]
         assert len(referral_calls) == 1
 
@@ -569,9 +565,7 @@ class TestCmdStartDeepLink:
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
 
         mock_store.find_user_by_referral_code.assert_called_once_with("abc")
-        bot_start_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
-        ]
+        bot_start_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"]
         metadata = bot_start_calls[0][0][2]
         assert metadata["source"] == "referral"
         assert metadata["referrer_id"] == 999
@@ -584,9 +578,7 @@ class TestCmdStartDeepLink:
 
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
 
-        bot_start_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
-        ]
+        bot_start_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"]
         metadata = bot_start_calls[0][0][2]
         assert metadata["source"] == "organic"
         assert "referrer_id" not in metadata
