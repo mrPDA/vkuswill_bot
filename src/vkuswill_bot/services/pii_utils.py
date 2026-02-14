@@ -42,9 +42,7 @@ def hash_user_id(user_id: str | int) -> str:
 _PII_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     # Телефоны: +7..., 8..., и вариации
     (
-        re.compile(
-            r"(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"
-        ),
+        re.compile(r"(?:\+7|8)[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}"),
         "[PHONE]",
     ),
     # Email
