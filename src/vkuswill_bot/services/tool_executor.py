@@ -114,6 +114,18 @@ class ToolExecutor:
         self._nutrition_service = nutrition_service
         self._user_store = user_store
 
+    # ---- Публичные свойства для доступа к процессорам (DI) ----
+
+    @property
+    def search_processor(self) -> SearchProcessor:
+        """SearchProcessor (read-only доступ для GigaChatService DI)."""
+        return self._search_processor
+
+    @property
+    def cart_processor(self) -> CartProcessor:
+        """CartProcessor (read-only доступ для GigaChatService DI)."""
+        return self._cart_processor
+
     # ---- Парсинг аргументов ----
 
     @staticmethod
@@ -597,7 +609,7 @@ class ToolExecutor:
                 continue
             xml_id = item.get("xml_id")
             if xml_id is not None:
-                cached = await self._cart_processor._price_cache.get(xml_id)
+                cached = await self._cart_processor.price_cache.get(xml_id)
                 if cached is None:
                     unknown.append(xml_id)
         return unknown
@@ -730,7 +742,7 @@ class ToolExecutor:
         for item in products:
             xml_id = item.get("xml_id")
             q = item.get("q", 1)
-            cached = await self._cart_processor._price_cache.get(xml_id)
+            cached = await self._cart_processor.price_cache.get(xml_id)
             product_info: dict = {"xml_id": xml_id, "q": q}
             if cached:
                 product_info["name"] = cached.name

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from vkuswill_bot.bot.handlers import (
+    AdminFilter,
     cmd_admin_block,
     cmd_admin_stats,
     cmd_admin_unblock,
@@ -55,6 +56,41 @@ def _make_user_store() -> AsyncMock:
 
 
 # ---------------------------------------------------------------------------
+# AdminFilter
+# ---------------------------------------------------------------------------
+
+
+class TestAdminFilter:
+    """Тесты AdminFilter — проверка прав администратора."""
+
+    @pytest.mark.asyncio
+    async def test_admin_allowed(self):
+        """Администратор проходит фильтр."""
+        f = AdminFilter()
+        msg = _make_message("/admin_block 999")
+        result = await f(msg, db_user=_make_db_user(role="admin"))
+        assert result is True
+
+    @pytest.mark.asyncio
+    async def test_user_rejected(self):
+        """Обычный пользователь не проходит фильтр."""
+        f = AdminFilter()
+        msg = _make_message("/admin_block 999")
+        result = await f(msg, db_user=_make_db_user(role="user"))
+        assert result is False
+        msg.answer.assert_called_once()
+        assert "нет прав" in msg.answer.call_args[0][0]
+
+    @pytest.mark.asyncio
+    async def test_no_db_user_rejected(self):
+        """Без db_user (PostgreSQL недоступен) → нет прав."""
+        f = AdminFilter()
+        msg = _make_message("/admin_block 999")
+        result = await f(msg, db_user=None)
+        assert result is False
+
+
+# ---------------------------------------------------------------------------
 # /admin_block
 # ---------------------------------------------------------------------------
 
@@ -68,7 +104,7 @@ class TestAdminBlock:
         msg = _make_message("/admin_block 999 спам")
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_called_once_with(999, "спам")
         msg.answer.assert_called_once()
@@ -80,30 +116,9 @@ class TestAdminBlock:
         msg = _make_message("/admin_block 999")
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_called_once_with(999, "")
-
-    @pytest.mark.asyncio
-    async def test_block_not_admin(self):
-        """Обычный пользователь не может блокировать."""
-        msg = _make_message("/admin_block 999 test")
-        store = _make_user_store()
-
-        await cmd_admin_block(msg, store, _make_db_user(role="user"))
-
-        store.block.assert_not_called()
-        assert "нет прав" in msg.answer.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_block_no_db_user(self):
-        """Без db_user (PostgreSQL недоступен) → нет прав."""
-        msg = _make_message("/admin_block 999 test")
-        store = _make_user_store()
-
-        await cmd_admin_block(msg, store, db_user=None)
-
-        store.block.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_block_no_user_id(self):
@@ -111,7 +126,7 @@ class TestAdminBlock:
         msg = _make_message("/admin_block")
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_not_called()
         assert "Использование" in msg.answer.call_args[0][0]
@@ -122,7 +137,7 @@ class TestAdminBlock:
         msg = _make_message("/admin_block abc")
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_not_called()
         assert "числом" in msg.answer.call_args[0][0]
@@ -133,7 +148,7 @@ class TestAdminBlock:
         msg = _make_message("/admin_block 100 test", user_id=100)
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_not_called()
         assert "самого себя" in msg.answer.call_args[0][0]
@@ -145,7 +160,7 @@ class TestAdminBlock:
         store = _make_user_store()
         store.block.return_value = False
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         assert "не найден" in msg.answer.call_args[0][0]
 
@@ -156,7 +171,7 @@ class TestAdminBlock:
         msg.from_user = None
         store = _make_user_store()
 
-        await cmd_admin_block(msg, store, _make_db_user())
+        await cmd_admin_block(msg, store)
 
         store.block.assert_not_called()
 
@@ -175,20 +190,10 @@ class TestAdminUnblock:
         msg = _make_message("/admin_unblock 999")
         store = _make_user_store()
 
-        await cmd_admin_unblock(msg, store, _make_db_user())
+        await cmd_admin_unblock(msg, store)
 
         store.unblock.assert_called_once_with(999)
         assert "разблокирован" in msg.answer.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_unblock_not_admin(self):
-        """Обычный пользователь не может разблокировать."""
-        msg = _make_message("/admin_unblock 999")
-        store = _make_user_store()
-
-        await cmd_admin_unblock(msg, store, _make_db_user(role="user"))
-
-        store.unblock.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_unblock_no_user_id(self):
@@ -196,7 +201,7 @@ class TestAdminUnblock:
         msg = _make_message("/admin_unblock")
         store = _make_user_store()
 
-        await cmd_admin_unblock(msg, store, _make_db_user())
+        await cmd_admin_unblock(msg, store)
 
         store.unblock.assert_not_called()
 
@@ -207,7 +212,7 @@ class TestAdminUnblock:
         store = _make_user_store()
         store.unblock.return_value = False
 
-        await cmd_admin_unblock(msg, store, _make_db_user())
+        await cmd_admin_unblock(msg, store)
 
         assert "не найден" in msg.answer.call_args[0][0]
 
@@ -226,22 +231,12 @@ class TestAdminStats:
         msg = _make_message("/admin_stats")
         store = _make_user_store()
 
-        await cmd_admin_stats(msg, store, _make_db_user())
+        await cmd_admin_stats(msg, store)
 
         msg.answer.assert_called_once()
         text = msg.answer.call_args[0][0]
         assert "42" in text  # total users
         assert "10" in text  # DAU
-
-    @pytest.mark.asyncio
-    async def test_stats_not_admin(self):
-        """Обычный пользователь не видит статистику."""
-        msg = _make_message("/admin_stats")
-        store = _make_user_store()
-
-        await cmd_admin_stats(msg, store, _make_db_user(role="user"))
-
-        store.count_users.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -269,7 +264,7 @@ class TestAdminUser:
             "blocked_reason": None,
         }
 
-        await cmd_admin_user(msg, store, _make_db_user())
+        await cmd_admin_user(msg, store)
 
         msg.answer.assert_called_once()
         text = msg.answer.call_args[0][0]
@@ -296,7 +291,7 @@ class TestAdminUser:
             "last_message_at": None,
         }
 
-        await cmd_admin_user(msg, store, _make_db_user())
+        await cmd_admin_user(msg, store)
 
         text = msg.answer.call_args[0][0]
         assert "blocked" in text
@@ -309,7 +304,7 @@ class TestAdminUser:
         store = _make_user_store()
         store.get.return_value = None
 
-        await cmd_admin_user(msg, store, _make_db_user())
+        await cmd_admin_user(msg, store)
 
         assert "не найден" in msg.answer.call_args[0][0]
 
@@ -319,16 +314,6 @@ class TestAdminUser:
         msg = _make_message("/admin_user")
         store = _make_user_store()
 
-        await cmd_admin_user(msg, store, _make_db_user())
+        await cmd_admin_user(msg, store)
 
         assert "Использование" in msg.answer.call_args[0][0]
-
-    @pytest.mark.asyncio
-    async def test_user_not_admin(self):
-        """Обычный пользователь не может запрашивать информацию."""
-        msg = _make_message("/admin_user 999")
-        store = _make_user_store()
-
-        await cmd_admin_user(msg, store, _make_db_user(role="user"))
-
-        store.get.assert_not_called()

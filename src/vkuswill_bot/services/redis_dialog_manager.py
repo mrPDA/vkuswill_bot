@@ -17,7 +17,7 @@ from collections import OrderedDict
 from gigachat.models import FunctionCall, Messages, MessagesRole
 from redis.asyncio import Redis
 
-from vkuswill_bot.services.dialog_manager import _sanitize_history, _summarize_tool_result
+from vkuswill_bot.services.dialog_manager import _sanitize_history, trim_message_list
 from vkuswill_bot.services.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
@@ -124,45 +124,9 @@ class RedisDialogManager:
     def trim_list(self, history: list[Messages]) -> list[Messages]:
         """Обрезать историю с суммаризацией старых tool results.
 
-        Идентична DialogManager.trim_list — суммаризирует FUNCTION-сообщения
-        вне recent-окна для экономии токенов.
+        Делегирует в свободную функцию trim_message_list (DRY).
         """
-        if len(history) <= self._max_history:
-            return history
-
-        system = history[0]
-        recent_start = len(history) - (self._max_history - 1)
-        old_messages = history[1:recent_start]
-        recent_messages = history[recent_start:]
-
-        # Суммаризируем старые FUNCTION-сообщения
-        summarized_old: list[Messages] = []
-        for msg in old_messages:
-            if str(msg.role) == "function" and msg.content:
-                summary = _summarize_tool_result(
-                    getattr(msg, "name", None),
-                    msg.content,
-                )
-                summarized_old.append(
-                    Messages(
-                        role=msg.role,
-                        content=summary,
-                        name=getattr(msg, "name", None),
-                    )
-                )
-            else:
-                summarized_old.append(msg)
-
-        result = [system, *summarized_old, *recent_messages]
-
-        if len(result) > self._max_history:
-            result = [system, *result[-(self._max_history - 1) :]]
-
-        # Санитизация: удаляем осиротевшие FUNCTION-сообщения
-        # (могут появиться после обрезки, если пара ASSISTANT+FUNCTION была разорвана)
-        result = _sanitize_history(result)
-
-        return result
+        return trim_message_list(history, self._max_history)
 
     async def areset(self, user_id: int) -> None:
         """Удалить диалог из Redis + очистить lock."""

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
 from gigachat import GigaChat
@@ -52,6 +53,9 @@ GIGACHAT_MAX_RETRIES = 5
 # Лимит количества поисковых запросов в search_log на пользователя
 MAX_SEARCH_LOG_QUERIES = 100
 
+# Лимит количества пользователей в _search_logs (LRU-вытеснение)
+MAX_SEARCH_LOGS = 1000
+
 # Тарифы GigaChat API (₽ за 1 токен)
 # Источник: https://developers.sber.ru/docs/ru/gigachat/tariffs/legal-tariffs
 # Обновлено: февраль 2026
@@ -92,15 +96,40 @@ class GigaChatService:
         recipe_service: RecipeService | None = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
         langfuse_service: LangfuseService | None = None,
+        ca_bundle_file: str | None = None,
     ) -> None:
-        # TODO: verify_ssl_certs=True + ca_bundle_file когда SDK поддержит CA Минцифры
-        self._client = GigaChat(
-            credentials=credentials,
-            model=model,
-            scope=scope,
-            verify_ssl_certs=False,
-            timeout=60,
-        )
+        # SSL-верификация с сертификатами НУЦ Минцифры (ca_bundle_file).
+        # Если ca_bundle_file указан и файл существует — verify=True.
+        # Иначе — fallback на verify=False с предупреждением.
+        import pathlib
+
+        verify_ssl = False
+        effective_ca_bundle: str | None = None
+        if ca_bundle_file:
+            ca_path = pathlib.Path(ca_bundle_file)
+            if ca_path.exists():
+                verify_ssl = True
+                effective_ca_bundle = str(ca_path)
+                logger.info("GigaChat SSL: verify=True, ca_bundle=%s", ca_path)
+            else:
+                logger.warning(
+                    "GigaChat SSL: ca_bundle не найден (%s), verify=False (НЕБЕЗОПАСНО!)",
+                    ca_bundle_file,
+                )
+        else:
+            logger.warning("GigaChat SSL: ca_bundle не указан, verify=False (НЕБЕЗОПАСНО!)")
+
+        gigachat_kwargs: dict[str, Any] = {
+            "credentials": credentials,
+            "model": model,
+            "scope": scope,
+            "verify_ssl_certs": verify_ssl,
+            "timeout": 60,
+        }
+        if effective_ca_bundle:
+            gigachat_kwargs["ca_bundle_file"] = effective_ca_bundle
+
+        self._client = GigaChat(**gigachat_kwargs)
         self._model_name = model
         self._langfuse = langfuse_service or LangfuseService(enabled=False)
         self._mcp_client = mcp_client
@@ -120,9 +149,16 @@ class GigaChatService:
         self._conversations = getattr(self._dialog_manager, "conversations", {})
 
         self._functions: list[dict] | None = None
-        self._search_logs: dict[int, dict[str, set[int]]] = {}
-        self._search_processor = SearchProcessor()  # создаёт PriceCache внутри
-        self._cart_processor = CartProcessor(self._search_processor.price_cache)
+        self._search_logs: OrderedDict[int, dict[str, set[int]]] = OrderedDict()
+
+        # Процессоры: извлекаем из tool_executor (если передан через DI),
+        # иначе создаём новые (fallback для тестов).
+        if tool_executor is not None:
+            self._search_processor = tool_executor.search_processor
+            self._cart_processor = tool_executor.cart_processor
+        else:
+            self._search_processor = SearchProcessor()
+            self._cart_processor = CartProcessor(self._search_processor.price_cache)
 
         self._tool_executor = tool_executor or ToolExecutor(
             mcp_client=mcp_client,
@@ -181,7 +217,10 @@ class GigaChatService:
 
         search_log хранит маппинг: поисковый запрос → множество xml_id,
         найденных по этому запросу. Используется верификацией корзины.
+        При доступе — перемещаем в конец LRU.
         """
+        if user_id in self._search_logs:
+            self._search_logs.move_to_end(user_id)
         return self._search_logs.get(user_id, {})
 
     def _save_search_log(
@@ -189,12 +228,22 @@ class GigaChatService:
         user_id: int,
         search_log: dict[str, set[int]],
     ) -> None:
-        """Сохранить search_log для пользователя с лимитом размера."""
+        """Сохранить search_log для пользователя с лимитом размера.
+
+        Два уровня ограничений:
+        1. Внутри одного user_id: не более MAX_SEARCH_LOG_QUERIES запросов.
+        2. По количеству user_id: LRU-вытеснение при MAX_SEARCH_LOGS.
+        """
         if len(search_log) > MAX_SEARCH_LOG_QUERIES:
             keys = list(search_log.keys())
             for key in keys[: len(keys) - MAX_SEARCH_LOG_QUERIES]:
                 del search_log[key]
         self._search_logs[user_id] = search_log
+        self._search_logs.move_to_end(user_id)
+        # LRU-вытеснение: удаляем самый давний user_id
+        while len(self._search_logs) > MAX_SEARCH_LOGS:
+            evicted_uid, _ = self._search_logs.popitem(last=False)
+            logger.debug("search_logs LRU: вытеснен user %d", evicted_uid)
 
     async def _handle_recipe_ingredients(self, args: dict) -> str:
         if self._recipe_service is not None:
