@@ -400,20 +400,18 @@ class UserStore:
         """Агрегированная статистика по survey (для /admin_survey_stats).
 
         Returns:
-            Словарь с total, avg_nps, will_continue (список), features (список).
+            Словарь с total, pmf (список), features (список),
+            feedback_count (int), recent_feedback (список).
         """
         await self.ensure_schema()
         async with self._pool.acquire() as conn:
             total = await conn.fetchval(
                 "SELECT COUNT(*) FROM user_events WHERE event_type = 'survey_completed'"
             )
-            avg_nps = await conn.fetchval(
-                "SELECT AVG((metadata->>'nps')::int) FROM user_events "
-                "WHERE event_type = 'survey_completed'"
-            )
-            will_continue = await conn.fetch(
-                "SELECT metadata->>'will_continue' AS answer, COUNT(*) AS cnt "
+            pmf = await conn.fetch(
+                "SELECT metadata->>'pmf' AS answer, COUNT(*) AS cnt "
                 "FROM user_events WHERE event_type = 'survey_completed' "
+                "AND metadata->>'pmf' IS NOT NULL "
                 "GROUP BY answer ORDER BY cnt DESC"
             )
             features = await conn.fetch(
@@ -421,11 +419,24 @@ class UserStore:
                 "FROM user_events WHERE event_type = 'survey_completed' "
                 "GROUP BY feat ORDER BY cnt DESC"
             )
+            feedback_count = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_events WHERE event_type = 'survey_completed' "
+                "AND metadata->>'feedback' IS NOT NULL "
+                "AND metadata->>'feedback' != ''"
+            )
+            recent_feedback = await conn.fetch(
+                "SELECT metadata->>'feedback' AS text, created_at "
+                "FROM user_events WHERE event_type = 'survey_completed' "
+                "AND metadata->>'feedback' IS NOT NULL "
+                "AND metadata->>'feedback' != '' "
+                "ORDER BY created_at DESC LIMIT 10"
+            )
         return {
             "total": total or 0,
-            "avg_nps": float(avg_nps) if avg_nps is not None else 0.0,
-            "will_continue": [dict(r) for r in will_continue],
+            "pmf": [dict(r) for r in pmf],
             "features": [dict(r) for r in features],
+            "feedback_count": feedback_count or 0,
+            "recent_feedback": [dict(r) for r in recent_feedback],
         }
 
     # ------------------------------------------------------------------
