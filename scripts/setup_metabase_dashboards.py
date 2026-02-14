@@ -416,10 +416,132 @@ LIMIT 20
     },
 ]
 
+CARDS_SURVEY = [
+    {
+        "name": "PMF Score",
+        "display": "scalar",
+        "sql": """
+SELECT ROUND(
+  100.0 * COUNT(*) FILTER (WHERE metadata->>'pmf' = 'very')
+  / NULLIF(COUNT(*), 0)
+, 0) AS pmf_score
+FROM user_events
+WHERE event_type = 'survey_completed'
+  AND metadata->>'pmf' IS NOT NULL
+""",
+        "pos": (0, 0, 4, 3),
+        "viz": {"suffix": "%"},
+    },
+    {
+        "name": "Опросов пройдено",
+        "display": "scalar",
+        "sql": """
+SELECT COUNT(*) FROM user_events
+WHERE event_type = 'survey_completed'
+""",
+        "pos": (4, 0, 4, 3),
+    },
+    {
+        "name": "Отзывов получено",
+        "display": "scalar",
+        "sql": """
+SELECT COUNT(*) FROM user_events
+WHERE event_type = 'survey_completed'
+  AND metadata->>'feedback' IS NOT NULL
+  AND metadata->>'feedback' != ''
+""",
+        "pos": (8, 0, 4, 3),
+    },
+    {
+        "name": "PMF: распределение ответов",
+        "display": "pie",
+        "sql": """
+SELECT CASE metadata->>'pmf'
+         WHEN 'very' THEN '😢 Очень расстроюсь'
+         WHEN 'somewhat' THEN '😐 Немного'
+         WHEN 'not' THEN '😊 Не расстроюсь'
+         ELSE metadata->>'pmf'
+       END AS "Ответ",
+       COUNT(*) AS "Кол-во"
+FROM user_events
+WHERE event_type = 'survey_completed'
+  AND metadata->>'pmf' IS NOT NULL
+GROUP BY metadata->>'pmf'
+ORDER BY CASE metadata->>'pmf'
+           WHEN 'very' THEN 1
+           WHEN 'somewhat' THEN 2
+           WHEN 'not' THEN 3
+         END
+""",
+        "pos": (0, 3, 9, 6),
+    },
+    {
+        "name": "Самая полезная функция",
+        "display": "bar",
+        "sql": """
+SELECT CASE metadata->>'useful_feature'
+         WHEN 'search' THEN '🔍 Поиск товаров'
+         WHEN 'recipe' THEN '🍳 Подбор рецепта'
+         WHEN 'cart' THEN '🛒 Сборка корзины'
+         WHEN 'other' THEN '💬 Другое'
+         ELSE COALESCE(metadata->>'useful_feature', '?')
+       END AS "Функция",
+       COUNT(*) AS "Голосов"
+FROM user_events
+WHERE event_type = 'survey_completed'
+GROUP BY metadata->>'useful_feature'
+ORDER BY COUNT(*) DESC
+""",
+        "pos": (9, 3, 9, 6),
+    },
+    {
+        "name": "Последние отзывы",
+        "display": "table",
+        "sql": """
+SELECT created_at::date AS "Дата",
+       user_id::text AS "Пользователь",
+       CASE metadata->>'pmf'
+         WHEN 'very' THEN '😢 Очень'
+         WHEN 'somewhat' THEN '😐 Немного'
+         WHEN 'not' THEN '😊 Нет'
+       END AS "PMF",
+       CASE metadata->>'useful_feature'
+         WHEN 'search' THEN 'Поиск'
+         WHEN 'recipe' THEN 'Рецепт'
+         WHEN 'cart' THEN 'Корзина'
+         WHEN 'other' THEN 'Другое'
+       END AS "Фича",
+       COALESCE(metadata->>'feedback', '—') AS "Отзыв"
+FROM user_events
+WHERE event_type = 'survey_completed'
+ORDER BY created_at DESC
+LIMIT 50
+""",
+        "pos": (0, 9, 18, 7),
+    },
+    {
+        "name": "Опросы по дням",
+        "display": "bar",
+        "sql": """
+SELECT created_at::date AS "Дата",
+       COUNT(*) AS "Опросов",
+       COUNT(*) FILTER (WHERE metadata->>'pmf' = 'very') AS "Очень расстроятся",
+       COUNT(*) FILTER (WHERE metadata->>'feedback' IS NOT NULL
+                          AND metadata->>'feedback' != '') AS "С отзывом"
+FROM user_events
+WHERE event_type = 'survey_completed'
+  AND created_at >= CURRENT_DATE - 30
+GROUP BY created_at::date
+ORDER BY "Дата"
+""",
+        "pos": (0, 16, 18, 5),
+    },
+]
+
 
 # ─── Main ──────────────────────────────────────────────────────────
 
-def setup_dashboards(url: str, email: str, password: str) -> None:
+def setup_dashboards(url: str, email: str, password: str, only: str | None = None) -> None:
     """Основная функция: создать все дашборды."""
     global METABASE_URL, SESSION_TOKEN
     METABASE_URL = url.rstrip("/")
@@ -444,12 +566,22 @@ def setup_dashboards(url: str, email: str, password: str) -> None:
         coll_id = None
         print("  Коллекция уже существует, используем root")
 
-    # Дашборд 1: Обзор за день
-    dashboards_config = [
-        ("Обзор за день", "Ключевые метрики бота: DAU, корзины, GMV, тренды", CARDS_OVERVIEW),
-        ("Воронка конверсий", "Конверсия по этапам: старт → сессия → поиск → корзина", CARDS_FUNNEL),
-        ("Источники трафика", "Откуда приходят пользователи и как конвертируются", CARDS_TRAFFIC),
-    ]
+    # Все дашборды
+    all_dashboards = {
+        "overview": ("Обзор за день", "Ключевые метрики бота: DAU, корзины, GMV, тренды", CARDS_OVERVIEW),
+        "funnel": ("Воронка конверсий", "Конверсия по этапам: старт → сессия → поиск → корзина", CARDS_FUNNEL),
+        "traffic": ("Источники трафика", "Откуда приходят пользователи и как конвертируются", CARDS_TRAFFIC),
+        "survey": ("Опрос (PMF)", "PMF score, полезные фичи, текстовые отзывы пользователей", CARDS_SURVEY),
+    }
+
+    # Фильтр: если указан --only, создаём только выбранный дашборд
+    if only:
+        if only not in all_dashboards:
+            print(f"ОШИБКА: неизвестный дашборд '{only}'. Доступные: {', '.join(all_dashboards)}")
+            sys.exit(1)
+        dashboards_config = [all_dashboards[only]]
+    else:
+        dashboards_config = list(all_dashboards.values())
 
     for dash_name, dash_desc, cards_config in dashboards_config:
         print(f"\n{'='*50}")
@@ -488,10 +620,12 @@ if __name__ == "__main__":
     parser.add_argument("--url", default="http://89.169.138.16:3001", help="Metabase URL")
     parser.add_argument("--email", required=True, help="Metabase admin email")
     parser.add_argument("--password", required=True, help="Metabase admin password")
+    parser.add_argument("--only", choices=["overview", "funnel", "traffic", "survey"],
+                        help="Создать только один дашборд")
     args = parser.parse_args()
 
     try:
-        setup_dashboards(args.url, args.email, args.password)
+        setup_dashboards(args.url, args.email, args.password, args.only)
     except URLError as e:
         print(f"Не удалось подключиться к Metabase: {e}")
         sys.exit(1)
