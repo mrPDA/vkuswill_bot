@@ -90,6 +90,7 @@ def _setup_logging() -> None:
     logging.basicConfig(level=level, handlers=handlers, force=True)
 
     # S3 логирование: долгосрочное хранение в Yandex Object Storage
+    # PII-защита: user_id хешируется, сообщения проходят PII-маскировку
     if config.s3_log_enabled and config.s3_log_bucket:
         try:
             from vkuswill_bot.services.s3_log_handler import create_s3_log_handler
@@ -104,8 +105,12 @@ def _setup_logging() -> None:
                 flush_interval=config.s3_log_flush_interval,
                 flush_size=config.s3_log_flush_size,
                 level=logging.INFO,
+                retention_days=config.s3_log_retention_days,
             )
             logging.getLogger().addHandler(s3_handler)
+
+            # Установить Lifecycle Policy для автоудаления логов (152-ФЗ)
+            s3_handler.ensure_lifecycle_policy()
         except Exception as exc:
             logging.getLogger(__name__).warning("S3 логирование не запущено: %s", exc)
 

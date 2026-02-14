@@ -8,6 +8,11 @@
 - Импортировать в ELK / Grafana Loki / ClickHouse
 - Фильтровать по уровню, логгеру, временному диапазону
 
+Защита персональных данных (152-ФЗ):
+- ``user_id`` и ``chat_id`` хешируются (SHA-256, 12 символов)
+- PII (телефоны, email, номера карт, ИНН, СНИЛС) маскируются в ``message``
+- Lifecycle Policy: автоудаление логов через ``retention_days`` (по умолчанию 90)
+
 Пример использования::
 
     handler = S3LogHandler(
@@ -28,6 +33,8 @@ import threading
 import uuid
 from datetime import datetime, UTC
 from typing import TYPE_CHECKING
+
+from vkuswill_bot.services.pii_utils import hash_user_id, mask_pii
 
 if TYPE_CHECKING:
     pass
@@ -65,6 +72,7 @@ class S3LogHandler(logging.Handler):
         flush_interval: int = 60,
         flush_size: int = 500,
         level: int = logging.NOTSET,
+        retention_days: int = 90,
     ) -> None:
         super().__init__(level)
 
@@ -72,6 +80,7 @@ class S3LogHandler(logging.Handler):
         self.prefix = prefix.rstrip("/")
         self._flush_interval = flush_interval
         self._flush_size = flush_size
+        self._retention_days = retention_days
 
         # Метаданные для каждого лог-файла
         self._hostname = os.environ.get("HOSTNAME", "unknown")
@@ -145,8 +154,18 @@ class S3LogHandler(logging.Handler):
     # ------------------------------------------------------------------
 
     def emit(self, record: logging.LogRecord) -> None:
-        """Добавить запись лога в буфер."""
+        """Добавить запись лога в буфер.
+
+        Защита ПД (152-ФЗ):
+        - ``message`` пропускается через PII-маскировку
+        - ``user_id`` и ``chat_id`` хешируются (SHA-256, 12 символов)
+        - ``request_id`` сохраняется как есть (не содержит ПД)
+        """
         try:
+            # PII-маскировка содержимого лог-сообщения
+            raw_message = record.getMessage()
+            safe_message = mask_pii(raw_message)
+
             entry: dict = {
                 "timestamp": datetime.fromtimestamp(
                     record.created,
@@ -154,7 +173,7 @@ class S3LogHandler(logging.Handler):
                 ).isoformat(),
                 "level": record.levelname,
                 "logger": record.name,
-                "message": record.getMessage(),
+                "message": safe_message,
                 "hostname": self._hostname,
                 "pid": self._pid,
             }
@@ -164,11 +183,15 @@ class S3LogHandler(logging.Handler):
                 fmt = self.formatter or logging.Formatter()
                 entry["exception"] = fmt.formatException(record.exc_info)
 
-            # Добавить extra-поля (user_id, request_id и т.п.)
-            for key in ("user_id", "request_id", "chat_id"):
+            # Добавить extra-поля с анонимизацией идентификаторов
+            for key in ("user_id", "chat_id"):
                 val = getattr(record, key, None)
                 if val is not None:
-                    entry[key] = val
+                    entry[key] = hash_user_id(val)
+            # request_id — не ПД, сохраняем как есть
+            request_id = getattr(record, "request_id", None)
+            if request_id is not None:
+                entry["request_id"] = request_id
 
             line = json.dumps(entry, ensure_ascii=False)
 
@@ -244,6 +267,51 @@ class S3LogHandler(logging.Handler):
                 file=sys.stderr,
             )
 
+    def ensure_lifecycle_policy(self) -> bool:
+        """Установить S3 Lifecycle Policy для автоудаления логов.
+
+        Создаёт правило ``auto-delete-logs-{retention_days}d``, которое
+        удаляет объекты с префиксом ``{prefix}/`` через ``retention_days`` дней.
+
+        Безопасно вызывать многократно — правило перезаписывается.
+
+        Returns:
+            True если политика успешно применена, False при ошибке.
+        """
+        if self._retention_days <= 0:
+            return False
+
+        try:
+            client = self._get_client()
+            rule_id = f"auto-delete-logs-{self._retention_days}d"
+            lifecycle_config = {
+                "Rules": [
+                    {
+                        "ID": rule_id,
+                        "Filter": {"Prefix": f"{self.prefix}/"},
+                        "Status": "Enabled",
+                        "Expiration": {"Days": self._retention_days},
+                    }
+                ]
+            }
+            client.put_bucket_lifecycle_configuration(
+                Bucket=self.bucket,
+                LifecycleConfiguration=lifecycle_config,
+            )
+            print(
+                f"[S3LogHandler] Lifecycle Policy установлена: "
+                f"удаление через {self._retention_days} дн. "
+                f"(prefix={self.prefix}/)",
+                file=sys.stderr,
+            )
+            return True
+        except Exception as exc:
+            print(
+                f"[S3LogHandler] Не удалось установить Lifecycle Policy: {exc}",
+                file=sys.stderr,
+            )
+            return False
+
     def close(self) -> None:
         """Остановить таймер и сбросить оставшийся буфер."""
         self._closed = True
@@ -267,6 +335,7 @@ def create_s3_log_handler(
     flush_interval: int = 60,
     flush_size: int = 500,
     level: int = logging.INFO,
+    retention_days: int = 90,
 ) -> S3LogHandler:
     """Фабрика для создания S3LogHandler с валидацией параметров.
 
@@ -290,4 +359,5 @@ def create_s3_log_handler(
         flush_interval=flush_interval,
         flush_size=flush_size,
         level=level,
+        retention_days=retention_days,
     )

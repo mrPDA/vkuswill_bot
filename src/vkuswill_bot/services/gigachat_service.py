@@ -14,6 +14,7 @@ from gigachat.models import Chat, ChatCompletion, Messages, MessagesRole
 
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS, DialogManager
+from vkuswill_bot.services.pii_utils import mask_pii, sanitize_tool_args
 from vkuswill_bot.services.langfuse_tracing import (
     LangfuseService,
     _messages_to_langfuse,
@@ -506,7 +507,7 @@ class GigaChatService:
 
             tool_name = msg.function_call.name
             args = te.parse_arguments(msg.function_call.arguments)
-            logger.info("Вызов: %s(%s)", tool_name, json.dumps(args, ensure_ascii=False))
+            logger.info("Вызов: %s(%s)", tool_name, sanitize_tool_args(tool_name, args))
 
             args = await te.preprocess_args(tool_name, args, user_prefs)
             if te.is_duplicate_call(tool_name, args, call_tracker, history):
@@ -526,7 +527,11 @@ class GigaChatService:
                 result = await self._recipe_service.get_ingredients(args)
             else:
                 result = await te.execute(tool_name, args, user_id)
-            logger.info("Результат %s: %s", tool_name, result[:MAX_RESULT_LOG_LENGTH])
+            logger.info(
+                "Результат %s: %s",
+                tool_name,
+                mask_pii(result[:MAX_RESULT_LOG_LENGTH]),
+            )
 
             result = await te.postprocess_result(
                 tool_name,
