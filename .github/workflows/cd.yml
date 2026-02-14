@@ -128,6 +128,8 @@ jobs:
           _LF_PUBLIC_KEY: ${{ secrets.LANGFUSE_PUBLIC_KEY }}
           _LF_SECRET_KEY: ${{ secrets.LANGFUSE_SECRET_KEY }}
           _LF_HOST: ${{ secrets.LANGFUSE_HOST }}
+          _MB_ENABLED: ${{ secrets.METABASE_ENABLED }}
+          _MB_DB_URL: ${{ secrets.METABASE_DATABASE_URL }}
         run: |
           # Фоллбэк: минимальный .env на случай если yc CLI / Lockbox недоступны.
           # deploy.sh перезапишет .env из Lockbox, если yc CLI установлен.
@@ -145,6 +147,8 @@ jobs:
             echo "LANGFUSE_SALT=${_LF_SALT}"
             echo "LANGFUSE_PUBLIC_KEY=${_LF_PUBLIC_KEY}"
             echo "LANGFUSE_SECRET_KEY=${_LF_SECRET_KEY}"
+            echo "METABASE_ENABLED=${_MB_ENABLED:-true}"
+            echo "METABASE_DATABASE_URL=${_MB_DB_URL}"
           } | ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "cat > ${{ env.DEPLOY_DIR }}/.env && chmod 600 ${{ env.DEPLOY_DIR }}/.env"
 
@@ -163,6 +167,10 @@ jobs:
           echo "=== Langfuse container status ==="
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "docker ps -a -f name=vkuswill-langfuse --format '{{.Status}}' && echo '--- logs ---' && docker logs vkuswill-langfuse --tail 20 2>&1" || true
+          echo ""
+          echo "=== Metabase container status ==="
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+            "docker ps -a -f name=vkuswill-metabase --format '{{.Status}}' && echo '--- logs ---' && docker logs vkuswill-metabase --tail 20 2>&1" || true
 
       - name: Health check
         timeout-minutes: 3

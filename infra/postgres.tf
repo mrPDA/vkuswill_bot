@@ -73,3 +73,20 @@ resource "yandex_mdb_postgresql_database" "langfuse" {
 
   depends_on = [yandex_mdb_postgresql_user.langfuse]
 }
+
+# ─── Metabase Database & User ────────────────────────────────
+
+resource "yandex_mdb_postgresql_user" "metabase" {
+  cluster_id = yandex_mdb_postgresql_cluster.bot.id
+  name       = "metabase"
+  password   = var.metabase_pg_password
+  conn_limit = 20
+}
+
+resource "yandex_mdb_postgresql_database" "metabase" {
+  cluster_id = yandex_mdb_postgresql_cluster.bot.id
+  name       = "metabase"
+  owner      = yandex_mdb_postgresql_user.metabase.name
+
+  depends_on = [yandex_mdb_postgresql_user.metabase]
+}
