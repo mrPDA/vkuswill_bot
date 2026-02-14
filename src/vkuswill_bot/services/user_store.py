@@ -326,10 +326,7 @@ class UserStore:
             "survey_completed": bool}``
         """
         await self.ensure_schema()
-        sql = (
-            "SELECT carts_created, cart_limit, survey_completed "
-            "FROM users WHERE user_id = $1"
-        )
+        sql = "SELECT carts_created, cart_limit, survey_completed FROM users WHERE user_id = $1"
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(sql, user_id)
         if not row:
@@ -481,8 +478,7 @@ class UserStore:
             # Fallback: код на основе user_id
             code = f"u{user_id}"
             await conn.execute(
-                "UPDATE users SET referral_code = $2, updated_at = NOW() "
-                "WHERE user_id = $1",
+                "UPDATE users SET referral_code = $2, updated_at = NOW() WHERE user_id = $1",
                 user_id,
                 code,
             )
@@ -533,8 +529,7 @@ class UserStore:
 
             # Привязываем реферера
             await conn.execute(
-                "UPDATE users SET referred_by = $2, updated_at = NOW() "
-                "WHERE user_id = $1",
+                "UPDATE users SET referred_by = $2, updated_at = NOW() WHERE user_id = $1",
                 new_user_id,
                 referrer_id,
             )

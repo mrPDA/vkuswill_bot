@@ -302,8 +302,7 @@ class ToolExecutor:
                                 "survey_completed": survey_done,
                                 "tier": (
                                     2
-                                    if limit_info["cart_limit"]
-                                    > app_config.free_cart_limit
+                                    if limit_info["cart_limit"] > app_config.free_cart_limit
                                     else 1
                                 ),
                             },
