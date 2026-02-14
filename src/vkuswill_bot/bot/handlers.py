@@ -572,18 +572,25 @@ async def handle_text(
 
     user_id = message.from_user.id
 
-    # Survey шаг 3: перехватываем текстовый отзыв, если ожидается
-    if user_id in _survey_pending and user_store is not None:
+    # Survey шаг 3: перехватываем текстовый отзыв, если ожидается.
+    # Всегда очищаем pending, даже если user_store недоступен,
+    # чтобы пользователь не застрял в цикле перехвата.
+    if user_id in _survey_pending:
         pending = _survey_pending.pop(user_id)
-        feedback = message.text[:500]
-        _ok, text = await _finish_survey(
-            user_id,
-            user_store,
-            pending["pmf"],
-            pending["feature"],
-            feedback,
-        )
-        await message.answer(text)
+        if user_store is not None:
+            feedback = message.text[:500]
+            _ok, text = await _finish_survey(
+                user_id,
+                user_store,
+                pending["pmf"],
+                pending["feature"],
+                feedback,
+            )
+            await message.answer(text)
+            return
+        # user_store недоступен — pending очищен, сообщаем об ошибке,
+        # пользователь сможет повторить опрос через /survey
+        await message.answer("Не удалось сохранить отзыв. Попробуйте позже: /survey")
         return
 
     # Показываем индикатор набора текста во время обработки
