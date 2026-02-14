@@ -254,17 +254,16 @@ class TestAdminUser:
 
     @pytest.mark.asyncio
     async def test_user_info_success(self):
-        """Успешный вывод информации о пользователе."""
+        """Успешный вывод информации о пользователе (без PII)."""
         msg = _make_message("/admin_user 999")
         store = _make_user_store()
         store.get.return_value = {
             "user_id": 999,
-            "username": "target",
-            "first_name": "Target",
-            "last_name": "User",
             "role": "user",
             "status": "active",
             "message_count": 100,
+            "carts_created": 3,
+            "cart_limit": 5,
             "created_at": datetime(2026, 1, 1, tzinfo=UTC),
             "last_message_at": datetime(2026, 2, 9, tzinfo=UTC),
             "blocked_reason": None,
@@ -275,8 +274,10 @@ class TestAdminUser:
         msg.answer.assert_called_once()
         text = msg.answer.call_args[0][0]
         assert "999" in text
-        assert "target" in text
         assert "100" in text
+        # PII не должно быть в выводе
+        assert "Username" not in text
+        assert "Имя" not in text
 
     @pytest.mark.asyncio
     async def test_user_info_blocked(self):
@@ -285,13 +286,12 @@ class TestAdminUser:
         store = _make_user_store()
         store.get.return_value = {
             "user_id": 999,
-            "username": "target",
-            "first_name": "T",
-            "last_name": None,
             "role": "user",
             "status": "blocked",
             "blocked_reason": "спам",
             "message_count": 5,
+            "carts_created": 0,
+            "cart_limit": 5,
             "created_at": datetime(2026, 1, 1, tzinfo=UTC),
             "last_message_at": None,
         }

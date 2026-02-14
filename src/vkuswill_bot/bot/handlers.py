@@ -771,26 +771,28 @@ async def cmd_admin_user(
         await message.answer(f"Пользователь {target_id} не найден.")
         return
 
-    username = target.get("username") or "—"
-    first_name = target.get("first_name") or "—"
-    last_name = target.get("last_name") or "—"
     role = target.get("role", "user")
     status = target.get("status", "active")
     msg_count = target.get("message_count", 0)
+    carts = target.get("carts_created", 0)
+    cart_limit = target.get("cart_limit", 5)
     created = target.get("created_at", "—")
     last_msg = target.get("last_message_at") or "—"
     blocked_reason = target.get("blocked_reason") or "—"
 
     text = (
         f"<b>Пользователь {target_id}</b>\n\n"
-        f"Username: @{username}\n"
-        f"Имя: {first_name} {last_name}\n"
         f"Роль: <b>{role}</b>\n"
         f"Статус: <b>{status}</b>\n"
     )
     if status == "blocked":
         text += f"Причина блокировки: {blocked_reason}\n"
-    text += f"\nСообщений: {msg_count}\nЗарегистрирован: {created}\nПоследнее сообщение: {last_msg}"
+    text += (
+        f"\nСообщений: {msg_count}"
+        f"\nКорзины: {carts}/{cart_limit}"
+        f"\nЗарегистрирован: {created}"
+        f"\nПоследнее сообщение: {last_msg}"
+    )
 
     await message.answer(text)
 
