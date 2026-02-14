@@ -505,24 +505,48 @@ class TestFreemiumCartLimits:
     async def test_check_cart_limit_allowed(self, store):
         """check_cart_limit возвращает allowed=True когда лимит не исчерпан."""
         s, conn = store
-        conn.fetchrow.return_value = {"carts_created": 2, "cart_limit": 5}
+        conn.fetchrow.return_value = {
+            "carts_created": 2,
+            "cart_limit": 5,
+            "survey_completed": False,
+        }
 
         result = await s.check_cart_limit(123)
 
         assert result["allowed"] is True
         assert result["carts_created"] == 2
         assert result["cart_limit"] == 5
+        assert result["survey_completed"] is False
 
     @pytest.mark.asyncio
     async def test_check_cart_limit_denied(self, store):
         """check_cart_limit возвращает allowed=False когда лимит исчерпан."""
         s, conn = store
-        conn.fetchrow.return_value = {"carts_created": 5, "cart_limit": 5}
+        conn.fetchrow.return_value = {
+            "carts_created": 5,
+            "cart_limit": 5,
+            "survey_completed": False,
+        }
 
         result = await s.check_cart_limit(123)
 
         assert result["allowed"] is False
         assert result["carts_created"] == 5
+
+    @pytest.mark.asyncio
+    async def test_check_cart_limit_denied_survey_done(self, store):
+        """check_cart_limit возвращает survey_completed=True для tier 2."""
+        s, conn = store
+        conn.fetchrow.return_value = {
+            "carts_created": 10,
+            "cart_limit": 10,
+            "survey_completed": True,
+        }
+
+        result = await s.check_cart_limit(123)
+
+        assert result["allowed"] is False
+        assert result["survey_completed"] is True
 
     @pytest.mark.asyncio
     async def test_check_cart_limit_nonexistent_user(self, store):
@@ -534,6 +558,7 @@ class TestFreemiumCartLimits:
 
         assert result["allowed"] is True
         assert result["carts_created"] == 0
+        assert result["survey_completed"] is False
 
     @pytest.mark.asyncio
     async def test_check_cart_limit_custom_default(self, store):
@@ -549,7 +574,11 @@ class TestFreemiumCartLimits:
     async def test_increment_carts(self, store):
         """increment_carts увеличивает счётчик на 1."""
         s, conn = store
-        conn.fetchrow.return_value = {"carts_created": 3, "cart_limit": 5}
+        conn.fetchrow.return_value = {
+            "carts_created": 3,
+            "cart_limit": 5,
+            "survey_completed": False,
+        }
 
         result = await s.increment_carts(123)
 
