@@ -492,15 +492,37 @@ class TestCmdStartDeepLink:
         assert metadata["is_new_user"] is True
 
     async def test_start_referral(self):
-        """/start ref_12345 — referral source."""
+        """/start ref_12345 — referral source + реферальная обработка."""
         msg = make_message("/start ref_12345", user_id=42)
         mock_store = AsyncMock()
+        mock_store.process_referral.return_value = {
+            "success": True,
+            "reason": "ok",
+            "bonus": 3,
+            "new_limit": 8,
+        }
 
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
 
-        metadata = mock_store.log_event.call_args[0][2]
+        # Находим вызов log_event с "bot_start"
+        bot_start_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
+        ]
+        assert len(bot_start_calls) == 1
+        metadata = bot_start_calls[0][0][2]
         assert metadata["source"] == "referral"
         assert metadata["referrer_id"] == 12345
+
+        # Реферал обработан
+        mock_store.process_referral.assert_called_once_with(42, 12345, 3)
+
+        # Бонус залогирован
+        referral_calls = [
+            c
+            for c in mock_store.log_event.call_args_list
+            if c[0][1] == "referral_bonus_granted"
+        ]
+        assert len(referral_calls) == 1
 
     async def test_start_habr_source(self):
         """/start habr — source=habr."""
@@ -532,15 +554,41 @@ class TestCmdStartDeepLink:
         metadata = mock_store.log_event.call_args[0][2]
         assert metadata["source"] == "telegram"
 
-    async def test_start_invalid_ref(self):
-        """/start ref_abc — невалидный referrer_id, source=organic."""
+    async def test_start_referral_code(self):
+        """/start ref_abc — реферальный код (строка), ищет в БД."""
         msg = make_message("/start ref_abc", user_id=42)
         mock_store = AsyncMock()
+        mock_store.find_user_by_referral_code.return_value = 999
+        mock_store.process_referral.return_value = {
+            "success": True,
+            "reason": "ok",
+            "bonus": 3,
+            "new_limit": 8,
+        }
 
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
 
-        metadata = mock_store.log_event.call_args[0][2]
-        assert metadata["source"] == "organic"
+        mock_store.find_user_by_referral_code.assert_called_once_with("abc")
+        bot_start_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
+        ]
+        metadata = bot_start_calls[0][0][2]
+        assert metadata["source"] == "referral"
+        assert metadata["referrer_id"] == 999
+
+    async def test_start_invalid_ref(self):
+        """/start ref_abc — невалидный реферальный код, не найден в БД."""
+        msg = make_message("/start ref_abc", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.find_user_by_referral_code.return_value = None
+
+        await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
+
+        bot_start_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
+        ]
+        metadata = bot_start_calls[0][0][2]
+        assert metadata["source"] == "referral"
         assert "referrer_id" not in metadata
 
     async def test_start_existing_user(self):
