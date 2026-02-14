@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 
 from vkuswill_bot.bot.handlers import (
+    _build_cart_keyboard,
     _sanitize_telegram_html,
     _send_typing_periodically,
     _split_message,
@@ -168,7 +169,7 @@ class TestHandleText:
         await handle_text(msg, gigachat_service=mock_service)
 
         mock_service.process_message.assert_called_once_with(1, "Хочу молоко")
-        msg.answer.assert_called_once_with("Вот молоко за 79 руб!")
+        msg.answer.assert_called_once_with("Вот молоко за 79 руб!", reply_markup=None)
 
     async def test_long_response_split(self):
         """Длинный ответ разбивается на части."""
@@ -247,7 +248,7 @@ class TestHandleText:
         # Не должно бросить исключение
         await handle_text(msg, gigachat_service=mock_service)
 
-        msg.answer.assert_called_once_with("Ответ")
+        msg.answer.assert_called_once_with("Ответ", reply_markup=None)
 
     async def test_html_safe_link_preserved(self):
         """F-02: Безопасная ссылка <a href="https://..."> сохраняется."""
@@ -409,6 +410,86 @@ class TestSanitizeTelegramHtml:
         assert "&amp;nbsp;" not in result
         assert '<a href="https://vkusvill.ru/?share_basket=123">' in result
         assert "</a>" in result
+
+
+# ============================================================================
+# _build_cart_keyboard
+# ============================================================================
+
+
+class TestBuildCartKeyboard:
+    """Тесты извлечения URL корзины и создания inline-кнопки."""
+
+    def test_extracts_cart_url(self):
+        """Ссылка «Открыть корзину» → inline-кнопка с URL."""
+        html = (
+            "Вот ваша корзина:\n"
+            '<a href="https://vkusvill.ru/?share_basket=abc123">Открыть корзину</a>'
+        )
+        kb = _build_cart_keyboard(html)
+        assert kb is not None
+        btn = kb.inline_keyboard[0][0]
+        assert btn.url == "https://vkusvill.ru/?share_basket=abc123"
+        assert "корзину" in btn.text.lower() or "\U0001f6d2" in btn.text
+
+    def test_no_cart_link_returns_none(self):
+        """Без ссылки на корзину — None."""
+        html = "Вот молоко за 79 руб!"
+        assert _build_cart_keyboard(html) is None
+
+    def test_non_cart_link_returns_none(self):
+        """Ссылка без слова «корзин» — None."""
+        html = '<a href="https://example.com">Подробнее</a>'
+        assert _build_cart_keyboard(html) is None
+
+    def test_cart_link_case_insensitive(self):
+        """Регистр текста ссылки не важен."""
+        html = '<a href="https://vkusvill.ru/?basket=1">КОРЗИНА</a>'
+        kb = _build_cart_keyboard(html)
+        assert kb is not None
+        assert kb.inline_keyboard[0][0].url == "https://vkusvill.ru/?basket=1"
+
+    def test_cart_link_with_emoji(self):
+        """Ссылка с эмодзи 🛒 перед текстом."""
+        html = '<a href="https://vkusvill.ru/?basket=1">\U0001f6d2 Открыть корзину</a>'
+        kb = _build_cart_keyboard(html)
+        assert kb is not None
+
+
+class TestHandleTextCartButton:
+    """Тесты inline-кнопки корзины в handle_text."""
+
+    async def test_cart_response_has_inline_button(self):
+        """Ответ с корзиной → inline-кнопка «Открыть корзину»."""
+        msg = make_message("Собери корзину", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = (
+            "Вот корзина:\n"
+            "1. Молоко — 79 руб\n"
+            '<b>Итого: 79 руб</b>\n'
+            '<a href="https://vkusvill.ru/?share_basket=xyz">Открыть корзину</a>'
+        )
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        # Проверяем, что reply_markup — InlineKeyboardMarkup с URL-кнопкой
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is not None
+        btn = markup.inline_keyboard[0][0]
+        assert btn.url == "https://vkusvill.ru/?share_basket=xyz"
+
+    async def test_no_cart_no_button(self):
+        """Обычный ответ без корзины → reply_markup=None."""
+        msg = make_message("Привет", user_id=1)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Привет! Чем помочь?"
+
+        await handle_text(msg, gigachat_service=mock_service)
+
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is None
 
 
 # ============================================================================
