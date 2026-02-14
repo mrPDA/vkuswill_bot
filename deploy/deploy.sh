@@ -218,6 +218,82 @@ deploy_langfuse() {
 
 deploy_langfuse
 
+# ─── 5c. Запуск Metabase (BI-дашборды, если настроен) ────────
+deploy_metabase() {
+  local METABASE_NAME="vkuswill-metabase"
+  local ENV_FILE="/opt/vkuswill-bot/.env"
+
+  # Проверяем, включён ли Metabase
+  if [[ ! -f "$ENV_FILE" ]] || ! grep -q '^METABASE_ENABLED=true' "$ENV_FILE"; then
+    log "Metabase не включён (METABASE_ENABLED!=true), пропускаем"
+    return
+  fi
+
+  # Извлекаем DATABASE_URL из .env
+  local MB_DB_URL
+  MB_DB_URL=$(grep '^METABASE_DATABASE_URL=' "$ENV_FILE" | cut -d'=' -f2- || echo "")
+
+  if [[ -z "$MB_DB_URL" ]]; then
+    warn "METABASE_DATABASE_URL не задан, Metabase пропущен"
+    return
+  fi
+
+  # Парсим компоненты URL (postgresql://user:pass@host:port/dbname?params)
+  local MB_HOST MB_PORT MB_USER MB_PASS MB_DBNAME
+  read -r MB_HOST MB_PORT MB_USER MB_PASS MB_DBNAME < <(python3 -c "
+from urllib.parse import urlparse, unquote
+u = urlparse('${MB_DB_URL}')
+print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.password or ''), (u.path or '/metabase').lstrip('/'))
+")
+
+  if [[ -z "$MB_HOST" || -z "$MB_USER" ]]; then
+    warn "Не удалось распарсить METABASE_DATABASE_URL, Metabase пропущен"
+    return
+  fi
+
+  log "Обновление Metabase..."
+  docker pull metabase/metabase:v0.58 2>/dev/null || true
+
+  # Остановить предыдущий контейнер
+  if docker ps -q -f "name=${METABASE_NAME}" | grep -q .; then
+    docker stop "$METABASE_NAME" --time 10 2>/dev/null || true
+    docker rm "$METABASE_NAME" 2>/dev/null || true
+  elif docker ps -aq -f "name=${METABASE_NAME}" | grep -q .; then
+    docker rm "$METABASE_NAME" 2>/dev/null || true
+  fi
+
+  docker run -d \
+    --name "$METABASE_NAME" \
+    --restart unless-stopped \
+    --network host \
+    -e "MB_DB_TYPE=postgres" \
+    -e "MB_DB_DBNAME=${MB_DBNAME}" \
+    -e "MB_DB_PORT=${MB_PORT}" \
+    -e "MB_DB_USER=${MB_USER}" \
+    -e "MB_DB_PASS=${MB_PASS}" \
+    -e "MB_DB_HOST=${MB_HOST}" \
+    -e "MB_JETTY_HOST=0.0.0.0" \
+    -e "MB_JETTY_PORT=3001" \
+    -e "JAVA_TOOL_OPTIONS=-Xmx512m" \
+    --memory 1g \
+    --log-driver json-file \
+    --log-opt max-size=20m \
+    --log-opt max-file=2 \
+    --label "service=metabase" \
+    metabase/metabase:v0.58
+
+  # Подождать и проверить, что контейнер жив
+  sleep 5
+  if docker ps -q -f "name=${METABASE_NAME}" | grep -q .; then
+    log "Metabase запущен на порту 3001"
+  else
+    warn "Metabase контейнер упал! Логи:"
+    docker logs "$METABASE_NAME" --tail 30 2>&1 || true
+  fi
+}
+
+deploy_metabase
+
 # ─── 6. Запуск нового контейнера ────────────────────────────
 log "Запуск контейнера ${CONTAINER_NAME} (${TAG})..."
 
