@@ -32,6 +32,11 @@ class CartProcessor:
     def __init__(self, price_cache: PriceCache) -> None:
         self._price_cache = price_cache
 
+    @property
+    def price_cache(self) -> PriceCache:
+        """Кеш цен (read-only доступ для внешних потребителей)."""
+        return self._price_cache
+
     @staticmethod
     def enhance_cart_schema(params: dict) -> dict:
         """Дополнить схему vkusvill_cart_link_create описаниями параметров.
