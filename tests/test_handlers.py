@@ -862,7 +862,6 @@ class TestAdminAnalytics:
 
         await cmd_admin_analytics(
             msg,
-            db_user={"role": "admin"},
             stats_aggregator=mock_agg,
         )
 
@@ -871,26 +870,12 @@ class TestAdminAnalytics:
         assert "Аналитика" in text
         assert "DAU" in text
 
-    async def test_admin_analytics_not_admin(self):
-        """Не-админ не получает аналитику."""
-        msg = make_message("/admin_analytics", user_id=1)
-
-        await cmd_admin_analytics(
-            msg,
-            db_user={"role": "user"},
-            stats_aggregator=AsyncMock(),
-        )
-
-        text = msg.answer.call_args[0][0]
-        assert "нет прав" in text
-
     async def test_admin_analytics_no_aggregator(self):
         """Без StatsAggregator — сообщение об ошибке."""
         msg = make_message("/admin_analytics", user_id=1)
 
         await cmd_admin_analytics(
             msg,
-            db_user={"role": "admin"},
             stats_aggregator=None,
         )
 
@@ -918,7 +903,6 @@ class TestAdminAnalytics:
 
         await cmd_admin_analytics(
             msg,
-            db_user={"role": "admin"},
             stats_aggregator=mock_agg,
         )
 
@@ -943,7 +927,6 @@ class TestAdminFunnel:
 
         await cmd_admin_funnel(
             msg,
-            db_user={"role": "admin"},
             stats_aggregator=mock_agg,
         )
 
@@ -951,19 +934,6 @@ class TestAdminFunnel:
         text = msg.answer.call_args[0][0]
         assert "Воронка" in text
         assert "/start" in text
-
-    async def test_admin_funnel_not_admin(self):
-        """Не-админ не получает воронку."""
-        msg = make_message("/admin_funnel", user_id=1)
-
-        await cmd_admin_funnel(
-            msg,
-            db_user={"role": "user"},
-            stats_aggregator=AsyncMock(),
-        )
-
-        text = msg.answer.call_args[0][0]
-        assert "нет прав" in text
 
 
 class TestAdminGrantCarts:
@@ -978,7 +948,6 @@ class TestAdminGrantCarts:
         await cmd_admin_grant_carts(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         mock_store.grant_bonus_carts.assert_called_once_with(123, 10)
@@ -996,25 +965,10 @@ class TestAdminGrantCarts:
         await cmd_admin_grant_carts(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         text = msg.answer.call_args[0][0]
         assert "не найден" in text
-
-    async def test_grant_carts_not_admin(self):
-        """Не-админ не может выдавать корзины."""
-        msg = make_message("/admin_grant_carts 123 10", user_id=1)
-        mock_store = AsyncMock()
-
-        await cmd_admin_grant_carts(
-            msg,
-            user_store=mock_store,
-            db_user={"role": "user"},
-        )
-
-        text = msg.answer.call_args[0][0]
-        assert "нет прав" in text
 
     async def test_grant_carts_no_args(self):
         """Без аргументов — сообщение об использовании."""
@@ -1024,7 +978,6 @@ class TestAdminGrantCarts:
         await cmd_admin_grant_carts(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         text = msg.answer.call_args[0][0]
@@ -1038,7 +991,6 @@ class TestAdminGrantCarts:
         await cmd_admin_grant_carts(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         text = msg.answer.call_args[0][0]
@@ -1072,7 +1024,6 @@ class TestAdminSurveyStats:
         await cmd_admin_survey_stats(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         msg.answer.assert_called_once()
@@ -1097,25 +1048,10 @@ class TestAdminSurveyStats:
         await cmd_admin_survey_stats(
             msg,
             user_store=mock_store,
-            db_user={"role": "admin"},
         )
 
         text = msg.answer.call_args[0][0]
         assert "Ни один" in text
-
-    async def test_survey_stats_not_admin(self):
-        """Не-админ не получает статистику."""
-        msg = make_message("/admin_survey_stats", user_id=1)
-        mock_store = AsyncMock()
-
-        await cmd_admin_survey_stats(
-            msg,
-            user_store=mock_store,
-            db_user={"role": "user"},
-        )
-
-        text = msg.answer.call_args[0][0]
-        assert "нет прав" in text
 
 
 # ============================================================================
