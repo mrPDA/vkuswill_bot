@@ -148,15 +148,15 @@ class AdminFilter(BaseFilter):
     Проверяет db_user.role == 'admin'. Чистый фильтр без
     побочных эффектов — НЕ отправляет сообщения при отказе.
 
-    ВАЖНО: router-level фильтр в aiogram 3 вызывается для
-    КАЖДОГО входящего сообщения (не только для admin-команд).
-    Любой side-effect здесь затронет ВСЕХ пользователей.
+    ВАЖНО: это root-фильтр на admin_router (``admin_router.message.filter()``).
+    В aiogram 3 root-фильтры проверяются в ``_propagate_event()`` **ДО**
+    ``trigger()`` (где запускается inner middleware). Поэтому ``UserMiddleware``
+    должен быть зарегистрирован как **outer_middleware** на dispatcher —
+    outer middleware оборачивает ``propagate_event`` целиком и запускается
+    ДО root-фильтров, гарантируя наличие ``db_user`` в kwargs.
+
     Сообщение об отказе отправляется отдельным хендлером
     ``handle_admin_unauthorized`` в основном router.
-
-    Используем **kwargs вместо именованного db_user, т.к.
-    aiogram может не инжектировать middleware-данные
-    в router-level фильтры через именованные параметры.
     """
 
     async def __call__(self, message: Message, **kwargs: object) -> bool:
