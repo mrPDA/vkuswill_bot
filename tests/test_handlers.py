@@ -21,6 +21,7 @@ from vkuswill_bot.bot.handlers import (
     _split_message,
     _survey_pending,
     cmd_help,
+    cmd_privacy,
     cmd_reset,
     cmd_start,
     cmd_survey,
@@ -28,6 +29,7 @@ from vkuswill_bot.bot.handlers import (
     cmd_admin_funnel,
     cmd_admin_grant_carts,
     cmd_admin_survey_stats,
+    consent_accept_callback,
     handle_text,
     survey_pmf_callback,
     survey_feature_callback,
@@ -728,6 +730,150 @@ class TestCmdStartDeepLink:
 
 
 # ============================================================================
+# Informed Consent (ADR-002)
+# ============================================================================
+
+
+class TestInformedConsent:
+    """Тесты информированного согласия на обработку данных."""
+
+    async def test_start_new_user_shows_consent(self):
+        """Новый пользователь без consent видит уведомление + кнопку."""
+        msg = make_message("/start", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(
+            msg,
+            user_store=mock_store,
+            db_user={"message_count": 1, "consent_given_at": None},
+        )
+
+        msg.answer.assert_called_once()
+        response_text = msg.answer.call_args[0][0]
+        assert "GigaChat" in response_text
+        assert "/privacy" in response_text
+        # Inline-кнопка присутствует
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is not None
+        btn = markup.inline_keyboard[0][0]
+        assert btn.callback_data == "consent_accept"
+
+    async def test_start_returning_user_no_consent(self):
+        """Returning user с consent — обычное приветствие без кнопки."""
+        msg = make_message("/start", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(
+            msg,
+            user_store=mock_store,
+            db_user={"message_count": 10, "consent_given_at": "2026-01-01"},
+        )
+
+        msg.answer.assert_called_once()
+        response_text = msg.answer.call_args[0][0]
+        assert "Привет" in response_text
+        # Нет inline-кнопки consent
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is None
+
+    async def test_start_existing_user_many_messages_no_consent_notice(self):
+        """Existing user с message_count > 1 не видит consent (даже без поля)."""
+        msg = make_message("/start", user_id=42)
+        mock_store = AsyncMock()
+
+        await cmd_start(
+            msg,
+            user_store=mock_store,
+            db_user={"message_count": 5, "consent_given_at": None},
+        )
+
+        msg.answer.assert_called_once()
+        call_kwargs = msg.answer.call_args
+        markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
+        assert markup is None
+
+    async def test_consent_accept_callback(self):
+        """Нажатие кнопки «Понятно, начать!» фиксирует explicit consent."""
+        callback = _make_callback_query("consent_accept", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.mark_consent.return_value = True
+
+        await consent_accept_callback(callback, user_store=mock_store)
+
+        mock_store.mark_consent.assert_called_once_with(42, "explicit")
+        # Событие залогировано
+        log_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "consent_given"]
+        assert len(log_calls) == 1
+        assert log_calls[0][0][2]["consent_type"] == "explicit"
+        # Сообщение обновлено (без кнопки)
+        callback.message.edit_text.assert_called_once()
+        text = callback.message.edit_text.call_args[0][0]
+        assert "Привет" in text
+        callback.answer.assert_called_once()
+
+    async def test_consent_accept_without_store(self):
+        """Нажатие кнопки consent без user_store — не падает."""
+        callback = _make_callback_query("consent_accept", user_id=42)
+
+        await consent_accept_callback(callback, user_store=None)
+
+        callback.message.edit_text.assert_called_once()
+        callback.answer.assert_called_once()
+
+    async def test_implicit_consent_on_text(self):
+        """Текстовое сообщение без consent → implicit consent фиксируется."""
+        msg = make_message("Хочу молоко", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Вот молоко!"
+        mock_store = AsyncMock()
+        mock_store.mark_consent.return_value = True  # первый раз
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+
+        mock_store.mark_consent.assert_called_once_with(42, "implicit")
+        # Событие залогировано
+        consent_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "consent_given"
+        ]
+        assert len(consent_calls) == 1
+        assert consent_calls[0][0][2]["consent_type"] == "implicit"
+        # GigaChat обработал сообщение (не заблокировано)
+        mock_service.process_message.assert_called_once()
+
+    async def test_implicit_consent_not_logged_twice(self):
+        """Если consent уже есть, событие не логируется повторно."""
+        msg = make_message("Хочу молоко", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Вот молоко!"
+        mock_store = AsyncMock()
+        mock_store.mark_consent.return_value = False  # уже был consent
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+
+        # mark_consent вызван, но log_event для consent НЕ вызван
+        mock_store.mark_consent.assert_called_once()
+        consent_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "consent_given"
+        ]
+        assert len(consent_calls) == 0
+
+    async def test_cmd_privacy(self):
+        """Команда /privacy возвращает текст политики."""
+        msg = make_message("/privacy")
+
+        await cmd_privacy(msg)
+
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "Политика конфиденциальности" in text
+        assert "GigaChat" in text
+        assert "d.pukinov@yandex.ru" in text
+        assert "/reset" in text
+
+
+# ============================================================================
 # Survey Flow
 # ============================================================================
 
@@ -1187,13 +1333,15 @@ class TestHandleTextErrorLogging:
         mock_service = AsyncMock()
         mock_service.process_message.side_effect = RuntimeError("Boom!")
         mock_store = AsyncMock()
+        mock_store.mark_consent.return_value = False  # consent уже был
 
         await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
 
-        mock_store.log_event.assert_called_once()
-        call_args = mock_store.log_event.call_args[0]
+        # Ищем именно bot_error среди вызовов log_event
+        error_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_error"]
+        assert len(error_calls) == 1
+        call_args = error_calls[0][0]
         assert call_args[0] == 42
-        assert call_args[1] == "bot_error"
         assert call_args[2]["error_type"] == "RuntimeError"
 
     async def test_no_log_without_user_store(self):
