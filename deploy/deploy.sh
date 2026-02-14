@@ -252,7 +252,7 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
   fi
 
   log "Обновление Metabase..."
-  docker pull metabase/metabase:v0.58 2>/dev/null || true
+  docker pull metabase/metabase:v0.58.x 2>/dev/null || true
 
   # Остановить предыдущий контейнер
   if docker ps -q -f "name=${METABASE_NAME}" | grep -q .; then
@@ -280,7 +280,7 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
     --log-opt max-size=20m \
     --log-opt max-file=2 \
     --label "service=metabase" \
-    metabase/metabase:v0.58
+    metabase/metabase:v0.58.x
 
   # Подождать и проверить, что контейнер жив
   sleep 5
