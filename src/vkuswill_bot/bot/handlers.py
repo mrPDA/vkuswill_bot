@@ -780,11 +780,7 @@ async def cmd_admin_user(
     last_msg = target.get("last_message_at") or "—"
     blocked_reason = target.get("blocked_reason") or "—"
 
-    text = (
-        f"<b>Пользователь {target_id}</b>\n\n"
-        f"Роль: <b>{role}</b>\n"
-        f"Статус: <b>{status}</b>\n"
-    )
+    text = f"<b>Пользователь {target_id}</b>\n\nРоль: <b>{role}</b>\nСтатус: <b>{status}</b>\n"
     if status == "blocked":
         text += f"Причина блокировки: {blocked_reason}\n"
     text += (
