@@ -60,7 +60,7 @@ services:
   # UI: http://localhost:3001 (мастер настройки при первом запуске)
   # Подключается к PostgreSQL бота — таблицы daily_stats, user_events, users
   metabase:
-    image: metabase/metabase:v0.58
+    image: metabase/metabase:v0.58.x
     container_name: vkuswill-metabase
     ports:
       - "3001:3000"
