@@ -804,9 +804,7 @@ class TestInformedConsent:
 
         mock_store.mark_consent.assert_called_once_with(42, "explicit")
         # Событие залогировано
-        log_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "consent_given"
-        ]
+        log_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "consent_given"]
         assert len(log_calls) == 1
         assert log_calls[0][0][2]["consent_type"] == "explicit"
         # Сообщение обновлено (без кнопки)
@@ -1340,9 +1338,7 @@ class TestHandleTextErrorLogging:
         await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
 
         # Ищем именно bot_error среди вызовов log_event
-        error_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_error"
-        ]
+        error_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_error"]
         assert len(error_calls) == 1
         call_args = error_calls[0][0]
         assert call_args[0] == 42
