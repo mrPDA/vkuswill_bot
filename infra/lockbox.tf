@@ -99,6 +99,17 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.langfuse_secret_key
   }
 
+  # Metabase (BI-дашборды, self-hosted на VM)
+  entries {
+    key        = "METABASE_ENABLED"
+    text_value = "true"
+  }
+
+  entries {
+    key = "METABASE_DATABASE_URL"
+    text_value = "postgresql://metabase:${urlencode(var.metabase_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/metabase?sslmode=require"
+  }
+
   # S3 логирование
   entries {
     key        = "S3_LOG_ENABLED"
