@@ -577,7 +577,11 @@ async def handle_text(
         pending = _survey_pending.pop(user_id)
         feedback = message.text[:500]
         _ok, text = await _finish_survey(
-            user_id, user_store, pending["pmf"], pending["feature"], feedback,
+            user_id,
+            user_store,
+            pending["pmf"],
+            pending["feature"],
+            feedback,
         )
         await message.answer(text)
         return
@@ -1052,8 +1056,7 @@ async def cmd_admin_survey_stats(
 
     # PMF distribution
     pmf_lines = "\n".join(
-        f"  {_PMF_LABELS.get(r['answer'], r['answer'] or '—')}: {r['cnt']}"
-        for r in stats["pmf"]
+        f"  {_PMF_LABELS.get(r['answer'], r['answer'] or '—')}: {r['cnt']}" for r in stats["pmf"]
     )
 
     # PMF score: % "very disappointed" — ключевая метрика PMF
