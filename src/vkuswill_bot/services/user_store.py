@@ -59,28 +59,21 @@ class UserStore:
     async def get_or_create(
         self,
         user_id: int,
-        username: str | None = None,
-        first_name: str = "",
-        last_name: str | None = None,
         language_code: str | None = None,
     ) -> dict[str, Any]:
-        """Upsert: создать пользователя или обновить метаданные.
+        """Upsert: создать пользователя или обновить language_code.
 
         Вызывается при каждом входящем сообщении (из ``UserMiddleware``).
-        При конфликте обновляет ``username``, ``first_name``, ``last_name``,
-        ``language_code`` и ``updated_at`` — Telegram-данные могут меняться.
+        PII (username, first_name, last_name) не сохраняются — приватность.
 
         Returns:
             Словарь с полями пользователя.
         """
         await self.ensure_schema()
         sql = """
-            INSERT INTO users (user_id, username, first_name, last_name, language_code)
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO users (user_id, language_code)
+            VALUES ($1, $2)
             ON CONFLICT (user_id) DO UPDATE SET
-                username      = EXCLUDED.username,
-                first_name    = EXCLUDED.first_name,
-                last_name     = EXCLUDED.last_name,
                 language_code = EXCLUDED.language_code,
                 updated_at    = NOW()
             RETURNING *
@@ -89,9 +82,6 @@ class UserStore:
             row = await conn.fetchrow(
                 sql,
                 user_id,
-                username,
-                first_name,
-                last_name,
                 language_code,
             )
         return dict(row) if row else {}
@@ -615,8 +605,8 @@ class UserStore:
             return
         await self.ensure_schema()
         sql = """
-            INSERT INTO users (user_id, first_name, role)
-            VALUES ($1, 'Admin', 'admin')
+            INSERT INTO users (user_id, role)
+            VALUES ($1, 'admin')
             ON CONFLICT (user_id) DO UPDATE SET
                 role = 'admin',
                 updated_at = NOW()

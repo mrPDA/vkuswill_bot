@@ -60,13 +60,10 @@ class UserMiddleware(BaseMiddleware):
         if tg_user is None:
             return await handler(event, data)
 
-        # Upsert: создать или обновить метаданные
+        # Upsert: создать или обновить метаданные (PII не сохраняем)
         try:
             db_user = await self._user_store.get_or_create(
                 user_id=tg_user.id,
-                username=tg_user.username,
-                first_name=tg_user.first_name or "",
-                last_name=tg_user.last_name,
                 language_code=tg_user.language_code,
             )
         except Exception as exc:
