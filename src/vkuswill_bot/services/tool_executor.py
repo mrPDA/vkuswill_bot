@@ -289,6 +289,8 @@ class ToolExecutor:
                 if not limit_info["allowed"]:
                     from vkuswill_bot.config import config as app_config
 
+                    survey_done = limit_info.get("survey_completed", False)
+
                     # Логируем событие cart_limit_reached
                     try:
                         await self._user_store.log_event(
@@ -297,9 +299,11 @@ class ToolExecutor:
                             {
                                 "carts_used": limit_info["carts_created"],
                                 "cart_limit": limit_info["cart_limit"],
+                                "survey_completed": survey_done,
                                 "tier": (
                                     2
-                                    if limit_info["cart_limit"] > app_config.free_cart_limit
+                                    if limit_info["cart_limit"]
+                                    > app_config.free_cart_limit
                                     else 1
                                 ),
                             },
@@ -307,18 +311,32 @@ class ToolExecutor:
                     except Exception:
                         logger.debug("Ошибка логирования cart_limit_reached")
 
+                    # Дифференцированное сообщение: tier 1 vs tier 2
+                    if survey_done:
+                        limit_message = (
+                            f"Пользователь использовал все "
+                            f"{limit_info['cart_limit']} корзин. "
+                            "Опрос уже пройден. "
+                            "Предложи пользователю пригласить друга "
+                            "командой /invite — за каждого друга "
+                            f"+{app_config.referral_cart_bonus} корзины."
+                        )
+                    else:
+                        limit_message = (
+                            f"Вы использовали все "
+                            f"{limit_info['cart_limit']} бесплатных корзин. "
+                            "Заполните короткий опрос /survey — "
+                            f"и получите ещё {app_config.bonus_cart_limit} "
+                            "корзин в подарок!"
+                        )
+
                     return json.dumps(
                         {
                             "error": "cart_limit_reached",
-                            "message": (
-                                f"Вы использовали все "
-                                f"{limit_info['cart_limit']} бесплатных корзин. "
-                                "Заполните короткий опрос /survey — "
-                                f"и получите ещё {app_config.bonus_cart_limit} "
-                                "корзин в подарок!"
-                            ),
+                            "message": limit_message,
                             "carts_created": limit_info["carts_created"],
                             "cart_limit": limit_info["cart_limit"],
+                            "survey_completed": survey_done,
                         },
                         ensure_ascii=False,
                     )
@@ -473,6 +491,7 @@ class ToolExecutor:
             carts = cart_info.get("carts_created", 0)
             limit = cart_info.get("cart_limit", _cfg.free_cart_limit)
             remaining = limit - carts
+            survey_done = cart_info.get("survey_completed", False)
 
             await self._user_store.log_event(
                 user_id,
@@ -489,11 +508,19 @@ class ToolExecutor:
             # чтобы результат оставался валидным JSON для GigaChat API.
             hint_text = f"Корзина {carts} из {limit}."
             if remaining == 0:
-                hint_text += (
-                    " Лимит корзин исчерпан."
-                    " Предложи пользователю команду /survey"
-                    " для получения дополнительных корзин."
-                )
+                if survey_done:
+                    hint_text += (
+                        " Лимит корзин исчерпан."
+                        " Предложи пользователю команду /invite"
+                        " для приглашения друга и получения"
+                        " дополнительных корзин."
+                    )
+                else:
+                    hint_text += (
+                        " Лимит корзин исчерпан."
+                        " Предложи пользователю команду /survey"
+                        " для получения дополнительных корзин."
+                    )
             elif remaining <= 2:
                 hint_text += f" Осталось {remaining} бесплатных корзин."
 
