@@ -80,7 +80,7 @@ resource "yandex_mdb_postgresql_user" "metabase" {
   cluster_id = yandex_mdb_postgresql_cluster.bot.id
   name       = "metabase"
   password   = var.metabase_pg_password
-  conn_limit = 20
+  conn_limit = 10
 }
 
 resource "yandex_mdb_postgresql_database" "metabase" {
