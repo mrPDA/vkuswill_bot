@@ -13,6 +13,7 @@ from vkuswill_bot.bot.handlers import (
     cmd_admin_stats,
     cmd_admin_unblock,
     cmd_admin_user,
+    handle_admin_unauthorized,
 )
 
 
@@ -73,21 +74,31 @@ class TestAdminFilter:
 
     @pytest.mark.asyncio
     async def test_user_rejected(self):
-        """Обычный пользователь не проходит фильтр."""
+        """Обычный пользователь не проходит фильтр (без побочных эффектов)."""
         f = AdminFilter()
         msg = _make_message("/admin_block 999")
         result = await f(msg, db_user=_make_db_user(role="user"))
         assert result is False
-        msg.answer.assert_called_once()
-        assert "нет прав" in msg.answer.call_args[0][0]
+        # AdminFilter — чистый фильтр, не отправляет сообщений.
+        # Отказ отправляется отдельным хендлером handle_admin_unauthorized.
+        msg.answer.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_db_user_rejected(self):
-        """Без db_user (PostgreSQL недоступен) → нет прав."""
+        """Без db_user (PostgreSQL недоступен) → нет прав, без сообщения."""
         f = AdminFilter()
         msg = _make_message("/admin_block 999")
         result = await f(msg, db_user=None)
         assert result is False
+        msg.answer.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_unauthorized_handler_sends_rejection(self):
+        """handle_admin_unauthorized отправляет сообщение об отказе."""
+        msg = _make_message("/admin_analytics")
+        await handle_admin_unauthorized(msg)
+        msg.answer.assert_called_once()
+        assert "нет прав" in msg.answer.call_args[0][0]
 
 
 # ---------------------------------------------------------------------------
