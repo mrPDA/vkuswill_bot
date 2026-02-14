@@ -18,6 +18,7 @@ from vkuswill_bot.bot.handlers import (
     _sanitize_telegram_html,
     _send_typing_periodically,
     _split_message,
+    _survey_pending,
     cmd_help,
     cmd_reset,
     cmd_start,
@@ -27,9 +28,9 @@ from vkuswill_bot.bot.handlers import (
     cmd_admin_grant_carts,
     cmd_admin_survey_stats,
     handle_text,
-    survey_nps_callback,
+    survey_pmf_callback,
     survey_feature_callback,
-    survey_continue_callback,
+    survey_done_callback,
 )
 
 from helpers import make_message
@@ -625,10 +626,10 @@ def _make_callback_query(data: str, user_id: int = 42) -> MagicMock:
 
 
 class TestSurveyFlow:
-    """Тесты survey flow: опрос для бонусных корзин."""
+    """Тесты survey flow: PMF + фичи + открытый отзыв."""
 
     async def test_cmd_survey_starts(self):
-        """/survey запускает опрос."""
+        """/survey запускает опрос с PMF-вопросом."""
         msg = make_message("/survey", user_id=42)
         mock_store = AsyncMock()
 
@@ -640,7 +641,7 @@ class TestSurveyFlow:
 
         msg.answer.assert_called_once()
         answer_text = msg.answer.call_args[0][0]
-        assert "Оцените бота" in answer_text
+        assert "расстроились" in answer_text
 
     async def test_cmd_survey_already_completed(self):
         """/survey если уже пройден — сообщение об этом."""
@@ -665,39 +666,63 @@ class TestSurveyFlow:
         msg.answer.assert_called_once()
         assert "недоступен" in msg.answer.call_args[0][0]
 
-    async def test_nps_callback(self):
-        """survey_nps_callback переходит к выбору фичи."""
-        callback = _make_callback_query("survey_nps_3")
+    async def test_cmd_survey_clears_pending(self):
+        """/survey очищает незавершённое состояние."""
+        _survey_pending[42] = {"pmf": "very", "feature": "search"}
+        msg = make_message("/survey", user_id=42)
+        mock_store = AsyncMock()
 
-        await survey_nps_callback(callback)
+        await cmd_survey(
+            msg,
+            user_store=mock_store,
+            db_user={"survey_completed": False},
+        )
+
+        assert 42 not in _survey_pending
+
+    async def test_pmf_callback(self):
+        """survey_pmf_callback переходит к выбору фичи."""
+        callback = _make_callback_query("survey_pmf_very")
+
+        await survey_pmf_callback(callback)
 
         callback.message.edit_text.assert_called_once()
         text = callback.message.edit_text.call_args[0][0]
-        assert "Оценка" in text
-        assert "функция" in text
+        assert "Очень расстроюсь" in text
+        assert "функция" in text.lower() or "полезная" in text.lower()
         callback.answer.assert_called_once()
 
-    async def test_feature_callback(self):
-        """survey_feature_callback переходит к вопросу о продолжении."""
-        callback = _make_callback_query("survey_feat_search_4")
+    async def test_feature_callback_sets_pending(self):
+        """survey_feature_callback сохраняет состояние и показывает шаг 3."""
+        callback = _make_callback_query("survey_feat_search_very")
 
         await survey_feature_callback(callback)
 
+        # Промежуточное состояние сохранено
+        assert 42 in _survey_pending
+        assert _survey_pending[42] == {"pmf": "very", "feature": "search"}
+        # Текст шага 3
         callback.message.edit_text.assert_called_once()
         text = callback.message.edit_text.call_args[0][0]
         assert "Поиск товаров" in text
-        assert "пользоваться ботом" in text
+        assert "улучшить" in text
         callback.answer.assert_called_once()
+        # Cleanup
+        _survey_pending.pop(42, None)
 
-    async def test_continue_callback_completes_survey(self):
-        """survey_continue_callback завершает опрос и выдаёт бонус."""
-        callback = _make_callback_query("survey_cont_yes_5_recipe")
+    async def test_done_callback_completes_survey(self):
+        """survey_done_callback (кнопка «Всё отлично») завершает опрос."""
+        callback = _make_callback_query("survey_done_very_recipe")
         mock_store = AsyncMock()
         mock_store.mark_survey_completed_if_not.return_value = True
         mock_store.grant_bonus_carts.return_value = 10
+        # Имитируем pending-состояние
+        _survey_pending[42] = {"pmf": "very", "feature": "recipe"}
 
-        await survey_continue_callback(callback, user_store=mock_store)
+        await survey_done_callback(callback, user_store=mock_store)
 
+        # pending очищен
+        assert 42 not in _survey_pending
         # survey помечен завершённым
         mock_store.mark_survey_completed_if_not.assert_called_once_with(42)
         # Логирование survey_completed
@@ -706,9 +731,9 @@ class TestSurveyFlow:
         ]
         assert len(log_calls) == 1
         metadata = log_calls[0][0][2]
-        assert metadata["nps"] == 5
+        assert metadata["pmf"] == "very"
         assert metadata["useful_feature"] == "recipe"
-        assert metadata["will_continue"] == "yes"
+        assert "feedback" not in metadata
         # Бонусные корзины выданы
         mock_store.grant_bonus_carts.assert_called_once()
         # Ответ пользователю
@@ -717,25 +742,66 @@ class TestSurveyFlow:
         assert "Спасибо" in text
         assert "добавлено" in text
 
-    async def test_continue_callback_already_completed(self):
-        """survey_continue_callback при повторном нажатии — отказ."""
-        callback = _make_callback_query("survey_cont_yes_5_recipe")
+    async def test_done_callback_already_completed(self):
+        """survey_done_callback при повторном нажатии — отказ."""
+        callback = _make_callback_query("survey_done_very_recipe")
         mock_store = AsyncMock()
         mock_store.mark_survey_completed_if_not.return_value = False
 
-        await survey_continue_callback(callback, user_store=mock_store)
+        await survey_done_callback(callback, user_store=mock_store)
 
         callback.message.edit_text.assert_called_once()
         text = callback.message.edit_text.call_args[0][0]
         assert "уже прошли" in text
 
-    async def test_continue_callback_no_store(self):
-        """survey_continue_callback без user_store — ошибка."""
-        callback = _make_callback_query("survey_cont_yes_5_recipe")
+    async def test_done_callback_no_store(self):
+        """survey_done_callback без user_store — ошибка."""
+        callback = _make_callback_query("survey_done_very_recipe")
 
-        await survey_continue_callback(callback, user_store=None)
+        await survey_done_callback(callback, user_store=None)
 
         callback.answer.assert_called_once()
+
+    async def test_text_feedback_completes_survey(self):
+        """Текстовый отзыв на шаге 3 завершает survey."""
+        # Имитируем pending
+        _survey_pending[42] = {"pmf": "somewhat", "feature": "cart"}
+        msg = make_message("Хочу больше рецептов", user_id=42)
+        mock_service = AsyncMock()
+        mock_store = AsyncMock()
+        mock_store.mark_survey_completed_if_not.return_value = True
+        mock_store.grant_bonus_carts.return_value = 10
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+
+        # pending очищен
+        assert 42 not in _survey_pending
+        # GigaChat НЕ вызван
+        mock_service.process_message.assert_not_called()
+        # survey завершён с feedback
+        log_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "survey_completed"
+        ]
+        assert len(log_calls) == 1
+        metadata = log_calls[0][0][2]
+        assert metadata["pmf"] == "somewhat"
+        assert metadata["useful_feature"] == "cart"
+        assert metadata["feedback"] == "Хочу больше рецептов"
+        # Ответ пользователю
+        msg.answer.assert_called_once()
+        assert "Спасибо" in msg.answer.call_args[0][0]
+
+    async def test_text_without_pending_goes_to_gigachat(self):
+        """Обычный текст (без pending) обрабатывается GigaChat."""
+        # Убеждаемся что нет pending
+        _survey_pending.pop(42, None)
+        msg = make_message("Хочу купить молоко", user_id=42)
+        mock_service = AsyncMock()
+        mock_service.process_message.return_value = "Вот молоко!"
+
+        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+
+        mock_service.process_message.assert_called_once_with(42, "Хочу купить молоко")
 
 
 # ============================================================================
@@ -954,19 +1020,23 @@ class TestAdminSurveyStats:
     """Тесты /admin_survey_stats."""
 
     async def test_survey_stats_success(self):
-        """Администратор получает статистику survey."""
+        """Администратор получает статистику survey с PMF score."""
         msg = make_message("/admin_survey_stats", user_id=1)
         mock_store = AsyncMock()
         mock_store.get_survey_stats.return_value = {
             "total": 10,
-            "avg_nps": 4.5,
-            "will_continue": [
-                {"answer": "yes", "cnt": 7},
-                {"answer": "maybe", "cnt": 3},
+            "pmf": [
+                {"answer": "very", "cnt": 6},
+                {"answer": "somewhat", "cnt": 3},
+                {"answer": "not", "cnt": 1},
             ],
             "features": [
                 {"feat": "search", "cnt": 5},
                 {"feat": "recipe", "cnt": 4},
+            ],
+            "feedback_count": 3,
+            "recent_feedback": [
+                {"text": "Больше рецептов!", "created_at": "2026-02-14"},
             ],
         }
 
@@ -979,7 +1049,9 @@ class TestAdminSurveyStats:
         msg.answer.assert_called_once()
         text = msg.answer.call_args[0][0]
         assert "Survey" in text
-        assert "4.5" in text
+        assert "PMF score" in text
+        assert "60%" in text  # 6 very / 10 total = 60%
+        assert "Отзывов" in text
 
     async def test_survey_stats_empty(self):
         """Нет данных — сообщение об этом."""
@@ -987,9 +1059,10 @@ class TestAdminSurveyStats:
         mock_store = AsyncMock()
         mock_store.get_survey_stats.return_value = {
             "total": 0,
-            "avg_nps": 0.0,
-            "will_continue": [],
+            "pmf": [],
             "features": [],
+            "feedback_count": 0,
+            "recent_feedback": [],
         }
 
         await cmd_admin_survey_stats(

@@ -401,7 +401,7 @@ ORDER BY created_at::date
         "name": "Топ-пользователи по корзинам",
         "display": "table",
         "sql": """
-SELECT u.user_id AS "Пользователь",
+SELECT u.user_id::text AS "Пользователь",
        u.carts_created AS "Корзины",
        u.cart_limit AS "Лимит",
        u.survey_completed AS "Опрос",
