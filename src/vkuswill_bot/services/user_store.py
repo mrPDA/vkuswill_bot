@@ -322,32 +322,42 @@ class UserStore:
             default_limit: лимит по умолчанию, если пользователь не найден.
 
         Returns:
-            ``{"allowed": bool, "carts_created": int, "cart_limit": int}``
+            ``{"allowed": bool, "carts_created": int, "cart_limit": int,
+            "survey_completed": bool}``
         """
         await self.ensure_schema()
-        sql = "SELECT carts_created, cart_limit FROM users WHERE user_id = $1"
+        sql = (
+            "SELECT carts_created, cart_limit, survey_completed "
+            "FROM users WHERE user_id = $1"
+        )
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(sql, user_id)
         if not row:
-            return {"allowed": True, "carts_created": 0, "cart_limit": default_limit}
+            return {
+                "allowed": True,
+                "carts_created": 0,
+                "cart_limit": default_limit,
+                "survey_completed": False,
+            }
         return {
             "allowed": row["carts_created"] < row["cart_limit"],
             "carts_created": row["carts_created"],
             "cart_limit": row["cart_limit"],
+            "survey_completed": bool(row["survey_completed"]),
         }
 
     async def increment_carts(self, user_id: int) -> dict[str, Any]:
         """Увеличить счётчик корзин на 1.
 
         Returns:
-            ``{"carts_created": int, "cart_limit": int}``
+            ``{"carts_created": int, "cart_limit": int, "survey_completed": bool}``
         """
         await self.ensure_schema()
         sql = """
             UPDATE users
             SET carts_created = carts_created + 1, updated_at = NOW()
             WHERE user_id = $1
-            RETURNING carts_created, cart_limit
+            RETURNING carts_created, cart_limit, survey_completed
         """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(sql, user_id)
@@ -430,6 +440,130 @@ class UserStore:
             "will_continue": [dict(r) for r in will_continue],
             "features": [dict(r) for r in features],
         }
+
+    # ------------------------------------------------------------------
+    # Реферальная система
+    # ------------------------------------------------------------------
+
+    async def get_or_create_referral_code(self, user_id: int) -> str:
+        """Получить или сгенерировать реферальный код пользователя.
+
+        Код — 8-символьная URL-safe строка, хранится в ``referral_code``.
+
+        Returns:
+            Реферальный код пользователя.
+        """
+        import secrets
+
+        await self.ensure_schema()
+        async with self._pool.acquire() as conn:
+            existing = await conn.fetchval(
+                "SELECT referral_code FROM users WHERE user_id = $1",
+                user_id,
+            )
+            if existing:
+                return existing
+
+            # Генерируем уникальный код с retry при коллизии
+            for _ in range(5):
+                code = secrets.token_urlsafe(6)[:8]
+                try:
+                    await conn.execute(
+                        "UPDATE users SET referral_code = $2, updated_at = NOW() "
+                        "WHERE user_id = $1",
+                        user_id,
+                        code,
+                    )
+                    return code
+                except asyncpg.UniqueViolationError:
+                    continue
+
+            # Fallback: код на основе user_id
+            code = f"u{user_id}"
+            await conn.execute(
+                "UPDATE users SET referral_code = $2, updated_at = NOW() "
+                "WHERE user_id = $1",
+                user_id,
+                code,
+            )
+            return code
+
+    async def find_user_by_referral_code(self, code: str) -> int | None:
+        """Найти user_id по реферальному коду.
+
+        Returns:
+            user_id владельца кода или None.
+        """
+        await self.ensure_schema()
+        async with self._pool.acquire() as conn:
+            return await conn.fetchval(
+                "SELECT user_id FROM users WHERE referral_code = $1",
+                code,
+            )
+
+    async def process_referral(
+        self,
+        new_user_id: int,
+        referrer_id: int,
+        bonus: int = 3,
+    ) -> dict[str, Any]:
+        """Обработать реферал: привязать нового пользователя и начислить бонус.
+
+        Проверки:
+        - Нельзя пригласить самого себя.
+        - Нельзя привязаться повторно (``referred_by`` уже установлен).
+        - Реферер должен существовать.
+
+        Returns:
+            ``{"success": bool, "reason": str, "bonus": int, "new_limit": int}``
+        """
+        await self.ensure_schema()
+
+        if new_user_id == referrer_id:
+            return {"success": False, "reason": "self_referral"}
+
+        async with self._pool.acquire() as conn:
+            # Проверяем, что новый пользователь ещё не привязан
+            row = await conn.fetchrow(
+                "SELECT referred_by FROM users WHERE user_id = $1",
+                new_user_id,
+            )
+            if row and row["referred_by"] is not None:
+                return {"success": False, "reason": "already_referred"}
+
+            # Привязываем реферера
+            await conn.execute(
+                "UPDATE users SET referred_by = $2, updated_at = NOW() "
+                "WHERE user_id = $1",
+                new_user_id,
+                referrer_id,
+            )
+
+            # Начисляем бонус рефереру
+            row = await conn.fetchrow(
+                "UPDATE users SET cart_limit = cart_limit + $2, updated_at = NOW() "
+                "WHERE user_id = $1 RETURNING cart_limit",
+                referrer_id,
+                bonus,
+            )
+            new_limit = row["cart_limit"] if row else 0
+
+        return {
+            "success": True,
+            "reason": "ok",
+            "bonus": bonus,
+            "new_limit": new_limit,
+        }
+
+    async def count_referrals(self, user_id: int) -> int:
+        """Количество пользователей, приглашённых данным пользователем."""
+        await self.ensure_schema()
+        async with self._pool.acquire() as conn:
+            result = await conn.fetchval(
+                "SELECT COUNT(*) FROM users WHERE referred_by = $1",
+                user_id,
+            )
+        return result or 0
 
     # ------------------------------------------------------------------
     # Админские запросы

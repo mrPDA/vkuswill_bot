@@ -1407,10 +1407,12 @@ class TestFreemiumCartLimit:
             "allowed": True,
             "carts_created": 2,
             "cart_limit": 5,
+            "survey_completed": False,
         }
         store.increment_carts.return_value = {
             "carts_created": 3,
             "cart_limit": 5,
+            "survey_completed": False,
         }
         store.log_event = AsyncMock()
         return store
@@ -1441,6 +1443,7 @@ class TestFreemiumCartLimit:
             "allowed": False,
             "carts_created": 5,
             "cart_limit": 5,
+            "survey_completed": False,
         }
 
         result = await executor_with_user_store.execute(
@@ -1454,6 +1457,31 @@ class TestFreemiumCartLimit:
         assert data["carts_created"] == 5
         assert data["cart_limit"] == 5
 
+    async def test_cart_limit_blocks_tier2_with_invite(
+        self,
+        executor_with_user_store,
+        mock_user_store,
+    ):
+        """execute предлагает /invite вместо /survey для tier 2."""
+        mock_user_store.check_cart_limit.return_value = {
+            "allowed": False,
+            "carts_created": 10,
+            "cart_limit": 10,
+            "survey_completed": True,
+        }
+
+        result = await executor_with_user_store.execute(
+            tool_name="vkusvill_cart_link_create",
+            args={"products": [{"xml_id": 100, "q": 1}]},
+            user_id=42,
+        )
+
+        data = json.loads(result)
+        assert data["error"] == "cart_limit_reached"
+        assert data["survey_completed"] is True
+        assert "/invite" in data["message"]
+        assert "/survey" not in data["message"]
+
     async def test_cart_limit_allows_when_within_limit(
         self,
         executor_with_user_store,
@@ -1465,6 +1493,7 @@ class TestFreemiumCartLimit:
             "allowed": True,
             "carts_created": 2,
             "cart_limit": 5,
+            "survey_completed": False,
         }
         mock_mcp_client.call_tool.return_value = json.dumps(
             {"ok": True, "data": {"link": "https://test.com", "products": []}},
@@ -1529,6 +1558,7 @@ class TestFreemiumCartLimit:
             "allowed": False,
             "carts_created": 5,
             "cart_limit": 5,
+            "survey_completed": False,
         }
 
         await executor_with_user_store.execute(
@@ -1552,6 +1582,7 @@ class TestFreemiumCartCreated:
         store.increment_carts.return_value = {
             "carts_created": 3,
             "cart_limit": 5,
+            "survey_completed": False,
         }
         store.log_event = AsyncMock()
         return store
@@ -1583,6 +1614,7 @@ class TestFreemiumCartCreated:
         mock_user_store.increment_carts.return_value = {
             "carts_created": 3,
             "cart_limit": 5,
+            "survey_completed": False,
         }
 
         result = await executor_with_user_store._handle_cart_created_freemium(
@@ -1600,16 +1632,17 @@ class TestFreemiumCartCreated:
         assert "Корзина 3 из 5" in freemium["hint"]
         assert "Осталось 2" in freemium["hint"]
 
-    async def test_adds_limit_exhausted_hint(
+    async def test_adds_limit_exhausted_hint_survey(
         self,
         executor_with_user_store,
         mock_user_store,
     ):
-        """Добавляет предложение /survey когда лимит исчерпан."""
+        """Добавляет предложение /survey когда лимит исчерпан (tier 1)."""
         result_text = json.dumps({"data": {"products": []}})
         mock_user_store.increment_carts.return_value = {
             "carts_created": 5,
             "cart_limit": 5,
+            "survey_completed": False,
         }
 
         result = await executor_with_user_store._handle_cart_created_freemium(
@@ -1618,13 +1651,37 @@ class TestFreemiumCartCreated:
             result=result_text,
         )
 
-        # Результат должен быть валидным JSON
         parsed = json.loads(result)
         freemium = parsed["data"]["freemium"]
         assert freemium["cart_number"] == 5
         assert freemium["remaining"] == 0
         assert "Корзина 5 из 5" in freemium["hint"]
         assert "/survey" in freemium["hint"]
+
+    async def test_adds_limit_exhausted_hint_invite(
+        self,
+        executor_with_user_store,
+        mock_user_store,
+    ):
+        """Добавляет предложение /invite когда лимит исчерпан (tier 2)."""
+        result_text = json.dumps({"data": {"products": []}})
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 10,
+            "cart_limit": 10,
+            "survey_completed": True,
+        }
+
+        result = await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42,
+            args={},
+            result=result_text,
+        )
+
+        parsed = json.loads(result)
+        freemium = parsed["data"]["freemium"]
+        assert freemium["remaining"] == 0
+        assert "/invite" in freemium["hint"]
+        assert "/survey" not in freemium["hint"]
 
     async def test_logs_cart_created_event(
         self,
@@ -1638,6 +1695,7 @@ class TestFreemiumCartCreated:
         mock_user_store.increment_carts.return_value = {
             "carts_created": 1,
             "cart_limit": 5,
+            "survey_completed": False,
         }
 
         await executor_with_user_store._handle_cart_created_freemium(
