@@ -5,6 +5,27 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.9.0] — 2026-02-14
+
+### Добавлено
+
+- **Sean Ellis PMF-тест** — заменён NPS (1-5 звёзд) на валидированный PMF-индикатор: «Как расстроитесь, если бот перестанет работать?» (>40% «Очень» = product-market fit)
+- **Открытый текстовый отзыв** — шаг 3 опроса: пользователь пишет текст или нажимает «Всё отлично» (перехват в `handle_text`)
+- **PMF score в `/admin_survey_stats`** — процент «очень расстроятся» + последние текстовые отзывы
+- **11 тестов survey** — PMF callback, текстовый отзыв через handle_text, done callback, pending state
+
+### Изменено
+
+- **Survey flow** — 3 шага: PMF → полезная фича → открытый отзыв (вместо NPS → фича → «будете ли дальше»)
+- **Варианты фич** — убраны нереализованные КБЖУ/бюджет, добавлены Сборка корзины/Другое
+- **`user_store.get_survey_stats()`** — возвращает `pmf`, `feedback_count`, `recent_feedback` вместо `avg_nps`, `will_continue`
+- **metadata `survey_completed`** — поля `pmf`, `useful_feature`, `feedback` вместо `nps`, `will_continue`
+
+### Удалено
+
+- **NPS (1-5 звёзд)** — заменён на Sean Ellis PMF-тест
+- **Вопрос «Будете ли дальше?»** — заменён открытым отзывом (self-reported intent ненадёжен при incentive bias)
+
 ## [0.8.0] — 2026-02-14
 
 ### Добавлено
