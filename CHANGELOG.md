@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.12.3] — 2026-02-14
+
+### Исправлено
+
+- **AdminFilter: kwargs вместо именованного параметра** — aiogram не инжектирует middleware-данные (`db_user`) в router-level фильтры через именованные параметры `__call__`; переход на `**kwargs` гарантирует получение `db_user` из data-контекста
+
 ## [0.12.2] — 2026-02-14
 
 ### Добавлено
