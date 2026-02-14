@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.12.2] — 2026-02-14
+
+### Добавлено
+
+- **Команда /me** — диагностика профиля: role, status, лимиты корзин, consent (для отладки admin-проблем)
+- **Расширенное логирование** — `UserMiddleware` и `AdminFilter` логируют role/status/db_user_keys при admin-командах
+
 ## [0.12.1] — 2026-02-14
 
 ### Исправлено
