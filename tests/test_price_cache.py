@@ -251,7 +251,7 @@ class TestPriceCacheBool:
         cp = CartProcessor(shared_cache)
 
         # Проверяем: один и тот же объект
-        assert sp.price_cache is cp._price_cache
+        assert sp.price_cache is cp.price_cache
 
         # Имитируем поиск → кэшируем цены
         search_result = json.dumps(

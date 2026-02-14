@@ -958,9 +958,10 @@ class TestPreprocessArgsSearchCleaning:
         sp.clean_search_query = MagicMock(side_effect=lambda q: q.split()[0] if " " in q else q)
         cp = MagicMock()
         cp.fix_unit_quantities = AsyncMock(side_effect=lambda x: x)
-        # _price_cache.get нужен для _find_unknown_xml_ids (возвращаем None = не в кеше)
-        cp._price_cache = MagicMock()
-        cp._price_cache.get = AsyncMock(return_value=None)
+        # price_cache.get нужен для _find_unknown_xml_ids (возвращаем None = не в кеше)
+        mock_cache = MagicMock()
+        mock_cache.get = AsyncMock(return_value=None)
+        cp.price_cache = mock_cache
         return ToolExecutor(mcp_client=mcp, search_processor=sp, cart_processor=cp)
 
     async def test_search_query_cleaned(self, executor):

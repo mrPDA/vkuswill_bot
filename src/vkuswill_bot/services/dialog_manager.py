@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 from collections import OrderedDict
+from collections.abc import Callable
 
 from gigachat.models import Messages, MessagesRole
 
@@ -76,7 +77,7 @@ def _fmt_nutrition(data: dict) -> str:
 
 
 # Диспетчер: name → форматтер (точное совпадение)
-_NAME_DISPATCH: dict[str, callable] = {
+_NAME_DISPATCH: dict[str, Callable] = {
     "vkusvill_products_search": _fmt_products_search,
     "vkusvill_cart_link_create": _fmt_cart_link,
     "user_preferences_get": _fmt_preferences,
@@ -85,7 +86,7 @@ _NAME_DISPATCH: dict[str, callable] = {
 }
 
 # Эвристика: ключ JSON → форматтер (порядок важен — первый совпавший ключ)
-_KEY_HEURISTICS: list[tuple[str, callable]] = [
+_KEY_HEURISTICS: list[tuple[str, Callable]] = [
     ("products", _fmt_products_search),
     ("cart_link", _fmt_cart_link),
     ("preferences", _fmt_preferences),
@@ -173,6 +174,59 @@ def _summarize_tool_result(name: str | None, content: str) -> str:
     if len(content) > MAX_SUMMARY_LENGTH:
         return content[:MAX_SUMMARY_LENGTH] + "…"
     return content
+
+
+def trim_message_list(
+    history: list[Messages],
+    max_history: int,
+) -> list[Messages]:
+    """Обрезать историю с суммаризацией старых tool results.
+
+    Общая функция — используется DialogManager и RedisDialogManager.
+
+    Стратегия:
+    1. Системный промпт (history[0]) всегда сохраняется.
+    2. Последние (max_history - 1) сообщений — без изменений.
+    3. Более старые FUNCTION-сообщения заменяются на краткие резюме.
+    4. Если после суммаризации длина всё ещё > max_history — обрезаем.
+    """
+    if len(history) <= max_history:
+        return history
+
+    system = history[0]
+    # Граница: recent — последние (max_history - 1) сообщений
+    recent_start = len(history) - (max_history - 1)
+    old_messages = history[1:recent_start]
+    recent_messages = history[recent_start:]
+
+    # Суммаризируем старые FUNCTION-сообщения
+    summarized_old: list[Messages] = []
+    for msg in old_messages:
+        if str(msg.role) == "function" and msg.content:
+            summary = _summarize_tool_result(
+                getattr(msg, "name", None),
+                msg.content,
+            )
+            summarized_old.append(
+                Messages(
+                    role=msg.role,
+                    content=summary,
+                    name=getattr(msg, "name", None),
+                )
+            )
+        else:
+            summarized_old.append(msg)
+
+    result = [system, *summarized_old, *recent_messages]
+
+    # Финальная обрезка если всё ещё слишком длинная
+    if len(result) > max_history:
+        result = [system, *result[-(max_history - 1) :]]
+
+    # Санитизация: удаляем осиротевшие FUNCTION-сообщения
+    result = _sanitize_history(result)
+
+    return result
 
 
 class DialogManager:
@@ -271,53 +325,9 @@ class DialogManager:
     def trim_list(self, history: list[Messages]) -> list[Messages]:
         """Обрезать историю с суммаризацией старых tool results.
 
-        Принимает и возвращает list — работает одинаково для in-memory
-        и Redis-бэкенда.
-
-        Стратегия:
-        1. Системный промпт (history[0]) всегда сохраняется.
-        2. Последние (max_history - 1) сообщений — без изменений.
-        3. Более старые FUNCTION-сообщения заменяются на краткие резюме.
-        4. Если после суммаризации длина всё ещё > max_history — обрезаем.
+        Делегирует в свободную функцию trim_message_list (DRY).
         """
-        if len(history) <= self._max_history:
-            return history
-
-        system = history[0]
-        # Граница: recent — последние (max_history - 1) сообщений
-        recent_start = len(history) - (self._max_history - 1)
-        old_messages = history[1:recent_start]
-        recent_messages = history[recent_start:]
-
-        # Суммаризируем старые FUNCTION-сообщения
-        summarized_old: list[Messages] = []
-        for msg in old_messages:
-            if str(msg.role) == "function" and msg.content:
-                summary = _summarize_tool_result(
-                    getattr(msg, "name", None),
-                    msg.content,
-                )
-                summarized_old.append(
-                    Messages(
-                        role=msg.role,
-                        content=summary,
-                        name=getattr(msg, "name", None),
-                    )
-                )
-            else:
-                summarized_old.append(msg)
-
-        result = [system, *summarized_old, *recent_messages]
-
-        # Финальная обрезка если всё ещё слишком длинная
-        if len(result) > self._max_history:
-            result = [system, *result[-(self._max_history - 1) :]]
-
-        # Санитизация: удаляем осиротевшие FUNCTION-сообщения
-        # (могут появиться после обрезки, если пара ASSISTANT+FUNCTION была разорвана)
-        result = _sanitize_history(result)
-
-        return result
+        return trim_message_list(history, self._max_history)
 
     async def areset(self, user_id: int) -> None:
         """Async-обёртка reset (для in-memory — trivially sync)."""

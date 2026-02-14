@@ -18,8 +18,6 @@ import logging
 import signal
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import TYPE_CHECKING
-
 import asyncpg
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -45,9 +43,6 @@ from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.stats_aggregator import StatsAggregator
 from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.user_store import UserStore
-
-if TYPE_CHECKING:
-    pass
 
 # ---------------------------------------------------------------------------
 # Логирование: JSON для production, текст для разработки
@@ -91,6 +86,9 @@ def _setup_logging() -> None:
         if config.debug:
             handlers.append(logging.FileHandler(LOG_FILE, encoding="utf-8"))
 
+    # Настраиваем базовое логирование ДО S3, чтобы ошибки S3 шли через logger
+    logging.basicConfig(level=level, handlers=handlers, force=True)
+
     # S3 логирование: долгосрочное хранение в Yandex Object Storage
     if config.s3_log_enabled and config.s3_log_bucket:
         try:
@@ -107,14 +105,11 @@ def _setup_logging() -> None:
                 flush_size=config.s3_log_flush_size,
                 level=logging.INFO,
             )
-            handlers.append(s3_handler)
+            logging.getLogger().addHandler(s3_handler)
         except Exception as exc:
-            print(
-                f"[WARNING] S3 логирование не запущено: {exc}",
-                file=sys.stderr,
+            logging.getLogger(__name__).warning(
+                "S3 логирование не запущено: %s", exc
             )
-
-    logging.basicConfig(level=level, handlers=handlers, force=True)
 
 
 _setup_logging()
@@ -221,7 +216,7 @@ async def main() -> None:
             migration_runner = MigrationRunner(pg_pool)
             await migration_runner.run()
 
-            user_store = UserStore(pg_pool)
+            user_store = UserStore(pg_pool, schema_ready=True)  # миграции уже выполнены
 
             # Установить начальных админов из .env
             if config.admin_user_ids:
@@ -358,6 +353,7 @@ async def main() -> None:
         tool_executor=tool_executor,
         gigachat_max_concurrent=config.gigachat_max_concurrent,
         langfuse_service=langfuse_service,
+        ca_bundle_file=config.gigachat_ca_bundle,
     )
 
     # Предзагрузка MCP-инструментов
@@ -384,6 +380,7 @@ async def main() -> None:
         await gigachat_service.close()
         await recipe_store.close()
         await prefs_store.close()
+        await nutrition_service.close()
         await close_redis_client(redis_client)
         await mcp_client.close()
         if stats_aggregator is not None:

@@ -26,9 +26,9 @@ class UserStore:
     Стиль аналогичен ``PreferencesStore`` — raw SQL, без ORM.
     """
 
-    def __init__(self, pool: asyncpg.Pool) -> None:
+    def __init__(self, pool: asyncpg.Pool, *, schema_ready: bool = False) -> None:
         self._pool = pool
-        self._schema_ready = False
+        self._schema_ready = schema_ready
 
     # ------------------------------------------------------------------
     # Инициализация схемы

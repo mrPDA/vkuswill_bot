@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import F, Router
 from aiogram.enums import ChatAction
-from aiogram.filters import Command, CommandStart
+from aiogram.filters import BaseFilter, Command, CommandStart
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -103,6 +103,29 @@ def _sanitize_telegram_html(text: str) -> str:
 
 router = Router()
 admin_router = Router()
+
+
+class AdminFilter(BaseFilter):
+    """Фильтр: пропускает только администраторов.
+
+    Проверяет db_user.role == 'admin'. Если пользователь
+    не администратор — отправляет сообщение об отказе.
+    """
+
+    async def __call__(
+        self,
+        message: Message,
+        db_user: dict | None = None,
+    ) -> bool:
+        if db_user is not None and db_user.get("role") == "admin":
+            return True
+        await message.answer("У вас нет прав администратора.")
+        return False
+
+
+# Применяем фильтр на весь admin_router — больше не нужно
+# проверять роль в каждом хендлере отдельно.
+admin_router.message.filter(AdminFilter())
 
 
 @router.message(CommandStart())
@@ -680,34 +703,13 @@ def _split_message(text: str, max_length: int) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-async def _check_admin(message: Message) -> UserStore | None:
-    """Проверить, что отправитель — администратор.
-
-    Returns:
-        UserStore если проверка пройдена, None если нет прав.
-    """
-    if not message.from_user:
-        return None
-
-    # user_store инжектируется через UserMiddleware → data
-    # Для admin_router он передаётся через dp["user_store"]
-    # и доступен как keyword-аргумент
-    return None  # pragma: no cover — заглушка, реальная проверка ниже
-
-
 @admin_router.message(Command("admin_block"))
 async def cmd_admin_block(
     message: Message,
     user_store: UserStore,
-    db_user: dict | None = None,
 ) -> None:
     """Заблокировать пользователя: /admin_block <user_id> <причина>."""
     if not message.from_user:
-        return
-
-    # Проверка прав администратора
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
         return
 
     if not message.text:
@@ -742,14 +744,9 @@ async def cmd_admin_block(
 async def cmd_admin_unblock(
     message: Message,
     user_store: UserStore,
-    db_user: dict | None = None,
 ) -> None:
     """Разблокировать пользователя: /admin_unblock <user_id>."""
     if not message.from_user:
-        return
-
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
         return
 
     if not message.text:
@@ -777,16 +774,8 @@ async def cmd_admin_unblock(
 async def cmd_admin_stats(
     message: Message,
     user_store: UserStore,
-    db_user: dict | None = None,
 ) -> None:
     """Общая статистика бота: /admin_stats."""
-    if not message.from_user:
-        return
-
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
-        return
-
     total = await user_store.count_users()
     active_today = await user_store.count_active_today()
 
@@ -801,16 +790,8 @@ async def cmd_admin_stats(
 async def cmd_admin_user(
     message: Message,
     user_store: UserStore,
-    db_user: dict | None = None,
 ) -> None:
     """Информация о пользователе: /admin_user <user_id>."""
-    if not message.from_user:
-        return
-
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
-        return
-
     if not message.text:
         return
 
@@ -855,7 +836,6 @@ async def cmd_admin_user(
 @admin_router.message(Command("admin_analytics"))
 async def cmd_admin_analytics(
     message: Message,
-    db_user: dict | None = None,
     stats_aggregator: StatsAggregator | None = None,
 ) -> None:
     """Аналитика за N дней: /admin_analytics [days].
@@ -863,11 +843,6 @@ async def cmd_admin_analytics(
     Выводит агрегированные метрики из daily_stats:
     DAU, новые пользователи, сессии, корзины, GMV, ошибки.
     """
-    if not message.from_user:
-        return
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
-        return
     if stats_aggregator is None:
         await message.answer("StatsAggregator не настроен.")
         return
@@ -924,7 +899,6 @@ async def cmd_admin_analytics(
 @admin_router.message(Command("admin_funnel"))
 async def cmd_admin_funnel(
     message: Message,
-    db_user: dict | None = None,
     stats_aggregator: StatsAggregator | None = None,
 ) -> None:
     """Воронка за N дней: /admin_funnel [days].
@@ -932,11 +906,6 @@ async def cmd_admin_funnel(
     Показывает пользовательскую воронку:
     Старт → Активные → Искали → Создали корзину → Лимит → Опрос.
     """
-    if not message.from_user:
-        return
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
-        return
     if stats_aggregator is None:
         await message.answer("StatsAggregator не настроен.")
         return
@@ -984,13 +953,9 @@ async def cmd_admin_funnel(
 async def cmd_admin_grant_carts(
     message: Message,
     user_store: UserStore | None = None,
-    db_user: dict | None = None,
 ) -> None:
     """Выдать корзины пользователю: /admin_grant_carts <user_id> <amount>."""
     if not message.from_user:
-        return
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
         return
     if user_store is None:
         await message.answer("База данных недоступна.")
@@ -1037,14 +1002,8 @@ async def cmd_admin_grant_carts(
 async def cmd_admin_survey_stats(
     message: Message,
     user_store: UserStore | None = None,
-    db_user: dict | None = None,
 ) -> None:
     """Статистика по survey: /admin_survey_stats."""
-    if not message.from_user:
-        return
-    if not db_user or db_user.get("role") != "admin":
-        await message.answer("У вас нет прав администратора.")
-        return
     if user_store is None:
         await message.answer("База данных недоступна.")
         return
