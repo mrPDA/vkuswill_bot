@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.11.1] — 2026-02-14
+
+### Исправлено
+
+- **admin_user_ids из Lockbox** — Lockbox возвращал одиночное число вместо списка, pydantic отклонял конфиг при старте; добавлен `field_validator` для парсинга `int → [int]`
+- **CD: no space left on device** — Docker-очистка (`system prune`, `image prune`) выполняется ДО `docker pull` и `docker login` на VM
+- **Ruff format** — применено автоформатирование к `pii_utils.py`, `__main__.py`, `test_handlers.py`
+- **Ruff lint** — инлайнирован `return` в `AdminFilter` (SIM103), удалён неиспользуемый импорт `_sanitize_history` (F401)
+
 ## [0.11.0] — 2026-02-14
 
 ### Добавлено
