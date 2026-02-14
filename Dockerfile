@@ -21,6 +21,7 @@ RUN uv sync --frozen --no-dev --no-editable
 COPY src/ src/
 COPY migrations/ migrations/
 COPY scripts/ scripts/
+COPY certs/ certs/
 
 # --- Stage 2: Runtime ---
 FROM python:3.12-slim AS runtime
@@ -39,6 +40,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/scripts /app/scripts
+COPY --from=builder /app/certs /app/certs
 
 # Создать директорию для данных (SQLite — legacy)
 RUN mkdir -p /app/data && chown -R botuser:botuser /app
