@@ -194,7 +194,10 @@ class StatsAggregator:
                 COALESCE(SUM(sessions), 0)          AS total_sessions,
                 COALESCE(SUM(carts_created), 0)     AS total_carts,
                 COALESCE(SUM(total_gmv), 0)         AS total_gmv,
-                COALESCE(AVG(avg_cart_value), 0)    AS avg_cart_value,
+                COALESCE(
+                    SUM(total_gmv) / NULLIF(SUM(carts_created), 0),
+                    0
+                )                                   AS avg_cart_value,
                 COALESCE(SUM(searches), 0)          AS total_searches,
                 COALESCE(SUM(errors), 0)            AS total_errors,
                 COALESCE(SUM(cart_limits_hit), 0)   AS total_limits,

@@ -26,6 +26,7 @@ from gigachat.models import (
 
 from vkuswill_bot.services.dialog_manager import MAX_CONVERSATIONS
 from vkuswill_bot.services.gigachat_service import (
+    DEFAULT_CA_BUNDLE_FILE,
     DEFAULT_GIGACHAT_MAX_CONCURRENT,
     GIGACHAT_MAX_RETRIES,
     GigaChatService,
@@ -1644,6 +1645,73 @@ class TestCallGigachat:
             mcp_client=mock_mcp_client,
         )
         assert svc._api_semaphore._value == DEFAULT_GIGACHAT_MAX_CONCURRENT
+
+
+# ============================================================================
+# SSL/TLS конфигурация
+# ============================================================================
+
+
+class TestSSLConfig:
+    """Тесты SSL-политики GigaChatService."""
+
+    def test_uses_ca_bundle_when_exists(self, mock_mcp_client, tmp_path):
+        """При валидном ca_bundle включается verify_ssl_certs=True."""
+        ca_file = tmp_path / "ca.pem"
+        ca_file.write_text("dummy cert", encoding="utf-8")
+
+        with patch("vkuswill_bot.services.gigachat_service.GigaChat") as mock_gigachat:
+            GigaChatService(
+                credentials="test-creds",
+                model="GigaChat",
+                scope="GIGACHAT_API_PERS",
+                mcp_client=mock_mcp_client,
+                ca_bundle_file=str(ca_file),
+            )
+
+        kwargs = mock_gigachat.call_args.kwargs
+        assert kwargs["verify_ssl_certs"] is True
+        assert kwargs["ca_bundle_file"] == str(ca_file)
+
+    def test_fails_fast_when_bundle_missing(self, mock_mcp_client, tmp_path):
+        """При отсутствии ca_bundle и insecure-флага сервис не стартует."""
+        missing = tmp_path / "missing.pem"
+
+        with (
+            patch("vkuswill_bot.services.gigachat_service.GigaChat") as mock_gigachat,
+            pytest.raises(RuntimeError, match="TLS-верификацию"),
+        ):
+            GigaChatService(
+                credentials="test-creds",
+                model="GigaChat",
+                scope="GIGACHAT_API_PERS",
+                mcp_client=mock_mcp_client,
+                ca_bundle_file=str(missing),
+            )
+
+        mock_gigachat.assert_not_called()
+
+    def test_allows_insecure_mode_explicitly(self, mock_mcp_client, tmp_path):
+        """allow_insecure_ssl=True разрешает fallback для локальной разработки."""
+        missing = tmp_path / "missing.pem"
+
+        with patch("vkuswill_bot.services.gigachat_service.GigaChat") as mock_gigachat:
+            GigaChatService(
+                credentials="test-creds",
+                model="GigaChat",
+                scope="GIGACHAT_API_PERS",
+                mcp_client=mock_mcp_client,
+                ca_bundle_file=str(missing),
+                allow_insecure_ssl=True,
+            )
+
+        kwargs = mock_gigachat.call_args.kwargs
+        assert kwargs["verify_ssl_certs"] is False
+        assert "ca_bundle_file" not in kwargs
+
+    def test_default_ca_bundle_constant(self):
+        """Путь к CA-bundle по умолчанию стабильный."""
+        assert DEFAULT_CA_BUNDLE_FILE == "certs/russian_ca_bundle.pem"
 
 
 # ============================================================================

@@ -28,7 +28,6 @@ from __future__ import annotations
 import json
 import logging
 import os
-import sys
 import threading
 import uuid
 from datetime import datetime, UTC
@@ -125,10 +124,7 @@ class S3LogHandler(logging.Handler):
                     **self._client_kwargs,
                 )
             except ImportError:
-                print(
-                    "[S3LogHandler] boto3 не установлен, S3 логирование отключено",
-                    file=sys.stderr,
-                )
+                logger.error("S3LogHandler: boto3 не установлен, S3 логирование отключено")
                 raise
         return self._client
 
@@ -262,9 +258,10 @@ class S3LogHandler(logging.Handler):
                     # Добавляем неотправленные записи в начало буфера
                     self._buffer = records[:space_left] + self._buffer
 
-            print(
-                f"[S3LogHandler] Ошибка загрузки {len(records)} записей в S3: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "S3LogHandler: ошибка загрузки %d записей в S3: %s",
+                len(records),
+                exc,
             )
 
     def ensure_lifecycle_policy(self) -> bool:
@@ -298,17 +295,16 @@ class S3LogHandler(logging.Handler):
                 Bucket=self.bucket,
                 LifecycleConfiguration=lifecycle_config,
             )
-            print(
-                f"[S3LogHandler] Lifecycle Policy установлена: "
-                f"удаление через {self._retention_days} дн. "
-                f"(prefix={self.prefix}/)",
-                file=sys.stderr,
+            logger.info(
+                "S3LogHandler: lifecycle policy установлена: удаление через %d дн. (prefix=%s/)",
+                self._retention_days,
+                self.prefix,
             )
             return True
         except Exception as exc:
-            print(
-                f"[S3LogHandler] Не удалось установить Lifecycle Policy: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "S3LogHandler: не удалось установить Lifecycle Policy: %s",
+                exc,
             )
             return False
 

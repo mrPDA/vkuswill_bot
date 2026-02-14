@@ -67,6 +67,9 @@ GIGACHAT_TOKEN_PRICES: dict[str, float] = {
     "GigaChat": 65 / 1_000_000,  # GigaChat (без версии) = Lite
 }
 
+# Путь к CA-bundle Минцифры по умолчанию
+DEFAULT_CA_BUNDLE_FILE = "certs/russian_ca_bundle.pem"
+
 
 class GigaChatService:
     """Сервис для взаимодействия с GigaChat и MCP-инструментами.
@@ -97,29 +100,37 @@ class GigaChatService:
         recipe_service: RecipeService | None = None,
         gigachat_max_concurrent: int = DEFAULT_GIGACHAT_MAX_CONCURRENT,
         langfuse_service: LangfuseService | None = None,
-        ca_bundle_file: str | None = None,
+        ca_bundle_file: str | None = DEFAULT_CA_BUNDLE_FILE,
+        allow_insecure_ssl: bool = False,
     ) -> None:
         # SSL-верификация с сертификатами НУЦ Минцифры (ca_bundle_file).
-        # Если ca_bundle_file указан и файл существует — verify=True.
-        # Иначе — fallback на verify=False с предупреждением.
+        # Если ca_bundle_file не указан, используем DEFAULT_CA_BUNDLE_FILE.
+        # При отсутствии сертификата запускаемся только при allow_insecure_ssl=True.
         import pathlib
 
-        verify_ssl = False
         effective_ca_bundle: str | None = None
-        if ca_bundle_file:
-            ca_path = pathlib.Path(ca_bundle_file)
+        bundle_path = ca_bundle_file or DEFAULT_CA_BUNDLE_FILE
+        if bundle_path:
+            ca_path = pathlib.Path(bundle_path)
             if ca_path.exists():
-                verify_ssl = True
                 effective_ca_bundle = str(ca_path)
                 logger.info("GigaChat SSL: verify=True, ca_bundle=%s", ca_path)
-            else:
+            elif allow_insecure_ssl:
                 logger.warning(
-                    "GigaChat SSL: ca_bundle не найден (%s), verify=False (НЕБЕЗОПАСНО!)",
-                    ca_bundle_file,
+                    "GigaChat SSL: ca_bundle не найден (%s), "
+                    "разрешён insecure fallback (TLS verification disabled)",
+                    bundle_path,
                 )
-        else:
-            logger.warning("GigaChat SSL: ca_bundle не указан, verify=False (НЕБЕЗОПАСНО!)")
+            else:
+                msg = (
+                    "GigaChat SSL: не удалось включить TLS-верификацию. "
+                    f"Файл сертификата не найден: {bundle_path}. "
+                    "Укажите корректный ca_bundle_file или включите debug/insecure режим "
+                    "явно для локальной разработки."
+                )
+                raise RuntimeError(msg)
 
+        verify_ssl = effective_ca_bundle is not None
         gigachat_kwargs: dict[str, Any] = {
             "credentials": credentials,
             "model": model,

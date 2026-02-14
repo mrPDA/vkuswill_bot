@@ -167,9 +167,11 @@ async def _health_handler(request: web.Request) -> web.Response:
     mcp_client_ref = request.app.get("mcp_client")
     if mcp_client_ref is not None:
         try:
-            await mcp_client_ref.get_tools()
-            checks["mcp"] = True
+            checks["mcp"] = await mcp_client_ref.healthcheck()
+            if not checks["mcp"]:
+                checks["status"] = "degraded"
         except Exception:
+            checks["mcp"] = False
             checks["status"] = "degraded"
 
     status_code = 200 if checks["status"] == "ok" else 503
@@ -365,6 +367,7 @@ async def main() -> None:
         gigachat_max_concurrent=config.gigachat_max_concurrent,
         langfuse_service=langfuse_service,
         ca_bundle_file=config.gigachat_ca_bundle,
+        allow_insecure_ssl=config.debug,
     )
 
     # Предзагрузка MCP-инструментов

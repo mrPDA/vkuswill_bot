@@ -693,6 +693,50 @@ class TestSearchQueryCleaningInCallTool:
         await mcp_client.close()
 
 
+class TestHealthcheck:
+    """Тесты healthcheck: реальная проверка MCP без кеша."""
+
+    @respx.mock
+    async def test_healthcheck_ignores_tools_cache(self, mcp_client):
+        """healthcheck выполняет сетевой RPC, даже если _tools_cache заполнен."""
+        mcp_client._tools_cache = [{"name": "cached", "description": "", "parameters": {}}]
+
+        respx.post(MCP_URL).mock(
+            side_effect=[
+                # initialize
+                httpx.Response(
+                    200,
+                    json=INIT_RESPONSE_JSON,
+                    headers={"mcp-session-id": "sid-health"},
+                ),
+                # notifications/initialized
+                httpx.Response(202),
+                # tools/list (реальный probe)
+                httpx.Response(200, json=TOOLS_LIST_RESPONSE_JSON),
+            ]
+        )
+
+        ok = await mcp_client.healthcheck()
+
+        assert ok is True
+        assert respx.calls.call_count == 3
+        await mcp_client.close()
+
+    @respx.mock
+    async def test_healthcheck_failure_resets_session(self, mcp_client):
+        """При ошибке healthcheck возвращает False и сбрасывает сессию."""
+        mcp_client._session_id = "sid-existing"
+        mcp_client._client = httpx.AsyncClient()
+
+        respx.post(MCP_URL).mock(side_effect=httpx.ConnectError("connection lost"))
+
+        ok = await mcp_client.healthcheck()
+
+        assert ok is False
+        assert mcp_client._session_id is None
+        assert mcp_client._client is None
+
+
 class TestSessionManagement:
     """Тесты управления MCP-сессией."""
 

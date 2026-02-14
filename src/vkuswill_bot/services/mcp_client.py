@@ -223,6 +223,23 @@ class VkusvillMCPClient:
         """Закрыть клиент."""
         await self._reset_session()
 
+    async def healthcheck(self) -> bool:
+        """Проверить доступность MCP-сервера реальным RPC-вызовом.
+
+        Не использует ``_tools_cache``, чтобы избежать false-positive статуса.
+        """
+        try:
+            client = await self._ensure_initialized()
+            result = await self._rpc_call(client, "tools/list")
+            if not isinstance(result, dict):
+                return False
+            tools = result.get("tools", [])
+            return isinstance(tools, list)
+        except Exception as exc:
+            logger.warning("MCP healthcheck failed: %r", exc)
+            await self._reset_session()
+            return False
+
     async def get_tools(self) -> list[dict]:
         """Получить список инструментов с MCP-сервера.
 
