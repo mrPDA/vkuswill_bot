@@ -628,6 +628,39 @@ class UserStore:
         logger.info("Администраторы установлены: %s", admin_ids)
 
     # ------------------------------------------------------------------
+    # Информированное согласие (ADR-002)
+    # ------------------------------------------------------------------
+
+    async def mark_consent(
+        self,
+        user_id: int,
+        consent_type: str = "explicit",
+    ) -> bool:
+        """Зафиксировать согласие пользователя на обработку данных.
+
+        Атомарная операция: ставит ``consent_given_at`` только если ещё
+        не заполнено (предотвращает перезапись explicit → implicit).
+
+        Args:
+            consent_type: ``'explicit'`` (кнопка) или ``'implicit'`` (продолжение использования).
+
+        Returns:
+            True если согласие зафиксировано (первый раз), False если уже было.
+        """
+        await self.ensure_schema()
+        sql = """
+            UPDATE users
+            SET consent_given_at = NOW(),
+                consent_type = $2,
+                updated_at = NOW()
+            WHERE user_id = $1 AND consent_given_at IS NULL
+            RETURNING user_id
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id, consent_type)
+        return row is not None
+
+    # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 

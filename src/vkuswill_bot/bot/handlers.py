@@ -226,7 +226,75 @@ async def cmd_start(
             referrer_id,
         )
 
-    await message.answer(
+    # Для новых пользователей — показываем consent notice + кнопку
+    is_consent_needed = (
+        db_user is not None
+        and db_user.get("consent_given_at") is None
+        and (db_user.get("message_count", 0) <= 1)
+    )
+
+    if is_consent_needed:
+        keyboard = InlineKeyboardMarkup(
+            inline_keyboard=[
+                [
+                    InlineKeyboardButton(
+                        text="\U0001f680 Понятно, начать!",
+                        callback_data="consent_accept",
+                    )
+                ],
+            ],
+        )
+        await message.answer(
+            "<b>Привет! Я бот-помощник ВкусВилл.</b>\n\n"
+            "Помогу подобрать продукты и собрать корзину. "
+            "Просто напиши, что хочешь купить!\n\n"
+            "Например:\n"
+            "- <i>Собери корзину для завтрака на двоих</i>\n"
+            "- <i>Хочу купить молоко, хлеб и сыр</i>\n\n"
+            "\u2139\ufe0f Для ответов я использую ИИ-модель GigaChat (Сбер). "
+            "Ваши сообщения обрабатываются для генерации ответов "
+            "и улучшения качества сервиса. Подробнее: /privacy\n\n"
+            "<b>Команды:</b>\n"
+            "/reset — начать новый диалог\n"
+            "/invite — пригласить друга\n"
+            "/privacy — политика конфиденциальности\n"
+            "/help — помощь",
+            reply_markup=keyboard,
+        )
+    else:
+        await message.answer(
+            "<b>Привет! Я бот-помощник ВкусВилл.</b>\n\n"
+            "Помогу подобрать продукты и собрать корзину. "
+            "Просто напиши, что хочешь купить!\n\n"
+            "Например:\n"
+            "- <i>Собери корзину для завтрака на двоих</i>\n"
+            "- <i>Хочу купить молоко, хлеб и сыр</i>\n"
+            "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
+            "<b>Команды:</b>\n"
+            "/reset — начать новый диалог\n"
+            "/invite — пригласить друга\n"
+            "/privacy — политика конфиденциальности\n"
+            "/help — помощь"
+        )
+
+
+@router.callback_query(F.data == "consent_accept")
+async def consent_accept_callback(
+    callback: CallbackQuery,
+    user_store: UserStore | None = None,
+) -> None:
+    """Обработка нажатия кнопки «Понятно, начать!» — фиксация explicit consent."""
+    if not callback.from_user or not callback.message:
+        return
+    if user_store is not None:
+        with contextlib.suppress(Exception):
+            await user_store.mark_consent(callback.from_user.id, "explicit")
+            await user_store.log_event(
+                callback.from_user.id,
+                "consent_given",
+                {"consent_type": "explicit"},
+            )
+    await callback.message.edit_text(
         "<b>Привет! Я бот-помощник ВкусВилл.</b>\n\n"
         "Помогу подобрать продукты и собрать корзину. "
         "Просто напиши, что хочешь купить!\n\n"
@@ -237,7 +305,40 @@ async def cmd_start(
         "<b>Команды:</b>\n"
         "/reset — начать новый диалог\n"
         "/invite — пригласить друга\n"
+        "/privacy — политика конфиденциальности\n"
         "/help — помощь"
+    )
+    await callback.answer()
+
+
+@router.message(Command("privacy"))
+async def cmd_privacy(message: Message) -> None:
+    """Обработчик команды /privacy — политика конфиденциальности."""
+    await message.answer(
+        "<b>Политика конфиденциальности</b>\n\n"
+        "<b>Какие данные обрабатываются:</b>\n"
+        "\u2022 Telegram ID — для идентификации в боте\n"
+        "\u2022 Текст сообщений — передаётся в GigaChat (Сбер) "
+        "для генерации ответов\n"
+        "\u2022 Предпочтения — для персонализации подбора товаров\n"
+        "\u2022 История диалога — для контекста беседы (хранится временно)\n\n"
+        "<b>Что мы НЕ сохраняем:</b>\n"
+        "\u2022 Имя, фамилию, username из Telegram\n"
+        "\u2022 Телефон, email, номера карт — автоматически маскируются\n\n"
+        "<b>Кому передаются данные:</b>\n"
+        "\u2022 GigaChat (Сбер) — текст сообщений для ИИ-ответов\n"
+        "\u2022 ВкусВилл — поисковые запросы товаров (без вашего ID)\n"
+        "\u2022 Open Food Facts — названия продуктов для КБЖУ (без ID)\n\n"
+        "<b>Защита:</b>\n"
+        "\u2022 Telegram ID хешируется в аналитике\n"
+        "\u2022 Логи хранятся не более 90 дней\n"
+        "\u2022 Код бота открыт — можете проверить сами\n\n"
+        "<b>Ваши права:</b>\n"
+        "\u2022 /reset — удалить историю диалога\n"
+        '\u2022 «Удали предпочтение [категория]» — удалить предпочтение\n'
+        "\u2022 Полное удаление данных — d.pukinov@yandex.ru\n\n"
+        "<i>Продолжая использование бота, вы соглашаетесь "
+        "с обработкой данных в указанных целях.</i>"
     )
 
 
@@ -309,7 +410,8 @@ async def cmd_help(message: Message) -> None:
         "<b>Команды:</b>\n"
         "/reset — сбросить историю диалога\n"
         "/invite — пригласить друга и получить бонусные корзины\n"
-        "/survey — пройти опрос и получить бонусные корзины"
+        "/survey — пройти опрос и получить бонусные корзины\n"
+        "/privacy — политика конфиденциальности"
     )
 
 
@@ -667,6 +769,18 @@ async def handle_text(
         # пользователь сможет повторить опрос через /survey
         await message.answer("Не удалось сохранить отзыв. Попробуйте позже: /survey")
         return
+
+    # Implicit consent: если пользователь отправил текст без явного согласия,
+    # фиксируем факт использования как implicit consent (ADR-002)
+    if user_store is not None:
+        with contextlib.suppress(Exception):
+            was_new = await user_store.mark_consent(user_id, "implicit")
+            if was_new:
+                await user_store.log_event(
+                    user_id,
+                    "consent_given",
+                    {"consent_type": "implicit"},
+                )
 
     # Показываем индикатор набора текста во время обработки
     stop_typing = asyncio.Event()
