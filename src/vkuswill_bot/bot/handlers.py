@@ -108,8 +108,14 @@ admin_router = Router()
 class AdminFilter(BaseFilter):
     """Фильтр: пропускает только администраторов.
 
-    Проверяет db_user.role == 'admin'. Если пользователь
-    не администратор — отправляет сообщение об отказе.
+    Проверяет db_user.role == 'admin'. Чистый фильтр без
+    побочных эффектов — НЕ отправляет сообщения при отказе.
+
+    ВАЖНО: router-level фильтр в aiogram 3 вызывается для
+    КАЖДОГО входящего сообщения (не только для admin-команд).
+    Любой side-effect здесь затронет ВСЕХ пользователей.
+    Сообщение об отказе отправляется отдельным хендлером
+    ``handle_admin_unauthorized`` в основном router.
     """
 
     async def __call__(
@@ -119,7 +125,6 @@ class AdminFilter(BaseFilter):
     ) -> bool:
         if db_user is not None and db_user.get("role") == "admin":
             return True
-        await message.answer("У вас нет прав администратора.")
         return False
 
 
@@ -581,6 +586,18 @@ async def survey_done_callback(
     _ok, text = await _finish_survey(user_id, user_store, pmf, feature, None)
     await callback.message.edit_text(text)
     await callback.answer()
+
+
+@router.message(F.text.startswith("/admin_"))
+async def handle_admin_unauthorized(message: Message) -> None:
+    """Перехват admin-команд от неавторизованных пользователей.
+
+    Когда AdminFilter в admin_router отклоняет сообщение (без
+    побочных эффектов), команда проваливается в основной router.
+    Этот хендлер ловит /admin_* и отправляет корректный отказ,
+    не пропуская команду в GigaChat.
+    """
+    await message.answer("У вас нет прав администратора.")
 
 
 @router.message(F.text)
