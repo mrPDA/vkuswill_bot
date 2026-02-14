@@ -94,13 +94,11 @@ class TestGetOrCreate:
 
     @pytest.mark.asyncio
     async def test_creates_new_user(self, store):
-        """Создаёт нового пользователя при первом обращении."""
+        """Создаёт нового пользователя при первом обращении (без PII)."""
         s, conn = store
         # asyncpg.Record ведёт себя как dict при вызове dict(row)
         row = {
             "user_id": 123,
-            "username": "testuser",
-            "first_name": "Test",
             "role": "user",
             "status": "active",
         }
@@ -108,8 +106,7 @@ class TestGetOrCreate:
 
         result = await s.get_or_create(
             user_id=123,
-            username="testuser",
-            first_name="Test",
+            language_code="ru",
         )
 
         conn.fetchrow.assert_called_once()
@@ -117,6 +114,10 @@ class TestGetOrCreate:
         assert "INSERT INTO users" in sql
         assert "ON CONFLICT" in sql
         assert result["user_id"] == 123
+        # PII не должно передаваться в SQL
+        assert "username" not in sql
+        assert "first_name" not in sql
+        assert "last_name" not in sql
 
     @pytest.mark.asyncio
     async def test_returns_empty_dict_on_none(self, store):
