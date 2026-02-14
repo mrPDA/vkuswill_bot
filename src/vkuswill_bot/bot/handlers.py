@@ -107,17 +107,25 @@ def _sanitize_telegram_html(text: str) -> str:
     return _TAG_RE.sub(_check_tag, text)
 
 
-def _build_cart_keyboard(text: str) -> InlineKeyboardMarkup | None:
-    """Извлечь URL корзины из HTML и вернуть inline-кнопку.
+def _extract_cart_link(text: str) -> tuple[str, InlineKeyboardMarkup | None]:
+    """Извлечь URL корзины из HTML, удалить текстовую ссылку, вернуть кнопку.
 
-    Если в тексте найдена ссылка с текстом, содержащим «корзин» / «cart»,
-    создаём InlineKeyboardMarkup с URL-кнопкой. Иначе — None.
+    Возвращает (очищенный текст, InlineKeyboardMarkup | None).
+    Текстовая ссылка убирается — остаётся только inline-кнопка.
     """
     match = _CART_LINK_RE.search(text)
     if not match:
-        return None
+        return text, None
     cart_url = match.group(1)
-    return InlineKeyboardMarkup(
+
+    # Удаляем текстовую ссылку и окружающие пустые строки
+    cleaned = _CART_LINK_RE.sub("", text)
+    # Убираем возможные эмодзи-префиксы (🛒) перед удалённой ссылкой
+    cleaned = re.sub(r"[\U0001f6d2\U0001f6d2]\s*\n*", "", cleaned)
+    # Схлопываем тройные+ пустые строки до двойных
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
+
+    keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
@@ -127,6 +135,7 @@ def _build_cart_keyboard(text: str) -> InlineKeyboardMarkup | None:
             ],
         ],
     )
+    return cleaned, keyboard
 
 
 router = Router()
@@ -695,8 +704,8 @@ async def handle_text(
     # экранируем опасные (script, img, iframe и пр.)
     safe_response = _sanitize_telegram_html(response)
 
-    # Извлекаем URL корзины для inline-кнопки (до разбиения на чанки)
-    cart_keyboard = _build_cart_keyboard(safe_response)
+    # Извлекаем URL корзины → inline-кнопка, убираем текстовую ссылку
+    safe_response, cart_keyboard = _extract_cart_link(safe_response)
 
     # Разбиваем длинные сообщения по лимиту Telegram
     chunks = _split_message(safe_response, MAX_TELEGRAM_MESSAGE_LENGTH)
