@@ -17,7 +17,7 @@ from collections import OrderedDict
 from gigachat.models import FunctionCall, Messages, MessagesRole
 from redis.asyncio import Redis
 
-from vkuswill_bot.services.dialog_manager import _sanitize_history, trim_message_list
+from vkuswill_bot.services.dialog_manager import trim_message_list
 from vkuswill_bot.services.prompts import SYSTEM_PROMPT
 
 logger = logging.getLogger(__name__)
