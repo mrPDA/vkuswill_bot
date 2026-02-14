@@ -5,6 +5,14 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.7.0] — 2026-02-14
+
+### Добавлено
+
+- **Metabase BI-дашборды на production** — Terraform: PG user/database `metabase`, Security Group порт 3001, Lockbox секреты `METABASE_ENABLED` и `METABASE_DATABASE_URL`
+- **deploy_metabase() в deploy.sh** — автоматический деплой контейнера `metabase/metabase:v0.58` на VM через CD pipeline (по аналогии с Langfuse)
+- **CD pipeline: поддержка Metabase** — fallback env-переменные, диагностика контейнера в логах деплоя
+
 ## [0.6.0] — 2026-02-14
 
 ### Добавлено
