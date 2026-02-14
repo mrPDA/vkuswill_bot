@@ -1,5 +1,8 @@
 """Конфигурация приложения через переменные окружения."""
 
+from __future__ import annotations
+
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -43,8 +46,28 @@ class Config(BaseSettings):
     db_pool_min: int = 2
     db_pool_max: int = 10
 
-    # Администраторы (Telegram user IDs через запятую)
+    # Администраторы (Telegram user IDs — одно число или JSON-массив [111,222])
     admin_user_ids: list[int] = []
+
+    @field_validator("admin_user_ids", mode="before")
+    @classmethod
+    def _parse_admin_ids(cls, v: object) -> list[int]:
+        """Принять одиночное число (из Lockbox) или JSON-список.
+
+        pydantic-settings JSON-парсит строку env перед передачей в pydantic:
+        - "391887253" → int 391887253 → этот валидатор → [391887253]
+        - "[111,222]" → list [111,222] → этот валидатор → [111,222]
+        """
+        if isinstance(v, list):
+            return v
+        if isinstance(v, int):
+            return [v]
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                return []
+            return [int(x.strip()) for x in v.split(",") if x.strip()]
+        return []  # type: ignore[return-value]
 
     # Webhook
     use_webhook: bool = False
