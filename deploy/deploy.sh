@@ -141,11 +141,20 @@ for entry in data.get('entries', []):
   log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей)"
 }
 
-# ─── 3. Pull нового образа ──────────────────────────────────
+# ─── 3. Очистка места перед pull ────────────────────────────
+log "Очистка Docker (образы, кеш, остановленные контейнеры)..."
+# Удаляем остановленные контейнеры, висячие образы и build-кеш
+docker system prune -f --filter "until=48h" 2>/dev/null || true
+# Дополнительно: удаляем неиспользуемые образы старше 7 дней
+docker image prune -af --filter "until=168h" 2>/dev/null || true
+DISK_FREE=$(df -h / | awk 'NR==2 {print $4}')
+log "Свободно на диске после очистки: ${DISK_FREE}"
+
+# ─── 4. Pull нового образа ──────────────────────────────────
 log "Pulling image: ${IMAGE}..."
 docker pull "$IMAGE"
 
-# ─── 4. Остановка старого контейнера ────────────────────────
+# ─── 5. Остановка старого контейнера ────────────────────────
 if docker ps -q -f "name=${CONTAINER_NAME}" | grep -q .; then
   log "Остановка текущего контейнера ${CONTAINER_NAME}..."
   docker stop "$CONTAINER_NAME" --time 30 2>/dev/null || true
@@ -155,10 +164,10 @@ else
   warn "Контейнер ${CONTAINER_NAME} не запущен"
 fi
 
-# ─── 5. Загрузка секретов ────────────────────────────────────
+# ─── 6. Загрузка секретов ────────────────────────────────────
 load_lockbox_secrets
 
-# ─── 5b. Запуск Langfuse (self-hosted, если настроен) ────────
+# ─── 6b. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
   local LANGFUSE_NAME="vkuswill-langfuse"
   local ENV_FILE="/opt/vkuswill-bot/.env"
@@ -218,7 +227,7 @@ deploy_langfuse() {
 
 deploy_langfuse
 
-# ─── 5c. Запуск Metabase (BI-дашборды, если настроен) ────────
+# ─── 6c. Запуск Metabase (BI-дашборды, если настроен) ────────
 deploy_metabase() {
   local METABASE_NAME="vkuswill-metabase"
   local ENV_FILE="/opt/vkuswill-bot/.env"
@@ -294,7 +303,7 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
 
 deploy_metabase
 
-# ─── 6. Запуск нового контейнера ────────────────────────────
+# ─── 7. Запуск нового контейнера ────────────────────────────
 log "Запуск контейнера ${CONTAINER_NAME} (${TAG})..."
 
 ENV_FILE="/opt/vkuswill-bot/.env"
@@ -368,7 +377,7 @@ docker run -d \
   --label "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "$IMAGE"
 
-# ─── 7. Health check ────────────────────────────────────────
+# ─── 8. Health check ────────────────────────────────────────
 log "Проверка health (${HEALTH_RETRIES} попыток, интервал ${HEALTH_DELAY}s)..."
 
 for i in $(seq 1 $HEALTH_RETRIES); do
@@ -388,11 +397,11 @@ if [[ "$STATUS" != "200" ]]; then
   exit 1
 fi
 
-# ─── 8. Очистка старых образов ──────────────────────────────
-log "Очистка неиспользуемых Docker-образов..."
+# ─── 9. Финальная очистка ────────────────────────────────────
+log "Финальная очистка неиспользуемых Docker-образов..."
 docker image prune -f --filter "until=168h" 2>/dev/null || true
 
-# ─── 9. Итог ─────────────────────────────────────────────────
+# ─── 10. Итог ────────────────────────────────────────────────
 log "════════════════════════════════════════"
 log "Деплой ${TAG} завершён успешно!"
 log "Image:     ${IMAGE}"
