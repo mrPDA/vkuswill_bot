@@ -5,6 +5,17 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.10.0] — 2026-02-14
+
+### Добавлено
+
+- **Metabase-дашборд PMF-опроса** — скрипт `setup_metabase_dashboards.py` создаёт дашборд с результатами Sean Ellis PMF-теста (распределение ответов, PMF score, текстовые отзывы)
+
+### Исправлено
+
+- **PEM-границы в CA-bundle** — исправлены склеенные `END CERTIFICATE` / `BEGIN CERTIFICATE` строки в `russian_ca_bundle.pem`, из-за которых SSL-верификация могла сбоить
+- **Замечания code review Барбоссы** — исправления в GigaChat-сервисе по результатам ревью (типизация, обработка ошибок, async-паттерны)
+
 ## [0.9.1] — 2026-02-14
 
 ### Исправлено
