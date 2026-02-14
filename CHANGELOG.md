@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.9.1] — 2026-02-14
+
+### Исправлено
+
+- **Survey pending leak** — при недоступном `user_store` словарь `_survey_pending` не очищался, пользователь застревал в цикле перехвата сообщений; теперь pending очищается всегда
+
 ## [0.9.0] — 2026-02-14
 
 ### Добавлено
