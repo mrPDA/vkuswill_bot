@@ -47,8 +47,6 @@ def _make_user_store(
     else:
         store.get_or_create.return_value = user_data or {
             "user_id": 123,
-            "username": "testuser",
-            "first_name": "Test",
             "role": "user",
             "status": "active",
             "rate_limit": None,
@@ -87,7 +85,6 @@ class TestUserMiddlewareNormalFlow:
         """Middleware инжектирует db_user и user_store в data."""
         user_data = {
             "user_id": 123,
-            "username": "testuser",
             "role": "user",
             "status": "active",
             "rate_limit": None,
