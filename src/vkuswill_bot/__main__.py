@@ -226,10 +226,15 @@ async def main() -> None:
                 await user_store.ensure_admins(config.admin_user_ids)
 
             # Мидлварь: UserMiddleware → ThrottlingMiddleware (порядок важен!)
-            dp.message.middleware(UserMiddleware(user_store))
+            # ВАЖНО: outer_middleware, а НЕ middleware (inner)!
+            # В aiogram 3 inner middleware запускается ПОСЛЕ check_root_filters,
+            # поэтому router-level фильтры (AdminFilter) не видят db_user.
+            # outer_middleware запускается ДО propagate → ДО root filters →
+            # db_user доступен в AdminFilter.
+            dp.message.outer_middleware(UserMiddleware(user_store))
             # Callback queries тоже получают db_user (облегчённый путь,
             # без upsert и инкремента — только read + инъекция).
-            dp.callback_query.middleware(UserMiddleware(user_store))
+            dp.callback_query.outer_middleware(UserMiddleware(user_store))
             logger.info(
                 "PostgreSQL подключён, UserStore готов (pool %d-%d)",
                 config.db_pool_min,
