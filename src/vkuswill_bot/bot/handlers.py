@@ -153,25 +153,28 @@ class AdminFilter(BaseFilter):
     Любой side-effect здесь затронет ВСЕХ пользователей.
     Сообщение об отказе отправляется отдельным хендлером
     ``handle_admin_unauthorized`` в основном router.
+
+    Используем **kwargs вместо именованного db_user, т.к.
+    aiogram может не инжектировать middleware-данные
+    в router-level фильтры через именованные параметры.
     """
 
-    async def __call__(
-        self,
-        message: Message,
-        db_user: dict | None = None,
-    ) -> bool:
-        is_admin = db_user is not None and db_user.get("role") == "admin"
+    async def __call__(self, message: Message, **kwargs: object) -> bool:
+        db_user = kwargs.get("db_user")
+        is_admin = (
+            isinstance(db_user, dict) and db_user.get("role") == "admin"
+        )
         # Логируем ТОЛЬКО для admin-команд — не спамим на обычные сообщения
         if message.text and message.text.startswith("/admin_"):
             user_id = message.from_user.id if message.from_user else "?"
-            role = db_user.get("role") if db_user else "no_db_user"
+            role = db_user.get("role") if isinstance(db_user, dict) else "no_db_user"
             logger.info(
-                "AdminFilter: user=%s role=%s is_admin=%s cmd=%s db_user_keys=%s",
+                "AdminFilter: user=%s role=%s is_admin=%s cmd=%s kwargs_keys=%s",
                 user_id,
                 role,
                 is_admin,
                 message.text.split()[0],
-                list(db_user.keys()) if db_user else "None",
+                list(kwargs.keys()),
             )
         return is_admin
 
