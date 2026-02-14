@@ -319,14 +319,85 @@ async def cmd_reset(
 # ---------------------------------------------------------------------------
 # Survey Flow — опрос для получения бонусных корзин (freemium)
 # ---------------------------------------------------------------------------
+# Вопрос 1: Sean Ellis PMF-тест (product-market fit).
+# Вопрос 2: Самая полезная функция бота.
+# Вопрос 3: Открытый отзыв — текст или кнопка «Всё отлично».
+# ---------------------------------------------------------------------------
+
+# PMF-ответы (Sean Ellis test)
+_PMF_LABELS = {
+    "very": "Очень расстроюсь",
+    "somewhat": "Немного",
+    "not": "Не расстроюсь",
+}
 
 # Маппинг фич для отображения
 _FEATURE_LABELS = {
     "search": "Поиск товаров",
-    "recipe": "Рецепты",
-    "kbju": "КБЖУ / калории",
-    "budget": "Подбор по бюджету",
+    "recipe": "Подбор рецепта",
+    "cart": "Сборка корзины",
+    "other": "Другое",
 }
+
+# Промежуточное состояние: ожидание текстового отзыва (шаг 3).
+# user_id → {"pmf": ..., "feature": ...}
+_survey_pending: dict[int, dict[str, str]] = {}
+_SURVEY_PENDING_MAX = 1000
+
+
+def is_survey_pending(user_id: int) -> bool:
+    """Проверить, ожидается ли текстовый отзыв от пользователя."""
+    return user_id in _survey_pending
+
+
+async def _finish_survey(
+    user_id: int,
+    user_store: UserStore,
+    pmf: str,
+    feature: str,
+    feedback: str | None,
+) -> tuple[bool, str]:
+    """Завершить опрос: сохранить результаты, выдать бонус.
+
+    Returns:
+        (success, response_text) — результат и текст для пользователя.
+    """
+    try:
+        was_marked = await user_store.mark_survey_completed_if_not(user_id)
+        if not was_marked:
+            return True, "Вы уже прошли опрос. Спасибо!"
+
+        metadata: dict = {
+            "pmf": pmf,
+            "useful_feature": feature,
+        }
+        if feedback:
+            metadata["feedback"] = feedback[:500]
+
+        await user_store.log_event(user_id, "survey_completed", metadata)
+
+        from vkuswill_bot.config import config as app_config
+
+        bonus = app_config.bonus_cart_limit
+        new_limit = await user_store.grant_bonus_carts(user_id, bonus)
+        await user_store.log_event(
+            user_id,
+            "bonus_carts_granted",
+            {"reason": "survey", "amount": bonus, "new_limit": new_limit},
+        )
+    except Exception as e:
+        logger.error("Ошибка сохранения survey для %d: %s", user_id, e)
+        return False, "Произошла ошибка при сохранении. Попробуйте позже: /survey"
+
+    pmf_label = _PMF_LABELS.get(pmf, pmf)
+    feature_label = _FEATURE_LABELS.get(feature, feature)
+    return True, (
+        f"{pmf_label} | {feature_label}\n\n"
+        "<b>Спасибо за обратную связь!</b>\n\n"
+        f"🎁 Вам добавлено {bonus} корзин. "
+        f"Теперь доступно {new_limit} корзин.\n"
+        "Напишите, что хотите заказать!"
+    )
 
 
 @router.message(Command("survey"))
@@ -346,61 +417,78 @@ async def cmd_survey(
         await message.answer("Вы уже прошли опрос. Спасибо за обратную связь!")
         return
 
-    # Шаг 1: NPS (1–5 звёзд)
+    # Очищаем возможное незавершённое состояние
+    _survey_pending.pop(message.from_user.id, None)
+
+    # Шаг 1: PMF (Sean Ellis test)
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text=f"{'⭐' * i}",
-                    callback_data=f"survey_nps_{i}",
+                    text="😢 Очень расстроюсь",
+                    callback_data="survey_pmf_very",
                 )
-            ]
-            for i in range(1, 6)
+            ],
+            [
+                InlineKeyboardButton(
+                    text="😐 Немного расстроюсь",
+                    callback_data="survey_pmf_somewhat",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="😊 Не расстроюсь",
+                    callback_data="survey_pmf_not",
+                )
+            ],
         ]
     )
     await message.answer(
-        "<b>Короткий опрос (3 вопроса)</b>\n\nОцените бота от 1 до 5:",
+        "<b>Короткий опрос (3 вопроса)</b>\n\n"
+        "Как бы вы расстроились, если бот перестанет работать?",
         reply_markup=keyboard,
     )
 
 
-@router.callback_query(F.data.startswith("survey_nps_"))
-async def survey_nps_callback(callback: CallbackQuery) -> None:
-    """Шаг 1: NPS-оценка → переход к выбору полезной фичи."""
+@router.callback_query(F.data.startswith("survey_pmf_"))
+async def survey_pmf_callback(callback: CallbackQuery) -> None:
+    """Шаг 1: PMF → переход к выбору полезной фичи."""
     if not callback.data or not callback.message:
         return
-    nps = max(1, min(5, int(callback.data.split("_")[-1])))
+    # survey_pmf_<pmf>
+    pmf = callback.data.split("_")[2]  # very / somewhat / not
+    pmf_label = _PMF_LABELS.get(pmf, pmf)
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
                     text="🔍 Поиск товаров",
-                    callback_data=f"survey_feat_search_{nps}",
+                    callback_data=f"survey_feat_search_{pmf}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="🍳 Рецепты",
-                    callback_data=f"survey_feat_recipe_{nps}",
+                    text="🍳 Подбор рецепта",
+                    callback_data=f"survey_feat_recipe_{pmf}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="📊 КБЖУ / калории",
-                    callback_data=f"survey_feat_kbju_{nps}",
+                    text="🛒 Сборка корзины",
+                    callback_data=f"survey_feat_cart_{pmf}",
                 )
             ],
             [
                 InlineKeyboardButton(
-                    text="💰 Подбор по бюджету",
-                    callback_data=f"survey_feat_budget_{nps}",
+                    text="💬 Другое",
+                    callback_data=f"survey_feat_other_{pmf}",
                 )
             ],
         ]
     )
     await callback.message.edit_text(
-        f"Оценка: {'⭐' * nps}\n\nКакая функция для вас самая полезная?",
+        f"{pmf_label}\n\nКакая функция для вас самая полезная?",
         reply_markup=keyboard,
     )
     await callback.answer()
@@ -408,117 +496,67 @@ async def survey_nps_callback(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data.startswith("survey_feat_"))
 async def survey_feature_callback(callback: CallbackQuery) -> None:
-    """Шаг 2: Самая полезная функция → переход к вопросу о продолжении."""
-    if not callback.data or not callback.message:
+    """Шаг 2: Фича → переход к открытому вопросу об улучшениях."""
+    if not callback.data or not callback.message or not callback.from_user:
         return
     parts = callback.data.split("_")
-    # survey_feat_<feature>_<nps>
+    # survey_feat_<feature>_<pmf>
     feature = parts[2]
-    nps = int(parts[3])
+    pmf = parts[3]
     feature_label = _FEATURE_LABELS.get(feature, feature)
+    pmf_label = _PMF_LABELS.get(pmf, pmf)
+
+    # Сохраняем промежуточное состояние для шага 3 (текстовый ввод)
+    user_id = callback.from_user.id
+    if len(_survey_pending) >= _SURVEY_PENDING_MAX:
+        # Простая очистка: удаляем первую половину
+        keys = list(_survey_pending.keys())
+        for k in keys[: len(keys) // 2]:
+            del _survey_pending[k]
+    _survey_pending[user_id] = {"pmf": pmf, "feature": feature}
 
     keyboard = InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="✅ Да, буду!",
-                    callback_data=f"survey_cont_yes_{nps}_{feature}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🤔 Пока не уверен",
-                    callback_data=f"survey_cont_maybe_{nps}_{feature}",
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="❌ Нет",
-                    callback_data=f"survey_cont_no_{nps}_{feature}",
+                    text="👍 Всё отлично",
+                    callback_data=f"survey_done_{pmf}_{feature}",
                 )
             ],
         ]
     )
     await callback.message.edit_text(
-        f"Оценка: {'⭐' * nps} | Полезнее всего: {feature_label}\n\n"
-        "Будете пользоваться ботом дальше?",
+        f"{pmf_label} | {feature_label}\n\n"
+        "Что бы вы хотели улучшить в боте?\n"
+        "Напишите текстом или нажмите кнопку:",
         reply_markup=keyboard,
     )
     await callback.answer()
 
 
-@router.callback_query(F.data.startswith("survey_cont_"))
-async def survey_continue_callback(
+@router.callback_query(F.data.startswith("survey_done_"))
+async def survey_done_callback(
     callback: CallbackQuery,
     user_store: UserStore | None = None,
 ) -> None:
-    """Шаг 3: Готовность продолжать → завершение survey, выдача бонуса."""
+    """Шаг 3 (кнопка «Всё отлично»): завершение survey, выдача бонуса."""
     if not callback.data or not callback.message or not callback.from_user:
         return
     if user_store is None:
         await callback.answer("Ошибка сохранения.")
         return
 
-    # survey_cont_<answer>_<nps>_<feature>
+    # survey_done_<pmf>_<feature>
     parts = callback.data.split("_")
-    will_continue = parts[2]  # yes / maybe / no
-    nps = int(parts[3])
-    feature = parts[4]
+    pmf = parts[2]
+    feature = parts[3]
     user_id = callback.from_user.id
-    feature_label = _FEATURE_LABELS.get(feature, feature)
 
-    will_labels = {"yes": "Да", "maybe": "Не уверен", "no": "Нет"}
+    # Убираем из pending
+    _survey_pending.pop(user_id, None)
 
-    # Атомарная проверка: survey ещё не пройден?
-    # Предотвращает race condition при двойном нажатии кнопки.
-    try:
-        was_marked = await user_store.mark_survey_completed_if_not(user_id)
-        if not was_marked:
-            await callback.message.edit_text("Вы уже прошли опрос. Спасибо!")
-            await callback.answer()
-            return
-
-        # Логируем результаты survey
-        await user_store.log_event(
-            user_id,
-            "survey_completed",
-            {
-                "nps": nps,
-                "useful_feature": feature,
-                "will_continue": will_continue,
-            },
-        )
-
-        # Выдаём бонусные корзины
-        from vkuswill_bot.config import config as app_config
-
-        bonus = app_config.bonus_cart_limit
-        new_limit = await user_store.grant_bonus_carts(user_id, bonus)
-        await user_store.log_event(
-            user_id,
-            "bonus_carts_granted",
-            {
-                "reason": "survey",
-                "amount": bonus,
-                "new_limit": new_limit,
-            },
-        )
-    except Exception as e:
-        logger.error("Ошибка сохранения survey для %d: %s", user_id, e)
-        await callback.message.edit_text(
-            "Произошла ошибка при сохранении. Попробуйте позже: /survey"
-        )
-        await callback.answer()
-        return
-
-    await callback.message.edit_text(
-        f"Оценка: {'⭐' * nps} | {feature_label} | "
-        f"{will_labels.get(will_continue, will_continue)}\n\n"
-        "<b>Спасибо за обратную связь!</b>\n\n"
-        f"🎁 Вам добавлено {bonus} корзин. "
-        f"Теперь доступно {new_limit} корзин.\n"
-        "Напишите, что хотите заказать!"
-    )
+    _ok, text = await _finish_survey(user_id, user_store, pmf, feature, None)
+    await callback.message.edit_text(text)
     await callback.answer()
 
 
@@ -533,6 +571,16 @@ async def handle_text(
         return
 
     user_id = message.from_user.id
+
+    # Survey шаг 3: перехватываем текстовый отзыв, если ожидается
+    if user_id in _survey_pending and user_store is not None:
+        pending = _survey_pending.pop(user_id)
+        feedback = message.text[:500]
+        _ok, text = await _finish_survey(
+            user_id, user_store, pending["pmf"], pending["feature"], feedback,
+        )
+        await message.answer(text)
+        return
 
     # Показываем индикатор набора текста во время обработки
     stop_typing = asyncio.Event()
@@ -1002,18 +1050,41 @@ async def cmd_admin_survey_stats(
         await message.answer("Ни один пользователь ещё не прошёл опрос.")
         return
 
-    avg_nps = stats["avg_nps"]
-    answers = "\n".join(f"  {r['answer'] or '—'}: {r['cnt']}" for r in stats["will_continue"])
+    # PMF distribution
+    pmf_lines = "\n".join(
+        f"  {_PMF_LABELS.get(r['answer'], r['answer'] or '—')}: {r['cnt']}"
+        for r in stats["pmf"]
+    )
+
+    # PMF score: % "very disappointed" — ключевая метрика PMF
+    very_count = sum(r["cnt"] for r in stats["pmf"] if r.get("answer") == "very")
+    pmf_score = (very_count / total * 100) if total > 0 else 0
+
+    # Features
     feats = "\n".join(
         f"  {_FEATURE_LABELS.get(r['feat'], r['feat'] or '—')}: {r['cnt']}"
         for r in stats["features"]
     )
 
+    # Feedback
+    fb_count = stats.get("feedback_count", 0)
+    fb_lines = ""
+    for r in stats.get("recent_feedback", [])[:5]:
+        fb_text = r.get("text", "")
+        if fb_text:
+            fb_lines += f"  \u2022 {fb_text[:100]}\n"
+
     text = (
         f"<b>Survey статистика</b>\n\n"
         f"Заполнили: <b>{total}</b>\n"
-        f"Средний NPS: <b>{avg_nps:.1f}</b>/5\n\n"
-        f"Будут пользоваться:\n{answers}\n\n"
+        f"PMF score: <b>{pmf_score:.0f}%</b> (очень расстроятся)\n\n"
+        f"Как расстроятся:\n{pmf_lines}\n\n"
         f"Полезная фича:\n{feats}"
     )
+
+    if fb_count > 0:
+        text += f"\n\nОтзывов: <b>{fb_count}</b>"
+        if fb_lines:
+            text += f"\n\nПоследние:\n{fb_lines}"
+
     await message.answer(text)

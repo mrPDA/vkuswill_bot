@@ -676,32 +676,35 @@ class TestFreemiumSurvey:
     async def test_get_survey_stats(self, store):
         """get_survey_stats возвращает агрегированную статистику."""
         s, conn = store
-        conn.fetchval.side_effect = [42, 4.2]  # total, avg_nps
+        conn.fetchval.side_effect = [42, 5]  # total, feedback_count
         conn.fetch.side_effect = [
-            [{"answer": "yes", "cnt": 30}, {"answer": "maybe", "cnt": 10}],
+            [{"answer": "very", "cnt": 25}, {"answer": "somewhat", "cnt": 15}],
             [{"feat": "search", "cnt": 25}, {"feat": "recipe", "cnt": 15}],
+            [{"text": "Больше рецептов!", "created_at": "2026-02-14"}],
         ]
 
         result = await s.get_survey_stats()
 
         assert result["total"] == 42
-        assert result["avg_nps"] == 4.2
-        assert len(result["will_continue"]) == 2
+        assert len(result["pmf"]) == 2
         assert len(result["features"]) == 2
+        assert result["feedback_count"] == 5
+        assert len(result["recent_feedback"]) == 1
 
     @pytest.mark.asyncio
     async def test_get_survey_stats_empty(self, store):
         """get_survey_stats возвращает нули при отсутствии данных."""
         s, conn = store
-        conn.fetchval.side_effect = [0, None]
-        conn.fetch.side_effect = [[], []]
+        conn.fetchval.side_effect = [0, 0]  # total, feedback_count
+        conn.fetch.side_effect = [[], [], []]  # pmf, features, recent_feedback
 
         result = await s.get_survey_stats()
 
         assert result["total"] == 0
-        assert result["avg_nps"] == 0.0
-        assert result["will_continue"] == []
+        assert result["pmf"] == []
         assert result["features"] == []
+        assert result["feedback_count"] == 0
+        assert result["recent_feedback"] == []
 
 
 # ---------------------------------------------------------------------------
