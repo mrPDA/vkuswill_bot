@@ -19,6 +19,7 @@ class Config(BaseSettings):
     gigachat_model: str = "GigaChat-2-Max"
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_max_concurrent: int = 15  # макс. параллельных запросов к GigaChat
+    gigachat_ca_bundle: str = "certs/russian_ca_bundle.pem"  # CA-bundle Минцифры для SSL
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
