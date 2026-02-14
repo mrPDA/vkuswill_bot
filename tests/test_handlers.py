@@ -577,7 +577,7 @@ class TestCmdStartDeepLink:
         assert metadata["referrer_id"] == 999
 
     async def test_start_invalid_ref(self):
-        """/start ref_abc — невалидный реферальный код, не найден в БД."""
+        """/start ref_abc — невалидный реферальный код, не найден в БД → organic."""
         msg = make_message("/start ref_abc", user_id=42)
         mock_store = AsyncMock()
         mock_store.find_user_by_referral_code.return_value = None
@@ -588,7 +588,7 @@ class TestCmdStartDeepLink:
             c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_start"
         ]
         metadata = bot_start_calls[0][0][2]
-        assert metadata["source"] == "referral"
+        assert metadata["source"] == "organic"
         assert "referrer_id" not in metadata
 
     async def test_start_existing_user(self):
