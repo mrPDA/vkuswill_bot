@@ -121,7 +121,6 @@ async def cmd_start(
     if start_param:
         if start_param.startswith("ref_"):
             ref_value = start_param[4:]
-            source = "referral"
             # Обратная совместимость: ref_<user_id> (число)
             try:
                 referrer_id = int(ref_value)
@@ -132,6 +131,9 @@ async def cmd_start(
                         referrer_id = await user_store.find_user_by_referral_code(
                             ref_value,
                         )
+            # source = "referral" только если реферер найден
+            if referrer_id is not None:
+                source = "referral"
         elif start_param in ("habr", "vc", "telegram"):
             source = start_param
 
@@ -272,7 +274,10 @@ async def cmd_invite(
         return
 
     # Получаем username бота для формирования ссылки
-    bot_info = await message.bot.get_me()  # type: ignore[union-attr]
+    if message.bot is None:
+        await message.answer("Произошла ошибка. Попробуйте позже.")
+        return
+    bot_info = await message.bot.get_me()
     bot_username = bot_info.username
     referral_link = f"https://t.me/{bot_username}?start=ref_{referral_code}"
 
