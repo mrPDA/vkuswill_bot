@@ -49,7 +49,8 @@ loadtests/*.session
 #развитие
 HABR_STRATEGY.md
 articles/
-docs/
+docs/*
+!docs/PRIVACY_POLICY.md
 
 # Shell-скрипты (локальные)
 run.sh
