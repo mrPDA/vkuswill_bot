@@ -166,11 +166,12 @@ class AdminFilter(BaseFilter):
             user_id = message.from_user.id if message.from_user else "?"
             role = db_user.get("role") if db_user else "no_db_user"
             logger.info(
-                "AdminFilter: user=%s role=%s is_admin=%s cmd=%s",
+                "AdminFilter: user=%s role=%s is_admin=%s cmd=%s db_user_keys=%s",
                 user_id,
                 role,
                 is_admin,
                 message.text.split()[0],
+                list(db_user.keys()) if db_user else "None",
             )
         return is_admin
 
@@ -425,6 +426,34 @@ async def cmd_help(message: Message) -> None:
         "/survey — пройти опрос и получить бонусные корзины\n"
         "/privacy — политика конфиденциальности"
     )
+
+
+@router.message(Command("me"))
+async def cmd_me(
+    message: Message,
+    db_user: dict | None = None,
+) -> None:
+    """Диагностика: показать профиль и роль пользователя."""
+    uid = message.from_user.id if message.from_user else "?"
+    if db_user is None:
+        await message.answer(f"user_id={uid}\ndb_user=None (UserStore не подключён)")
+        return
+    role = db_user.get("role", "?")
+    status = db_user.get("status", "?")
+    carts = db_user.get("carts_created", 0)
+    limit = db_user.get("cart_limit", "?")
+    survey = db_user.get("survey_completed", False)
+    consent = db_user.get("consent_given_at")
+    lines = [
+        f"<b>Профиль</b>",
+        f"user_id: <code>{uid}</code>",
+        f"role: <b>{role}</b>",
+        f"status: {status}",
+        f"carts: {carts}/{limit}",
+        f"survey: {'✅' if survey else '❌'}",
+        f"consent: {'✅' if consent else '❌'}",
+    ]
+    await message.answer("\n".join(lines))
 
 
 @router.message(Command("invite"))
