@@ -466,7 +466,7 @@ class TestHandleTextCartButton:
         mock_service.process_message.return_value = (
             "Вот корзина:\n"
             "1. Молоко — 79 руб\n"
-            '<b>Итого: 79 руб</b>\n'
+            "<b>Итого: 79 руб</b>\n"
             '<a href="https://vkusvill.ru/?share_basket=xyz">Открыть корзину</a>'
         )
 
