@@ -5,6 +5,21 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.8.0] — 2026-02-14
+
+### Добавлено
+
+- **Анонимизация ПДн** — прекращена запись `username`, `first_name`, `last_name` в таблицу `users`; для работы бота и поддержки достаточно `user_id`
+- **Миграция 006** — очистка существующих персональных данных в БД (`006_anonymize_pii.sql`)
+- **Скрипт настройки Metabase-дашбордов** — автоматизация создания дашбордов через Metabase API (`scripts/setup_metabase_dashboards.py`)
+
+### Изменено
+
+- **UserStore.get_or_create()** — убраны параметры PII, upsert работает только с `user_id` и `language_code`
+- **UserStore.ensure_admins()** — убрано `first_name = 'Admin'` из INSERT
+- **/admin_user** — убран вывод username/имени, добавлена статистика корзин
+- **Metabase-дашборд** — `user_id` вместо `COALESCE(username, first_name)` в карточке «Топ-пользователи»
+
 ## [0.7.0] — 2026-02-14
 
 ### Добавлено
