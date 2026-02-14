@@ -161,9 +161,7 @@ class AdminFilter(BaseFilter):
 
     async def __call__(self, message: Message, **kwargs: object) -> bool:
         db_user = kwargs.get("db_user")
-        is_admin = (
-            isinstance(db_user, dict) and db_user.get("role") == "admin"
-        )
+        is_admin = isinstance(db_user, dict) and db_user.get("role") == "admin"
         # Логируем ТОЛЬКО для admin-команд — не спамим на обычные сообщения
         if message.text and message.text.startswith("/admin_"):
             user_id = message.from_user.id if message.from_user else "?"
