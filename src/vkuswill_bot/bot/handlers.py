@@ -448,7 +448,7 @@ async def cmd_me(
     survey = db_user.get("survey_completed", False)
     consent = db_user.get("consent_given_at")
     lines = [
-        f"<b>Профиль</b>",
+        "<b>Профиль</b>",
         f"user_id: <code>{uid}</code>",
         f"role: <b>{role}</b>",
         f"status: {status}",
