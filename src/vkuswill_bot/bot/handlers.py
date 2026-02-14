@@ -120,13 +120,21 @@ async def cmd_start(
     referrer_id: int | None = None
     if start_param:
         if start_param.startswith("ref_"):
+            ref_value = start_param[4:]
+            source = "referral"
+            # Обратная совместимость: ref_<user_id> (число)
             try:
-                referrer_id = int(start_param[4:])
-                source = "referral"
+                referrer_id = int(ref_value)
             except ValueError:
-                pass
+                # Новый формат: ref_<referral_code> (строка)
+                if user_store is not None:
+                    with contextlib.suppress(Exception):
+                        referrer_id = await user_store.find_user_by_referral_code(
+                            ref_value,
+                        )
         elif start_param in ("habr", "vc", "telegram"):
             source = start_param
+
     is_new_user = (db_user or {}).get("message_count", 0) <= 1
     metadata: dict = {"source": source, "is_new_user": is_new_user}
     if referrer_id is not None:
@@ -138,6 +146,21 @@ async def cmd_start(
                 "bot_start",
                 metadata,
             )
+
+    # --- Обработка реферала для новых пользователей ---
+    if (
+        referrer_id is not None
+        and is_new_user
+        and user_store is not None
+        and message.from_user is not None
+    ):
+        await _process_referral_start(
+            message,
+            user_store,
+            message.from_user.id,
+            referrer_id,
+        )
+
     await message.answer(
         "<b>Привет! Я бот-помощник ВкусВилл.</b>\n\n"
         "Помогу подобрать продукты и собрать корзину. "
@@ -148,8 +171,63 @@ async def cmd_start(
         "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
         "<b>Команды:</b>\n"
         "/reset — начать новый диалог\n"
+        "/invite — пригласить друга\n"
         "/help — помощь"
     )
+
+
+async def _process_referral_start(
+    message: Message,
+    user_store: UserStore,
+    new_user_id: int,
+    referrer_id: int,
+) -> None:
+    """Обработать реферальную привязку при /start ref_*.
+
+    Начисляет бонус рефереру и отправляет ему уведомление.
+    """
+    from vkuswill_bot.config import config as app_config
+
+    try:
+        result = await user_store.process_referral(
+            new_user_id,
+            referrer_id,
+            app_config.referral_cart_bonus,
+        )
+    except Exception as e:
+        logger.error("Ошибка обработки реферала: %s", e)
+        return
+
+    if not result.get("success"):
+        logger.debug(
+            "Реферал не обработан для %d → %d: %s",
+            new_user_id,
+            referrer_id,
+            result.get("reason"),
+        )
+        return
+
+    # Логируем начисление бонуса
+    with contextlib.suppress(Exception):
+        await user_store.log_event(
+            referrer_id,
+            "referral_bonus_granted",
+            {
+                "referred_user_id": new_user_id,
+                "bonus": result["bonus"],
+                "new_limit": result["new_limit"],
+            },
+        )
+
+    # Уведомляем реферера
+    if message.bot is not None:
+        with contextlib.suppress(Exception):
+            await message.bot.send_message(
+                referrer_id,
+                f"🎉 Ваш друг присоединился к боту!\n\n"
+                f"+{result['bonus']} корзин. "
+                f"Новый лимит: {result['new_limit']}.",
+            )
 
 
 @router.message(Command("help"))
@@ -163,8 +241,63 @@ async def cmd_help(message: Message) -> None:
         "   <b>Любимое</b> — высший рейтинг\n"
         "   <b>Лайт</b> — минимум калорий\n"
         "3. Перейди по ссылке на сайт ВкусВилл для оформления заказа\n\n"
-        "/reset — сбросить историю диалога"
+        "<b>Команды:</b>\n"
+        "/reset — сбросить историю диалога\n"
+        "/invite — пригласить друга и получить бонусные корзины\n"
+        "/survey — пройти опрос и получить бонусные корзины"
     )
+
+
+@router.message(Command("invite"))
+async def cmd_invite(
+    message: Message,
+    user_store: UserStore | None = None,
+    db_user: dict | None = None,
+) -> None:
+    """Обработчик команды /invite — реферальная ссылка."""
+    if not message.from_user or not db_user:
+        return
+    if user_store is None:
+        await message.answer("Функция временно недоступна.")
+        return
+
+    user_id = message.from_user.id
+
+    try:
+        referral_code = await user_store.get_or_create_referral_code(user_id)
+        referral_count = await user_store.count_referrals(user_id)
+    except Exception as e:
+        logger.error("Ошибка получения реферального кода для %d: %s", user_id, e)
+        await message.answer("Произошла ошибка. Попробуйте позже.")
+        return
+
+    # Получаем username бота для формирования ссылки
+    bot_info = await message.bot.get_me()  # type: ignore[union-attr]
+    bot_username = bot_info.username
+    referral_link = f"https://t.me/{bot_username}?start=ref_{referral_code}"
+
+    from vkuswill_bot.config import config as app_config
+
+    bonus = app_config.referral_cart_bonus
+
+    # Информация о текущих корзинах
+    cart_limit = db_user.get("cart_limit", app_config.free_cart_limit)
+    carts_created = db_user.get("carts_created", 0)
+    remaining = max(0, cart_limit - carts_created)
+
+    text = (
+        "<b>👫 Пригласи друга — получи корзины!</b>\n\n"
+        f"За каждого друга, который начнёт пользоваться ботом, "
+        f"вы получите <b>+{bonus} корзины</b>.\n\n"
+        f"🔗 Ваша ссылка для приглашения:\n"
+        f"<code>{referral_link}</code>\n\n"
+    )
+
+    if referral_count > 0:
+        text += f"Приглашено друзей: <b>{referral_count}</b>\n"
+    text += f"Корзин доступно: <b>{remaining}</b> из <b>{cart_limit}</b>"
+
+    await message.answer(text)
 
 
 @router.message(Command("reset"))
