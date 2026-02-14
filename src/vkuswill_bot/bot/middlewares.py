@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Awaitable, Callable
 
 from aiogram import BaseMiddleware
-from aiogram.types import Message
+from aiogram.types import CallbackQuery, Message
 
 if TYPE_CHECKING:
     from vkuswill_bot.services.user_store import UserStore
@@ -52,7 +52,12 @@ class UserMiddleware(BaseMiddleware):
         event: Message,
         data: dict[str, Any],
     ) -> Any:
-        """Обработка входящего сообщения."""
+        """Обработка входящего сообщения или callback query."""
+        # Для callback queries — облегчённый путь: только инъекция db_user.
+        # Не делаем upsert, блокировку, инкремент сообщений.
+        if isinstance(event, CallbackQuery):
+            return await self._handle_callback(handler, event, data)
+
         if not isinstance(event, Message):
             return await handler(event, data)
 
@@ -119,6 +124,33 @@ class UserMiddleware(BaseMiddleware):
             await self._user_store.increment_message_count(tg_user.id)
         except Exception as exc:
             logger.debug("UserMiddleware: ошибка инкремента: %s", exc)
+
+        return await handler(event, data)
+
+    async def _handle_callback(
+        self,
+        handler: Callable,
+        event: CallbackQuery,
+        data: dict[str, Any],
+    ) -> Any:
+        """Облегчённая обработка для callback queries.
+
+        Инъектирует db_user и user_store без upsert и побочных эффектов.
+        Нужно для корректной работы survey-кнопок и consent-кнопки.
+        """
+        tg_user = event.from_user
+        if tg_user is None:
+            return await handler(event, data)
+
+        try:
+            db_user = await self._user_store.get(tg_user.id)
+        except Exception as exc:
+            logger.debug("UserMiddleware(callback): ошибка get для %d: %s", tg_user.id, exc)
+            return await handler(event, data)
+
+        if db_user is not None:
+            data["db_user"] = db_user
+        data["user_store"] = self._user_store
 
         return await handler(event, data)
 
