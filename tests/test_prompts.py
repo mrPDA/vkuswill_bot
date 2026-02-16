@@ -12,6 +12,7 @@ from vkuswill_bot.services.prompts import (
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
     RECIPE_EXTRACTION_PROMPT,
+    RECIPE_SEARCH_TOOL,
     RECIPE_TOOL,
     SYSTEM_PROMPT,
 )
@@ -272,6 +273,28 @@ class TestRecipeExtractionPrompt:
         lower = RECIPE_EXTRACTION_PROMPT.lower()
         assert "кофе молотый" in lower
 
+    def test_has_search_query_good_bad_examples(self):
+        """Промпт содержит примеры хороших и плохих search_query."""
+        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        assert "хорошо" in lower
+        assert "плохо" in lower
+        assert "картофель" in lower
+        assert "картошка клубень" in lower
+
+    def test_has_mandatory_ingredients_checklist(self):
+        """Промпт содержит чеклист обязательных ингредиентов."""
+        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        assert "обязательные ингредиенты" in lower
+        assert "лук репчатый" in lower
+        assert "масло растительное" in lower
+
+    def test_has_exact_spice_names_rule(self):
+        """Промпт запрещает жаргон для специй."""
+        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        assert "точное название" in lower
+        assert "лавровый лист" in lower
+        assert "лаврушка" in lower
+
     def test_no_secrets(self):
         """В промпте рецептов нет секретов."""
         for keyword in ["token", "password", "secret", "api_key"]:
@@ -390,6 +413,29 @@ class TestRecipeTool:
         """Описание инструмента упоминает servings."""
         desc = RECIPE_TOOL["description"]
         assert "servings" in desc.lower()
+
+
+# ============================================================================
+# RECIPE_SEARCH_TOOL
+# ============================================================================
+
+
+class TestRecipeSearchTool:
+    """Тесты описания инструмента recipe_search."""
+
+    def test_tool_name(self):
+        assert RECIPE_SEARCH_TOOL["name"] == "recipe_search"
+
+    def test_required_ingredients(self):
+        params = RECIPE_SEARCH_TOOL["parameters"]
+        assert "ingredients" in params["required"]
+
+    def test_has_ingredients_items_schema(self):
+        items = RECIPE_SEARCH_TOOL["parameters"]["properties"]["ingredients"]["items"]
+        props = items["properties"]
+        assert "search_query" in props
+        assert "quantity" in props
+        assert "unit" in props
 
 
 # ============================================================================

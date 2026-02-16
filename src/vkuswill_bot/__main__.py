@@ -37,6 +37,7 @@ from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.migration_runner import MigrationRunner
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.price_cache import PriceCache, TwoLevelPriceCache
+from vkuswill_bot.services.recipe_search import RecipeSearchService
 from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
 from vkuswill_bot.services.search_processor import SearchProcessor
@@ -323,6 +324,11 @@ async def main() -> None:
     # Процессоры: поиск и корзина (получают PriceCache через DI)
     search_processor = SearchProcessor(price_cache)
     cart_processor = CartProcessor(price_cache)
+    recipe_search_service = RecipeSearchService(
+        mcp_client=mcp_client,
+        search_processor=search_processor,
+        max_concurrency=5,
+    )
 
     # КБЖУ-сервис (Open Food Facts, бесплатный, без API key)
     from vkuswill_bot.services.nutrition_service import NutritionService
@@ -338,6 +344,7 @@ async def main() -> None:
         preferences_store=prefs_store,
         cart_snapshot_store=cart_snapshot_store,
         nutrition_service=nutrition_service,
+        recipe_search_service=recipe_search_service,
         user_store=user_store,
     )
 

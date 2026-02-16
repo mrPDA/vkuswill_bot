@@ -325,6 +325,8 @@ class TestVerifyCart:
         report = await processor.verify_cart(args, search_log)
 
         assert report.get("ok") is True
+        assert "message" in report
+        assert "полностью соответствует запросу" in report["message"]
         assert len(report["matched"]) == 2
         assert report["missing_queries"] == []
         assert report["unmatched_items"] == []
