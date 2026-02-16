@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import math
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.search_processor import SEARCH_LIMIT, SearchProcessor
@@ -58,7 +61,11 @@ class RecipeSearchService:
         self._search_processor = search_processor
         self._max_concurrency = max(1, max_concurrency)
 
-    async def search_ingredients(self, ingredients: list[dict]) -> str:
+    async def search_ingredients(
+        self,
+        ingredients: list[dict],
+        on_found: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> str:
         """Найти товары для всех ингредиентов рецепта параллельно."""
         if not isinstance(ingredients, list) or not ingredients:
             return json.dumps(
@@ -67,7 +74,7 @@ class RecipeSearchService:
             )
 
         sem = asyncio.Semaphore(self._max_concurrency)
-        tasks = [self._search_one(ingredient, sem) for ingredient in ingredients]
+        tasks = [self._search_one(ingredient, sem, on_found=on_found) for ingredient in ingredients]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results: list[dict] = []
@@ -108,11 +115,19 @@ class RecipeSearchService:
             ensure_ascii=False,
         )
 
-    async def _search_one(self, ingredient: dict, sem: asyncio.Semaphore) -> dict:
+    async def _search_one(
+        self,
+        ingredient: dict,
+        sem: asyncio.Semaphore,
+        on_found: Callable[[], Coroutine[Any, Any, None]] | None = None,
+    ) -> dict:
         query = str(ingredient.get("search_query", "")).strip()
         ingredient_name = ingredient.get("name", query)
 
         if not query:
+            if on_found:
+                with contextlib.suppress(Exception):
+                    await on_found()
             return {
                 "result": {
                     "ingredient": ingredient_name,
@@ -173,6 +188,11 @@ class RecipeSearchService:
         warning = data.get("data", {}).get("relevance_warning")
         if warning:
             result["relevance_warning"] = warning
+
+        if on_found:
+            with contextlib.suppress(Exception):
+                await on_found()
+
         return {"result": result, "found_ids": found_ids}
 
     async def _to_match(self, item: dict, ingredient: dict) -> dict:

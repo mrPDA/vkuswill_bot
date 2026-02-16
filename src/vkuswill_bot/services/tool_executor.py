@@ -12,7 +12,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import TYPE_CHECKING
+from collections.abc import Callable, Coroutine
+from typing import TYPE_CHECKING, Any
 
 from gigachat.models import Messages, MessagesRole
 
@@ -297,6 +298,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         user_id: int,
+        on_ingredient_found: (Callable[[], Coroutine[Any, Any, None]] | None) = None,
     ) -> str:
         """Выполнить вызов инструмента (локальный или MCP) с обработкой ошибок.
 
@@ -366,7 +368,12 @@ class ToolExecutor:
 
         try:
             if tool_name in LOCAL_TOOL_NAMES:
-                return await self._call_local_tool(tool_name, args, user_id)
+                return await self._call_local_tool(
+                    tool_name,
+                    args,
+                    user_id,
+                    on_ingredient_found=on_ingredient_found,
+                )
             return await self._mcp_client.call_tool(tool_name, args)
         except Exception as e:
             logger.error("Ошибка %s: %s", tool_name, e, exc_info=True)
@@ -693,6 +700,7 @@ class ToolExecutor:
         tool_name: str,
         args: dict,
         user_id: int,
+        on_ingredient_found: (Callable[[], Coroutine[Any, Any, None]] | None) = None,
     ) -> str:
         """Выполнить локальный инструмент (предпочтения, корзина).
 
@@ -718,7 +726,10 @@ class ToolExecutor:
                     {"ok": False, "error": "Не указан массив ingredients"},
                     ensure_ascii=False,
                 )
-            return await self._recipe_search_service.search_ingredients(ingredients)
+            return await self._recipe_search_service.search_ingredients(
+                ingredients,
+                on_found=on_ingredient_found,
+            )
 
         if tool_name == "nutrition_lookup":
             if self._nutrition_service is None:
