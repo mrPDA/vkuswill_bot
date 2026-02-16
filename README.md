@@ -215,8 +215,6 @@ git push origin feature/amazing-feature
 - [ ] Поддержка других магазинов через MCP
 - [ ] Telegram Mini App для управления корзиной
 
-Полный roadmap — в [docs/ROADMAP.md](docs/ROADMAP.md).
-
 ---
 
 ## Лицензия
@@ -231,4 +229,4 @@ git push origin feature/amazing-feature
 - **Issues** — [GitHub Issues](https://github.com/mrPDA/vkuswill_bot/issues)
 - **Discussions** — [GitHub Discussions](https://github.com/mrPDA/vkuswill_bot/discussions)
 
-Нашли уязвимость? **Не создавайте публичный issue** — напишите на [security@example.com](mailto:security@example.com).
+Нашли уязвимость? **Не создавайте публичный issue** — напишите на [d.pukinov@yandex.ru](mailto:d.pukinov@yandex.ru).
