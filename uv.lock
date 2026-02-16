@@ -2702,7 +2702,7 @@ wheels = [
 
 [[package]]
 name = "vkuswill-bot"
-version = "0.10.1"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiogram" },

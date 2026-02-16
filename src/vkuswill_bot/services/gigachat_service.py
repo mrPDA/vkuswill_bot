@@ -27,6 +27,7 @@ from vkuswill_bot.services.prompts import (
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
     NUTRITION_TOOL,
+    RECIPE_SEARCH_TOOL,
     RECIPE_TOOL,
 )
 from vkuswill_bot.services.recipe_service import RecipeService
@@ -78,6 +79,7 @@ class GigaChatService:
 
     # Описания инструментов (определены в prompts.py)
     _RECIPE_TOOL = RECIPE_TOOL
+    _RECIPE_SEARCH_TOOL = RECIPE_SEARCH_TOOL
     _LOCAL_TOOLS = LOCAL_TOOLS
     _CART_PREVIOUS_TOOL = CART_PREVIOUS_TOOL
     _NUTRITION_TOOL = NUTRITION_TOOL
@@ -199,6 +201,7 @@ class GigaChatService:
             self._functions.extend(self._LOCAL_TOOLS)
         if self._recipe_store is not None:
             self._functions.append(self._RECIPE_TOOL)
+            self._functions.append(self._RECIPE_SEARCH_TOOL)
         # Инструмент получения предыдущей корзины (всегда доступен)
         self._functions.append(self._CART_PREVIOUS_TOOL)
         # КБЖУ через Open Food Facts (всегда доступен, без API key)
@@ -390,6 +393,21 @@ class GigaChatService:
         max_consecutive_skips = 3  # порог для принудительного текстового ответа
         cart_hint_injected = False  # флаг: подсказка о корзине уже вставлена
         cart_created = False  # флаг: корзина успешно создана → следующий шаг текстовый
+        cart_success_hint_injected = False  # флаг: анти-галлюцинационный хинт после корзины
+        recipe_mode = False
+        recipe_search_used = False
+        recipe_search_fallback = False
+        recipe_ingredient_count = 0
+        recipe_not_found_count = 0
+
+        def _recipe_meta() -> dict[str, Any]:
+            return {
+                "recipe_mode": recipe_mode,
+                "recipe_search_used": recipe_search_used,
+                "recipe_search_fallback": recipe_search_fallback,
+                "recipe_ingredient_count": recipe_ingredient_count,
+                "recipe_not_found_count": recipe_not_found_count,
+            }
 
         while real_calls < self._max_tool_calls and total_steps < max_total_steps:
             total_steps += 1
@@ -419,6 +437,20 @@ class GigaChatService:
             # После успешного создания корзины — принудительный текстовый ответ,
             # чтобы модель не продолжала цикл с товарами из предыдущих запросов.
             if cart_created:
+                if not cart_success_hint_injected:
+                    history.append(
+                        Messages(
+                            role=MessagesRole.USER,
+                            content=(
+                                "[Системная подсказка] Корзина успешно создана. "
+                                "Сформируй финальный ответ пользователю: "
+                                "вступление, список из price_summary.items, "
+                                "итог из total_text, ссылка и дисклеймер. "
+                                "НЕ извиняйся, НЕ пересобирай корзину."
+                            ),
+                        )
+                    )
+                    cart_success_hint_injected = True
                 force_text = True
 
             if force_text:
@@ -451,6 +483,7 @@ class GigaChatService:
                     "real_calls": real_calls,
                     "consecutive_skips": consecutive_skips,
                     "force_text": force_text,
+                    **_recipe_meta(),
                 },
             )
 
@@ -467,7 +500,7 @@ class GigaChatService:
                     level="ERROR",
                     status_message="GigaChat API error",
                 )
-                trace.update(output=ERROR_GIGACHAT, metadata={"error": str(e)})
+                trace.update(output=ERROR_GIGACHAT, metadata={"error": str(e), **_recipe_meta()})
                 return ERROR_GIGACHAT
 
             msg = response.choices[0].message
@@ -501,6 +534,7 @@ class GigaChatService:
                         "total_steps": total_steps,
                         "tool_calls": real_calls,
                         "consecutive_skips_at_end": consecutive_skips,
+                        **_recipe_meta(),
                     },
                 )
                 return final_text
@@ -542,9 +576,35 @@ class GigaChatService:
                 user_id=user_id,
             )
 
+            # ── Recipe метаданные для Langfuse ──
+            if tool_name == "recipe_ingredients":
+                recipe_mode = True
+                try:
+                    recipe_data = json.loads(result)
+                    ingredients = recipe_data.get("ingredients", [])
+                    if isinstance(ingredients, list):
+                        recipe_ingredient_count = max(recipe_ingredient_count, len(ingredients))
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            elif tool_name == "recipe_search":
+                recipe_mode = True
+                recipe_search_used = True
+                try:
+                    recipe_search_data = json.loads(result)
+                    not_found = recipe_search_data.get("not_found", [])
+                    if isinstance(not_found, list):
+                        recipe_not_found_count = max(recipe_not_found_count, len(not_found))
+                    if not recipe_search_data.get("ok", False):
+                        recipe_search_fallback = True
+                except (json.JSONDecodeError, TypeError):
+                    recipe_search_fallback = True
+            elif tool_name == "vkusvill_products_search" and recipe_mode:
+                # Поингредиентный поиск в recipe-сценарии = fallback path.
+                recipe_search_fallback = True
+
             tool_span.end(
                 output=result[:MAX_RESULT_LOG_LENGTH],
-                metadata={"full_length": len(result)},
+                metadata={"full_length": len(result), **_recipe_meta()},
             )
 
             call_tracker.record_result(tool_name, args, result)
@@ -574,6 +634,7 @@ class GigaChatService:
                 "total_steps": total_steps,
                 "tool_calls": real_calls,
                 "error": "too_many_steps",
+                **_recipe_meta(),
             },
         )
         return ERROR_TOO_MANY_STEPS

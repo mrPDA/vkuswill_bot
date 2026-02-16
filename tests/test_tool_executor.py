@@ -74,12 +74,37 @@ def mock_prefs_store() -> AsyncMock:
 
 
 @pytest.fixture
+def mock_recipe_search_service() -> AsyncMock:
+    service = AsyncMock()
+    service.search_ingredients.return_value = json.dumps(
+        {"ok": True, "results": [], "not_found": [], "search_log": {}},
+        ensure_ascii=False,
+    )
+    return service
+
+
+@pytest.fixture
 def executor(mock_mcp_client, search_processor, cart_processor) -> ToolExecutor:
     """ToolExecutor без хранилища предпочтений."""
     return ToolExecutor(
         mcp_client=mock_mcp_client,
         search_processor=search_processor,
         cart_processor=cart_processor,
+    )
+
+
+@pytest.fixture
+def executor_with_recipe_search(
+    mock_mcp_client,
+    search_processor,
+    cart_processor,
+    mock_recipe_search_service,
+) -> ToolExecutor:
+    return ToolExecutor(
+        mcp_client=mock_mcp_client,
+        search_processor=search_processor,
+        cart_processor=cart_processor,
+        recipe_search_service=mock_recipe_search_service,
     )
 
 
@@ -640,6 +665,30 @@ class TestPostprocessResult:
         assert "старое" not in user_prefs
         assert user_prefs == {"новое": "значение"}
 
+    async def test_recipe_search_updates_search_log(self, executor):
+        """recipe_search синхронизирует search_log из поля search_log."""
+        result = json.dumps(
+            {
+                "ok": True,
+                "results": [],
+                "not_found": [],
+                "search_log": {"морковь": [100, 101], "лук": [200]},
+            },
+            ensure_ascii=False,
+        )
+        search_log: dict[str, set[int]] = {}
+
+        await executor.postprocess_result(
+            "recipe_search",
+            {},
+            result,
+            {},
+            search_log,
+        )
+
+        assert search_log["морковь"] == {100, 101}
+        assert search_log["лук"] == {200}
+
 
 # ============================================================================
 # _call_local_tool
@@ -714,6 +763,29 @@ class TestCallLocalTool:
         parsed = json.loads(result)
         assert parsed["ok"] is False
         assert "не настроен" in parsed["error"]
+
+    async def test_recipe_search_without_service_returns_error(self, executor):
+        result = await executor._call_local_tool(
+            "recipe_search",
+            {"ingredients": []},
+            user_id=42,
+        )
+        parsed = json.loads(result)
+        assert parsed["ok"] is False
+        assert "не настроен" in parsed["error"]
+
+    async def test_recipe_search_calls_service(
+        self,
+        executor_with_recipe_search,
+        mock_recipe_search_service,
+    ):
+        payload = [{"name": "лук", "search_query": "лук репчатый", "quantity": 2, "unit": "шт"}]
+        await executor_with_recipe_search._call_local_tool(
+            "recipe_search",
+            {"ingredients": payload},
+            user_id=42,
+        )
+        mock_recipe_search_service.search_ingredients.assert_called_once_with(payload)
 
     async def test_set_missing_preference(self, executor_with_prefs):
         """set без предпочтения возвращает ошибку."""
