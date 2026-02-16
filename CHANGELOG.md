@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.15.1] — 2026-02-16
+
+### Добавлено
+
+- **Админ-команда `/admin_cart_feedback`** — сводная статистика по обратной связи корзин: всего оценок, позитивных/негативных, satisfaction %, причины негатива, последние негативные отзывы
+- **`UserStore.get_cart_feedback_stats()`** — агрегированные SQL-запросы по `user_events` с `event_type = 'cart_feedback'`
+
 ## [0.15.0] — 2026-02-16
 
 ### Добавлено
