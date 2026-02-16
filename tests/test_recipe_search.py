@@ -341,6 +341,88 @@ class TestRecipeSearchService:
         # ceil(450/70) = 7, но cap = 5
         assert parsed["results"][0]["best_match"]["suggested_q"] == 5
 
+    async def test_non_food_items_deprioritized(self, service, mock_mcp_client):
+        """Семена, рассада и прочий нон-фуд уходят в конец списка."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "свекла",
+            [
+                {
+                    "xml_id": 900,
+                    "name": 'Семена "Свекла Мулатка"',
+                    "price": {"current": 28},
+                    "unit": "шт",
+                },
+                {
+                    "xml_id": 901,
+                    "name": "Свекла",
+                    "price": {"current": 39},
+                    "unit": "кг",
+                },
+                {
+                    "xml_id": 902,
+                    "name": "Рассада свеклы",
+                    "price": {"current": 50},
+                    "unit": "шт",
+                },
+            ],
+        )
+        ingredients = [
+            {
+                "name": "свёкла",
+                "search_query": "свекла",
+                "quantity": 3,
+                "unit": "шт",
+                "kg_equivalent": 0.75,
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        # best_match — настоящая свекла (кг), а не семена
+        assert parsed["results"][0]["best_match"]["xml_id"] == 901
+        assert parsed["results"][0]["best_match"]["name"] == "Свекла"
+        # Семена и рассада в alternatives, после свеклы
+        alt_ids = [a["xml_id"] for a in parsed["results"][0]["alternatives"]]
+        assert 900 in alt_ids
+        assert 902 in alt_ids
+
+    async def test_non_food_filter_preserves_when_all_non_food(
+        self,
+        service,
+        mock_mcp_client,
+    ):
+        """Если ВСЕ товары нон-фуд — вернуть исходный порядок."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "свекла",
+            [
+                {
+                    "xml_id": 910,
+                    "name": 'Семена "Свекла Мулатка"',
+                    "price": {"current": 28},
+                    "unit": "шт",
+                },
+                {
+                    "xml_id": 911,
+                    "name": "Семена свеклы Бордо",
+                    "price": {"current": 35},
+                    "unit": "шт",
+                },
+            ],
+        )
+        ingredients = [
+            {
+                "name": "свёкла",
+                "search_query": "свекла",
+                "quantity": 3,
+                "unit": "шт",
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        # Все нон-фуд → оригинальный порядок (первый остаётся первым)
+        assert parsed["results"][0]["best_match"]["xml_id"] == 910
+
     async def test_partial_errors_do_not_break_batch(self, service, mock_mcp_client):
         mock_mcp_client.call_tool.side_effect = [
             RuntimeError("mcp unavailable"),
