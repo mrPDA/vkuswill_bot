@@ -9,7 +9,7 @@
 
 Использование:
     python scripts/setup_metabase_dashboards.py \
-        --url http://YOUR_SERVER_IP:3001 \
+        --url http://localhost:3001 \
         --email admin@example.com \
         --password secret
 """
@@ -617,7 +617,7 @@ def setup_dashboards(url: str, email: str, password: str, only: str | None = Non
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Setup Metabase dashboards for VkusVill Bot")
-    parser.add_argument("--url", default="http://YOUR_SERVER_IP:3001", help="Metabase URL")
+    parser.add_argument("--url", default="http://localhost:3001", help="Metabase URL")
     parser.add_argument("--email", required=True, help="Metabase admin email")
     parser.add_argument("--password", required=True, help="Metabase admin password")
     parser.add_argument("--only", choices=["overview", "funnel", "traffic", "survey"],

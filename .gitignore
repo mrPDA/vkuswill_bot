@@ -63,3 +63,5 @@ infra/*.tfvars
 !infra/terraform.tfvars.example
 infra/backend.conf
 infra/*.json
+infra/tfplan
+infra/*.tfplan
