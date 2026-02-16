@@ -5,6 +5,21 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.14.0] — 2026-02-16
+
+### Добавлено
+
+- **Пакетный поиск ингредиентов (RecipeSearchService)** — новый сервис для параллельного поиска всех ингредиентов рецепта одним tool-вызовом вместо последовательных запросов; `asyncio.Semaphore(5)` для контроля конкурентности, автоматическое кэширование цен и синхронизация `search_log`
+- **Anti-hallucination hint** — системная подсказка GigaChat после успешного создания корзины (`MessagesRole.USER`) с флагом `cart_success_hint_injected` для предотвращения дублирования; бот больше не «галлюцинирует» извинения после первой удачной корзины
+- **kg_equivalent в RECIPE_EXTRACTION_PROMPT** — обязательное поле приблизительного веса ингредиента в кг для нестандартных единиц (зубчик, ст.л., ч.л., пучок); улучшает расчёт `suggested_q` в RecipeSearchService
+- **Позитивный verify_cart** — отчёт проверки корзины содержит явное «Все позиции найдены» при полном совпадении
+- **Observability для рецептов** — метрики `recipe_mode`, `recipe_search_used`, `recipe_search_count` в Langfuse
+
+### Изменено
+
+- **Улучшенный RECIPE_EXTRACTION_PROMPT** — лучшие search_query (1-2 слова как в магазине), обязательный kg_equivalent с примерами пересчёта
+- **ToolExecutor** — маршрутизация нового инструмента `recipe_search`, синхронизация search_log из batch-результатов
+
 ## [0.13.0] — 2026-02-16
 
 ### Добавлено
