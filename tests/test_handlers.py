@@ -20,6 +20,9 @@ from vkuswill_bot.bot.handlers import (
     _send_typing_periodically,
     _split_message,
     _survey_pending,
+    cart_feedback_negative,
+    cart_feedback_positive,
+    cart_feedback_reason,
     cmd_help,
     cmd_privacy,
     cmd_reset,
@@ -1354,3 +1357,193 @@ class TestHandleTextErrorLogging:
 
         msg.answer.assert_called_once()
         assert "ошибка" in msg.answer.call_args[0][0].lower()
+
+
+# ============================================================================
+# Фидбек-кнопки по корзине
+# ============================================================================
+
+
+def _make_cart_callback(
+    data: str,
+    user_id: int = 42,
+    cart_url: str = "https://vkusvill.ru/cart/abc123",
+) -> MagicMock:
+    """Создать мок CallbackQuery с reply_markup, содержащим cart_url."""
+    from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+
+    callback = MagicMock()
+    callback.data = data
+    callback.from_user = MagicMock()
+    callback.from_user.id = user_id
+    callback.message = MagicMock()
+    callback.message.edit_reply_markup = AsyncMock()
+    callback.message.edit_text = AsyncMock()
+    callback.message.reply_markup = InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="Открыть корзину", url=cart_url)],
+            [
+                InlineKeyboardButton(text="👍", callback_data="cart_fb_pos"),
+                InlineKeyboardButton(text="👎", callback_data="cart_fb_neg"),
+            ],
+        ],
+    )
+    callback.answer = AsyncMock()
+    return callback
+
+
+class TestCartFeedbackPositive:
+    """Тесты положительного фидбека по корзине."""
+
+    async def test_logs_positive_feedback(self):
+        """cart_fb_pos → log_event(cart_feedback, positive)."""
+        callback = _make_cart_callback("cart_fb_pos")
+        mock_store = AsyncMock()
+
+        await cart_feedback_positive(callback, user_store=mock_store)
+
+        mock_store.log_event.assert_called_once()
+        args = mock_store.log_event.call_args[0]
+        assert args[0] == 42
+        assert args[1] == "cart_feedback"
+        assert args[2]["rating"] == "positive"
+        assert "vkusvill.ru" in args[2]["cart_link"]
+
+    async def test_edits_reply_markup(self):
+        """После 👍 убираются кнопки фидбека."""
+        callback = _make_cart_callback("cart_fb_pos")
+        mock_store = AsyncMock()
+
+        await cart_feedback_positive(callback, user_store=mock_store)
+
+        callback.message.edit_reply_markup.assert_called_once()
+        new_markup = callback.message.edit_reply_markup.call_args[1]["reply_markup"]
+        # Должна остаться только одна кнопка — корзина
+        assert len(new_markup.inline_keyboard) == 1
+        assert new_markup.inline_keyboard[0][0].url is not None
+
+    async def test_answers_callback(self):
+        """После 👍 вызывается callback.answer."""
+        callback = _make_cart_callback("cart_fb_pos")
+
+        await cart_feedback_positive(callback, user_store=None)
+
+        callback.answer.assert_called_once()
+
+    async def test_works_without_user_store(self):
+        """Без user_store не падает."""
+        callback = _make_cart_callback("cart_fb_pos")
+
+        await cart_feedback_positive(callback, user_store=None)
+
+        callback.answer.assert_called_once()
+
+
+class TestCartFeedbackNegative:
+    """Тесты негативного фидбека — уточняющие причины."""
+
+    async def test_shows_reason_buttons(self):
+        """cart_fb_neg → клавиатура с причинами."""
+        callback = _make_cart_callback("cart_fb_neg")
+
+        await cart_feedback_negative(callback)
+
+        callback.message.edit_reply_markup.assert_called_once()
+        new_markup = callback.message.edit_reply_markup.call_args[1]["reply_markup"]
+        # Первый ряд — корзина, потом 2 ряда причин
+        assert len(new_markup.inline_keyboard) == 3
+        # Проверяем что есть кнопки причин
+        all_data = [
+            btn.callback_data
+            for row in new_markup.inline_keyboard
+            for btn in row
+            if btn.callback_data
+        ]
+        assert "cart_fb_r_products" in all_data
+        assert "cart_fb_r_quantity" in all_data
+        assert "cart_fb_r_price" in all_data
+        assert "cart_fb_r_other" in all_data
+
+    async def test_answers_callback(self):
+        """Вызывается callback.answer после нажатия 👎."""
+        callback = _make_cart_callback("cart_fb_neg")
+
+        await cart_feedback_negative(callback)
+
+        callback.answer.assert_called_once()
+
+
+class TestCartFeedbackReason:
+    """Тесты выбора конкретной причины."""
+
+    async def test_logs_reason_products(self):
+        """cart_fb_r_products → log_event(negative, Не те товары)."""
+        callback = _make_cart_callback("cart_fb_r_products")
+        mock_store = AsyncMock()
+
+        await cart_feedback_reason(callback, user_store=mock_store)
+
+        mock_store.log_event.assert_called_once()
+        args = mock_store.log_event.call_args[0]
+        assert args[1] == "cart_feedback"
+        assert args[2]["rating"] == "negative"
+        assert args[2]["reason"] == "Не те товары"
+
+    async def test_logs_reason_quantity(self):
+        """cart_fb_r_quantity → log_event(negative, Количество)."""
+        callback = _make_cart_callback("cart_fb_r_quantity")
+        mock_store = AsyncMock()
+
+        await cart_feedback_reason(callback, user_store=mock_store)
+
+        args = mock_store.log_event.call_args[0]
+        assert args[2]["reason"] == "Неправильное количество"
+
+    async def test_logs_reason_price(self):
+        """cart_fb_r_price → log_event(negative, Дорого)."""
+        callback = _make_cart_callback("cart_fb_r_price")
+        mock_store = AsyncMock()
+
+        await cart_feedback_reason(callback, user_store=mock_store)
+
+        args = mock_store.log_event.call_args[0]
+        assert args[2]["reason"] == "Слишком дорого"
+
+    async def test_edits_markup_to_cart_only(self):
+        """После выбора причины остаётся только кнопка корзины."""
+        callback = _make_cart_callback("cart_fb_r_other")
+        mock_store = AsyncMock()
+
+        await cart_feedback_reason(callback, user_store=mock_store)
+
+        callback.message.edit_reply_markup.assert_called_once()
+        new_markup = callback.message.edit_reply_markup.call_args[1]["reply_markup"]
+        assert len(new_markup.inline_keyboard) == 1
+
+    async def test_works_without_user_store(self):
+        """Без user_store не падает."""
+        callback = _make_cart_callback("cart_fb_r_price")
+
+        await cart_feedback_reason(callback, user_store=None)
+
+        callback.answer.assert_called_once()
+
+
+class TestExtractCartLinkWithFeedback:
+    """Тесты _extract_cart_link с кнопками фидбека."""
+
+    def test_includes_feedback_buttons(self):
+        """Keyboard содержит кнопки фидбека."""
+        html = 'Корзина готова! <a href="https://vkusvill.ru/cart/1">Открыть корзину</a>'
+        _text, keyboard = _extract_cart_link(html)
+        assert keyboard is not None
+        # 2 ряда: корзина + фидбек
+        assert len(keyboard.inline_keyboard) == 2
+        fb_row = keyboard.inline_keyboard[1]
+        assert fb_row[0].callback_data == "cart_fb_pos"
+        assert fb_row[1].callback_data == "cart_fb_neg"
+
+    def test_no_feedback_without_cart(self):
+        """Без ссылки на корзину — keyboard=None."""
+        _text, keyboard = _extract_cart_link("Просто текст")
+        assert keyboard is None
