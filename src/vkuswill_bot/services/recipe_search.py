@@ -32,6 +32,22 @@ class RecipeSearchService:
     )
     _MAX_DISCRETE_Q = 5
 
+    # Слова в названии товара, указывающие на нерелевантный
+    # для рецептов ассортимент (семена, рассада, корм и т.д.).
+    _NON_FOOD_KEYWORDS = (
+        "семена",
+        "семя",
+        "рассада",
+        "саженц",
+        "саженец",
+        "грунт",
+        "удобрени",
+        "корм для",
+        "наполнитель",
+        "горшок",
+        "кашпо",
+    )
+
     def __init__(
         self,
         mcp_client: VkusvillMCPClient,
@@ -140,10 +156,11 @@ class RecipeSearchService:
         best_match = None
         alternatives: list[dict] = []
         if items:
-            best_match = await self._to_match(items[0], ingredient)
+            food_items = self._deprioritize_non_food(items)
+            best_match = await self._to_match(food_items[0], ingredient)
             alternatives = [
                 await self._to_match(item, ingredient)
-                for item in items[1:4]
+                for item in food_items[1:4]
                 if isinstance(item, dict)
             ]
 
@@ -236,6 +253,25 @@ class RecipeSearchService:
         if quantity <= 0:
             return 1
         return round(quantity, 3)
+
+    @classmethod
+    def _deprioritize_non_food(cls, items: list[dict]) -> list[dict]:
+        """Переместить нерелевантные товары (семена, рассада) в конец.
+
+        Если ВСЕ товары нерелевантные — вернуть исходный порядок
+        (лучше показать хоть что-то).
+        """
+        food: list[dict] = []
+        non_food: list[dict] = []
+        for item in items:
+            name_lower = str(item.get("name", "")).lower()
+            if any(kw in name_lower for kw in cls._NON_FOOD_KEYWORDS):
+                non_food.append(item)
+            else:
+                food.append(item)
+        if not food:
+            return items
+        return food + non_food
 
     @staticmethod
     def _as_float(value: object) -> float | None:
