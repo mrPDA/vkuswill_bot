@@ -1,6 +1,6 @@
 [project]
 name = "vkuswill-bot"
-version = "0.15.1"
+version = "0.16.0"
 description = "Telegram-бот для заказа продуктов из ВкусВилл с GigaChat и MCP"
 license = "Apache-2.0"
 requires-python = ">=3.11"
