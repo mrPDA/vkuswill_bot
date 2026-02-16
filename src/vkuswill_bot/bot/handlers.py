@@ -1017,10 +1017,31 @@ async def handle_text(
 
     # Показываем индикатор набора текста во время обработки
     stop_typing = asyncio.Event()
-    typing_task = asyncio.create_task(_send_typing_periodically(message, stop_typing))
+    typing_task = asyncio.create_task(
+        _send_typing_periodically(message, stop_typing),
+    )
+
+    # Прогресс-сообщение: создаём и обновляем по мере выполнения
+    progress_msg: Message | None = None
+    _last_progress_text = ""
+
+    async def _on_progress(text: str) -> None:
+        nonlocal progress_msg, _last_progress_text
+        if text == _last_progress_text:
+            return
+        _last_progress_text = text
+        with contextlib.suppress(Exception):
+            if progress_msg is None:
+                progress_msg = await message.answer(text)
+            else:
+                await progress_msg.edit_text(text)
 
     try:
-        response = await gigachat_service.process_message(user_id, message.text)
+        response = await gigachat_service.process_message(
+            user_id,
+            message.text,
+            on_progress=_on_progress,
+        )
     except Exception as e:
         logger.error(
             "Ошибка обработки сообщения пользователя %d: %s",
@@ -1046,6 +1067,10 @@ async def handle_text(
         typing_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await typing_task
+        # Удаляем прогресс-сообщение перед отправкой ответа
+        if progress_msg is not None:
+            with contextlib.suppress(Exception):
+                await progress_msg.delete()
 
     # Санитизация: пропускаем только Telegram-безопасные HTML-теги,
     # экранируем опасные (script, img, iframe и пр.)

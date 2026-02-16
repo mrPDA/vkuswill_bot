@@ -11,7 +11,7 @@
 """
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 
 from vkuswill_bot.bot.handlers import (
@@ -174,7 +174,11 @@ class TestHandleText:
 
         await handle_text(msg, gigachat_service=mock_service)
 
-        mock_service.process_message.assert_called_once_with(1, "Хочу молоко")
+        mock_service.process_message.assert_called_once_with(
+            1,
+            "Хочу молоко",
+            on_progress=ANY,
+        )
         msg.answer.assert_called_once_with("Вот молоко за 79 руб!", reply_markup=None)
 
     async def test_long_response_split(self):
@@ -1087,7 +1091,11 @@ class TestSurveyFlow:
         await handle_text(msg, gigachat_service=mock_service, user_store=None)
 
         # Теперь GigaChat вызван нормально
-        mock_service.process_message.assert_called_once_with(42, "Хочу купить молоко")
+        mock_service.process_message.assert_called_once_with(
+            42,
+            "Хочу купить молоко",
+            on_progress=ANY,
+        )
 
     async def test_text_without_pending_goes_to_gigachat(self):
         """Обычный текст (без pending) обрабатывается GigaChat."""
@@ -1099,7 +1107,11 @@ class TestSurveyFlow:
 
         await handle_text(msg, gigachat_service=mock_service, user_store=None)
 
-        mock_service.process_message.assert_called_once_with(42, "Хочу купить молоко")
+        mock_service.process_message.assert_called_once_with(
+            42,
+            "Хочу купить молоко",
+            on_progress=ANY,
+        )
 
 
 # ============================================================================

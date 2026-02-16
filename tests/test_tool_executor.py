@@ -785,7 +785,10 @@ class TestCallLocalTool:
             {"ingredients": payload},
             user_id=42,
         )
-        mock_recipe_search_service.search_ingredients.assert_called_once_with(payload)
+        mock_recipe_search_service.search_ingredients.assert_called_once_with(
+            payload,
+            on_found=None,
+        )
 
     async def test_set_missing_preference(self, executor_with_prefs):
         """set без предпочтения возвращает ошибку."""

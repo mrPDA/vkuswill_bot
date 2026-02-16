@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 from collections import OrderedDict
+from collections.abc import Callable, Coroutine
 from typing import TYPE_CHECKING, Any
 
 from gigachat import GigaChat
@@ -39,6 +41,9 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
 logger = logging.getLogger(__name__)
+
+# Callback для обновления прогресса (async, принимает текст статуса)
+ProgressCallback = Callable[[str], Coroutine[Any, Any, None]]
 
 # Лимит длины входящего сообщения пользователя (символы)
 MAX_USER_MESSAGE_LENGTH = 4096
@@ -261,7 +266,12 @@ class GigaChatService:
         except Exception as e:
             logger.debug("Ошибка при закрытии GigaChat клиента: %s", e)
 
-    async def process_message(self, user_id: int, text: str) -> str:
+    async def process_message(
+        self,
+        user_id: int,
+        text: str,
+        on_progress: ProgressCallback | None = None,
+    ) -> str:
         """Обработать сообщение пользователя (цикл function calling)."""
         if len(text) > MAX_USER_MESSAGE_LENGTH:
             logger.warning(
@@ -272,7 +282,11 @@ class GigaChatService:
             )
             text = text[:MAX_USER_MESSAGE_LENGTH]
         async with self._dialog_manager.get_lock(user_id):
-            return await self._process_message_locked(user_id, text)
+            return await self._process_message_locked(
+                user_id,
+                text,
+                on_progress=on_progress,
+            )
 
     async def _call_gigachat(
         self,
@@ -359,7 +373,13 @@ class GigaChatService:
         exc_str = str(exc).lower()
         return "429" in exc_str or "rate limit" in exc_str or "too many" in exc_str
 
-    async def _process_message_locked(self, user_id: int, text: str) -> str:
+    async def _process_message_locked(
+        self,
+        user_id: int,
+        text: str,
+        *,
+        on_progress: ProgressCallback | None = None,
+    ) -> str:
         """Цикл function calling (под per-user lock)."""
         # ── X-Session-ID: кеширование prefix-токенов между вызовами ──
         # Все API-вызовы в рамках одного сообщения используют общий
@@ -399,6 +419,12 @@ class GigaChatService:
         recipe_search_fallback = False
         recipe_ingredient_count = 0
         recipe_not_found_count = 0
+
+        async def _progress(text: str) -> None:
+            """Безопасно обновить прогресс (игнорировать ошибки)."""
+            if on_progress is not None:
+                with contextlib.suppress(Exception):
+                    await on_progress(text)
 
         def _recipe_meta() -> dict[str, Any]:
             return {
@@ -470,6 +496,12 @@ class GigaChatService:
                 consecutive_skips,
                 fc_mode,
             )
+
+            # ── Прогресс: статус перед GigaChat вызовом ──
+            if total_steps == 1:
+                await _progress("\u2699\ufe0f Анализирую запрос...")
+            elif cart_created:
+                await _progress("\u270d\ufe0f Готовлю ответ...")
 
             # ── Langfuse: generation для каждого вызова LLM ──
             generation_idx += 1
@@ -557,8 +589,33 @@ class GigaChatService:
                 metadata={"call_number": real_calls},
             )
 
+            # ── Прогресс: статус перед вызовом инструмента ──
+            _TOOL_PROGRESS = {
+                "recipe_ingredients": "\U0001f373 Подбираю рецепт...",
+                "vkusvill_products_search": "\U0001f50d Ищу товары...",
+                "vkusvill_cart_link_create": "\U0001f6d2 Формирую корзину...",
+            }
+            if tool_name in _TOOL_PROGRESS:
+                await _progress(_TOOL_PROGRESS[tool_name])
+            elif tool_name == "recipe_search":
+                n = len(args.get("ingredients", []))
+                await _progress(
+                    f"\U0001f50d Ищу продукты (0/{n})...",
+                )
+
             if tool_name == "recipe_ingredients" and self._recipe_service is not None:
                 result = await self._recipe_service.get_ingredients(args)
+            elif tool_name == "recipe_search" and on_progress is not None:
+                n = len(args.get("ingredients", []))
+                result = await te.execute(
+                    tool_name,
+                    args,
+                    user_id,
+                    on_ingredient_found=self._make_search_progress(
+                        _progress,
+                        n,
+                    ),
+                )
             else:
                 result = await te.execute(tool_name, args, user_id)
             logger.info(
@@ -638,6 +695,24 @@ class GigaChatService:
             },
         )
         return ERROR_TOO_MANY_STEPS
+
+    @staticmethod
+    def _make_search_progress(
+        progress_fn: Callable[[str], Coroutine[Any, Any, None]],
+        total: int,
+    ) -> Callable[[], Coroutine[Any, Any, None]]:
+        """Создать callback для обновления прогресса recipe_search."""
+        counter = {"done": 0}
+
+        async def _on_found() -> None:
+            counter["done"] += 1
+            done = counter["done"]
+            pct = min(int(done / max(total, 1) * 100), 100)
+            await progress_fn(
+                f"\U0001f50d Ищу продукты ({done}/{total}) — {pct}%",
+            )
+
+        return _on_found
 
     def _extract_usage(
         self, response: ChatCompletion
