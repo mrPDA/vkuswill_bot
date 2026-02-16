@@ -36,6 +36,9 @@ data/
 .DS_Store
 Thumbs.db
 
+# Production-промпт (содержит know-how, не публикуем)
+prompts/
+
 # Архив (не трекаем)
 Archive/
 
