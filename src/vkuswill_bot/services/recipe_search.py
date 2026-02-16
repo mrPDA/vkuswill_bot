@@ -44,7 +44,7 @@ class RecipeSearchService:
         not_found: list[str] = []
         search_log: dict[str, list[int]] = {}
 
-        for ingredient, outcome in zip(ingredients, raw_results):
+        for ingredient, outcome in zip(ingredients, raw_results, strict=True):
             query = str(ingredient.get("search_query", "")).strip()
             if isinstance(outcome, Exception):
                 logger.warning("Ошибка recipe_search для %r: %s", query, outcome)
@@ -157,7 +157,10 @@ class RecipeSearchService:
         }
 
     async def _suggested_q(
-        self, ingredient: dict, xml_id: int | None, product_unit: str,
+        self,
+        ingredient: dict,
+        xml_id: int | None,
+        product_unit: str,
     ) -> int | float:
         """Рассчитать рекомендуемое q для vkusvill_cart_link_create."""
         quantity = self._as_float(ingredient.get("quantity")) or 1.0
@@ -170,8 +173,7 @@ class RecipeSearchService:
             return max(1, math.ceil(pack_equivalent))
 
         cached = (
-            await self._search_processor.price_cache.get(xml_id)
-            if xml_id is not None else None
+            await self._search_processor.price_cache.get(xml_id) if xml_id is not None else None
         )
         weight_grams = cached.weight_grams if cached is not None else None
         product_unit_norm = product_unit.lower().strip()

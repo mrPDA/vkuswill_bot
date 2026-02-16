@@ -605,7 +605,8 @@ class TestLangfuseRecipeMetadata:
             call_count += 1
             if call_count == 1:
                 return make_function_call_response(
-                    "recipe_ingredients", {"dish": "борщ", "servings": 2},
+                    "recipe_ingredients",
+                    {"dish": "борщ", "servings": 2},
                 )
             if call_count == 2:
                 return make_function_call_response("vkusvill_products_search", {"q": "морковь"})
