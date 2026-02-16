@@ -225,7 +225,7 @@ git push origin feature/amazing-feature
 
 ## Контакты
 
-- **Бот** — [@vkuswill_bot](https://t.me/vkuswill_bot)
+- **Бот** — [@vkus_eda_voda_bot](https://t.me/vkus_eda_voda_bot)
 - **Issues** — [GitHub Issues](https://github.com/mrPDA/vkuswill_bot/issues)
 - **Discussions** — [GitHub Discussions](https://github.com/mrPDA/vkuswill_bot/discussions)
 
