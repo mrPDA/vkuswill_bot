@@ -5,6 +5,12 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.13.0] — 2026-02-16
+
+### Добавлено
+
+- **Админ-команда /admin_reset_carts** — сброс счётчика корзин (`carts_created = 0`, `cart_limit = 5`, `survey_completed = FALSE`) для тестирования freemium-модели; метод `UserStore.reset_carts()` + хендлер в admin_router
+
 ## [0.12.4] — 2026-02-14
 
 ### Исправлено
