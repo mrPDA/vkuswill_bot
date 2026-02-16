@@ -133,6 +133,16 @@ def _extract_cart_link(text: str) -> tuple[str, InlineKeyboardMarkup | None]:
                     url=cart_url,
                 ),
             ],
+            [
+                InlineKeyboardButton(
+                    text="\U0001f44d Подобрано хорошо",
+                    callback_data="cart_fb_pos",
+                ),
+                InlineKeyboardButton(
+                    text="\U0001f44e Не то",
+                    callback_data="cart_fb_neg",
+                ),
+            ],
         ],
     )
     return cleaned, keyboard
@@ -765,6 +775,168 @@ async def survey_done_callback(
     _ok, text = await _finish_survey(user_id, user_store, pmf, feature, None)
     await callback.message.edit_text(text)
     await callback.answer()
+
+
+# ── Кнопки обратной связи по корзине ──────────────────────────────
+
+# Маппинг callback_data → человекочитаемая причина
+_CART_FB_REASONS: dict[str, str] = {
+    "cart_fb_r_products": "Не те товары",
+    "cart_fb_r_quantity": "Неправильное количество",
+    "cart_fb_r_price": "Слишком дорого",
+    "cart_fb_r_other": "Другое",
+}
+
+
+def _extract_cart_url_from_keyboard(
+    markup: InlineKeyboardMarkup | None,
+) -> str | None:
+    """Извлечь URL корзины из первой URL-кнопки клавиатуры."""
+    if not markup:
+        return None
+    for row in markup.inline_keyboard:
+        for btn in row:
+            if btn.url:
+                return btn.url
+    return None
+
+
+def _cart_only_keyboard(cart_url: str) -> InlineKeyboardMarkup:
+    """Клавиатура с единственной кнопкой «Открыть корзину»."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="\U0001f6d2 Открыть корзину",
+                    url=cart_url,
+                ),
+            ],
+        ],
+    )
+
+
+@router.callback_query(F.data == "cart_fb_pos")
+async def cart_feedback_positive(
+    callback: CallbackQuery,
+    user_store: UserStore | None = None,
+) -> None:
+    """Положительный фидбек по корзине."""
+    if not callback.message or not callback.from_user:
+        return
+
+    cart_url = _extract_cart_url_from_keyboard(
+        callback.message.reply_markup,  # type: ignore[union-attr]
+    )
+    user_id = callback.from_user.id
+
+    if user_store is not None:
+        with contextlib.suppress(Exception):
+            await user_store.log_event(
+                user_id,
+                "cart_feedback",
+                {
+                    "rating": "positive",
+                    "cart_link": cart_url or "",
+                },
+            )
+
+    # Убираем кнопки фидбека, оставляем только корзину + благодарность
+    if cart_url:
+        await callback.message.edit_reply_markup(  # type: ignore[union-attr]
+            reply_markup=_cart_only_keyboard(cart_url),
+        )
+    await callback.answer("Спасибо за отзыв! \U0001f44d")
+
+
+@router.callback_query(F.data == "cart_fb_neg")
+async def cart_feedback_negative(
+    callback: CallbackQuery,
+) -> None:
+    """Негативный фидбек → показать уточняющие причины."""
+    if not callback.message:
+        return
+
+    cart_url = _extract_cart_url_from_keyboard(
+        callback.message.reply_markup,  # type: ignore[union-attr]
+    )
+
+    rows: list[list[InlineKeyboardButton]] = []
+    if cart_url:
+        rows.append(
+            [
+                InlineKeyboardButton(
+                    text="\U0001f6d2 Открыть корзину",
+                    url=cart_url,
+                ),
+            ],
+        )
+    rows.extend(
+        [
+            [
+                InlineKeyboardButton(
+                    text="\U0001f50d Не те товары",
+                    callback_data="cart_fb_r_products",
+                ),
+                InlineKeyboardButton(
+                    text="\U0001f522 Количество",
+                    callback_data="cart_fb_r_quantity",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="\U0001f4b8 Дорого",
+                    callback_data="cart_fb_r_price",
+                ),
+                InlineKeyboardButton(
+                    text="\U00002753 Другое",
+                    callback_data="cart_fb_r_other",
+                ),
+            ],
+        ],
+    )
+
+    await callback.message.edit_reply_markup(  # type: ignore[union-attr]
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=rows),
+    )
+    await callback.answer("Что именно не так?")
+
+
+@router.callback_query(F.data.startswith("cart_fb_r_"))
+async def cart_feedback_reason(
+    callback: CallbackQuery,
+    user_store: UserStore | None = None,
+) -> None:
+    """Конкретная причина негативного фидбека."""
+    if not callback.data or not callback.message or not callback.from_user:
+        return
+
+    reason_key = callback.data  # e.g. cart_fb_r_products
+    reason_label = _CART_FB_REASONS.get(reason_key, reason_key)
+    cart_url = _extract_cart_url_from_keyboard(
+        callback.message.reply_markup,  # type: ignore[union-attr]
+    )
+    user_id = callback.from_user.id
+
+    if user_store is not None:
+        with contextlib.suppress(Exception):
+            await user_store.log_event(
+                user_id,
+                "cart_feedback",
+                {
+                    "rating": "negative",
+                    "reason": reason_label,
+                    "cart_link": cart_url or "",
+                },
+            )
+
+    # Оставляем только кнопку корзины
+    if cart_url:
+        await callback.message.edit_reply_markup(  # type: ignore[union-attr]
+            reply_markup=_cart_only_keyboard(cart_url),
+        )
+    await callback.answer(
+        "Спасибо! Учтём при улучшении бота \U0001f4dd",
+    )
 
 
 class _IsAdminCommandFilter(BaseFilter):
