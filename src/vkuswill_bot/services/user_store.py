@@ -461,6 +461,66 @@ class UserStore:
             "recent_feedback": [dict(r) for r in recent_feedback],
         }
 
+    async def get_cart_feedback_stats(self) -> dict[str, Any]:
+        """Агрегированная статистика по фидбеку корзин.
+
+        Returns:
+            Словарь с total, positive, negative, satisfaction_pct,
+            reasons (список), recent_negative (список).
+        """
+        await self.ensure_schema()
+        async with self._pool.acquire() as conn:
+            total = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_events WHERE event_type = 'cart_feedback'"
+            )
+            positive = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_events "
+                "WHERE event_type = 'cart_feedback' "
+                "AND metadata->>'rating' = 'positive'"
+            )
+            negative = await conn.fetchval(
+                "SELECT COUNT(*) FROM user_events "
+                "WHERE event_type = 'cart_feedback' "
+                "AND metadata->>'rating' = 'negative'"
+            )
+            reasons = await conn.fetch(
+                "SELECT metadata->>'reason' AS reason, COUNT(*) AS cnt "
+                "FROM user_events "
+                "WHERE event_type = 'cart_feedback' "
+                "AND metadata->>'rating' = 'negative' "
+                "AND metadata->>'reason' IS NOT NULL "
+                "GROUP BY reason ORDER BY cnt DESC"
+            )
+            recent_negative = await conn.fetch(
+                "SELECT u.user_id, e.metadata->>'reason' AS reason, "
+                "e.metadata->>'cart_link' AS cart_link, e.created_at "
+                "FROM user_events e "
+                "JOIN users u ON u.user_id = e.user_id "
+                "WHERE e.event_type = 'cart_feedback' "
+                "AND e.metadata->>'rating' = 'negative' "
+                "ORDER BY e.created_at DESC LIMIT 10"
+            )
+            daily = await conn.fetch(
+                "SELECT DATE(created_at) AS day, "
+                "metadata->>'rating' AS rating, COUNT(*) AS cnt "
+                "FROM user_events "
+                "WHERE event_type = 'cart_feedback' "
+                "GROUP BY day, rating ORDER BY day DESC LIMIT 30"
+            )
+        total = total or 0
+        positive = positive or 0
+        negative = negative or 0
+        satisfaction = round(positive / total * 100, 1) if total > 0 else 0.0
+        return {
+            "total": total,
+            "positive": positive,
+            "negative": negative,
+            "satisfaction_pct": satisfaction,
+            "reasons": [dict(r) for r in reasons],
+            "recent_negative": [dict(r) for r in recent_negative],
+            "daily": [dict(r) for r in daily],
+        }
+
     # ------------------------------------------------------------------
     # Реферальная система
     # ------------------------------------------------------------------

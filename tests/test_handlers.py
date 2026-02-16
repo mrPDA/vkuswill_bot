@@ -29,6 +29,7 @@ from vkuswill_bot.bot.handlers import (
     cmd_start,
     cmd_survey,
     cmd_admin_analytics,
+    cmd_admin_cart_feedback,
     cmd_admin_funnel,
     cmd_admin_grant_carts,
     cmd_admin_survey_stats,
@@ -1320,6 +1321,87 @@ class TestAdminSurveyStats:
 
         text = msg.answer.call_args[0][0]
         assert "Ни один" in text
+
+
+# ============================================================================
+# /admin_cart_feedback
+# ============================================================================
+
+
+class TestAdminCartFeedback:
+    """Тесты /admin_cart_feedback."""
+
+    async def test_cart_feedback_stats_success(self):
+        """Администратор получает статистику фидбека корзин."""
+        msg = make_message("/admin_cart_feedback", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.get_cart_feedback_stats.return_value = {
+            "total": 20,
+            "positive": 15,
+            "negative": 5,
+            "satisfaction_pct": 75.0,
+            "reasons": [
+                {"reason": "Не те товары", "cnt": 3},
+                {"reason": "Слишком дорого", "cnt": 2},
+            ],
+            "recent_negative": [
+                {
+                    "user_id": 42,
+                    "reason": "Не те товары",
+                    "cart_link": "https://vkusvill.ru/cart/1",
+                    "created_at": None,
+                },
+            ],
+            "daily": [],
+        }
+
+        await cmd_admin_cart_feedback(msg, user_store=mock_store)
+
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "20" in text
+        assert "15" in text
+        assert "75" in text
+        assert "Не те товары" in text
+
+    async def test_cart_feedback_stats_empty(self):
+        """Нет данных — сообщение об этом."""
+        msg = make_message("/admin_cart_feedback", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.get_cart_feedback_stats.return_value = {
+            "total": 0,
+            "positive": 0,
+            "negative": 0,
+            "satisfaction_pct": 0.0,
+            "reasons": [],
+            "recent_negative": [],
+            "daily": [],
+        }
+
+        await cmd_admin_cart_feedback(msg, user_store=mock_store)
+
+        text = msg.answer.call_args[0][0]
+        assert "Пока нет" in text
+
+    async def test_cart_feedback_no_store(self):
+        """Без user_store — сообщение о недоступности."""
+        msg = make_message("/admin_cart_feedback", user_id=1)
+
+        await cmd_admin_cart_feedback(msg, user_store=None)
+
+        text = msg.answer.call_args[0][0]
+        assert "недоступна" in text
+
+    async def test_cart_feedback_error(self):
+        """Ошибка БД — сообщение об ошибке."""
+        msg = make_message("/admin_cart_feedback", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.get_cart_feedback_stats.side_effect = RuntimeError("DB error")
+
+        await cmd_admin_cart_feedback(msg, user_store=mock_store)
+
+        text = msg.answer.call_args[0][0]
+        assert "Ошибка" in text
 
 
 # ============================================================================

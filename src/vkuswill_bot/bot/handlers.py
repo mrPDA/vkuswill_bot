@@ -1493,3 +1493,57 @@ async def cmd_admin_survey_stats(
             text += f"\n\nПоследние:\n{fb_lines}"
 
     await message.answer(text)
+
+
+@admin_router.message(Command("admin_cart_feedback"))
+async def cmd_admin_cart_feedback(
+    message: Message,
+    user_store: UserStore | None = None,
+) -> None:
+    """Статистика обратной связи по корзинам: /admin_cart_feedback."""
+    if user_store is None:
+        await message.answer("База данных недоступна.")
+        return
+
+    try:
+        stats = await user_store.get_cart_feedback_stats()
+    except Exception as e:
+        logger.error("Ошибка получения cart feedback статистики: %s", e)
+        await message.answer("Ошибка получения данных.")
+        return
+
+    total = stats["total"]
+    if total == 0:
+        await message.answer("Пока нет отзывов по корзинам.")
+        return
+
+    pos = stats["positive"]
+    neg = stats["negative"]
+    sat = stats["satisfaction_pct"]
+
+    # Причины негативного фидбека
+    reason_lines = "\n".join(f"  {r['reason']}: {r['cnt']}" for r in stats["reasons"])
+
+    # Последние негативные
+    recent_lines = ""
+    for r in stats.get("recent_negative", [])[:5]:
+        reason = r.get("reason") or "—"
+        dt = r.get("created_at")
+        dt_str = dt.strftime("%d.%m %H:%M") if dt else "—"
+        recent_lines += f"  \u2022 {reason} ({dt_str})\n"
+
+    text = (
+        f"<b>\U0001f4ca Обратная связь по корзинам</b>\n\n"
+        f"Всего оценок: <b>{total}</b>\n"
+        f"\U0001f44d Позитивных: <b>{pos}</b>\n"
+        f"\U0001f44e Негативных: <b>{neg}</b>\n"
+        f"Satisfaction: <b>{sat}%</b>\n"
+    )
+
+    if reason_lines:
+        text += f"\n<b>Причины негатива:</b>\n{reason_lines}\n"
+
+    if recent_lines:
+        text += f"\n<b>Последние негативные:</b>\n{recent_lines}"
+
+    await message.answer(text)
