@@ -89,6 +89,10 @@ class RecipeService:
     и RecipeStore для кэширования результатов.
     """
 
+    # Bump при ЛЮБОМ изменении RECIPE_EXTRACTION_PROMPT.
+    # При несовпадении версии кэш рецепта автоматически сбрасывается.
+    _PROMPT_VERSION = "v3"
+
     def __init__(
         self,
         gigachat_client: GigaChat,
@@ -147,8 +151,11 @@ class RecipeService:
         if not isinstance(servings, int) or servings <= 0:
             servings = 2
 
-        # 1. Проверяем кеш
-        cached = await self._recipe_store.get(dish)
+        # 1. Проверяем кеш (с проверкой prompt_version)
+        cached = await self._recipe_store.get(
+            dish,
+            prompt_version=self._PROMPT_VERSION,
+        )
         if cached is not None:
             ingredients = cached["ingredients"]
             # Масштабируем если другое количество порций
@@ -194,9 +201,14 @@ class RecipeService:
                 ensure_ascii=False,
             )
 
-        # 3. Сохраняем в кеш
+        # 3. Сохраняем в кеш (с prompt_version)
         try:
-            await self._recipe_store.save(dish, servings, ingredients)
+            await self._recipe_store.save(
+                dish,
+                servings,
+                ingredients,
+                prompt_version=self._PROMPT_VERSION,
+            )
         except Exception as e:
             logger.warning("Не удалось закешировать рецепт '%s': %s", dish, e)
 
