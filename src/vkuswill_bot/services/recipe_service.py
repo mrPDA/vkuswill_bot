@@ -344,8 +344,9 @@ class RecipeService:
                 "ingredients": ingredients,
                 "cached": cached,
                 "hint": (
-                    "Вызови vkusvill_products_search для КАЖДОГО ингредиента "
-                    "(используй search_query). "
+                    "Сначала вызови recipe_search и передай ВЕСЬ массив ingredients. "
+                    "Если recipe_search недоступен — ищи каждый ингредиент через "
+                    "vkusvill_products_search (используй search_query). "
                     "Для q используй kg_equivalent/l_equivalent/pack_equivalent. "
                     "Затем vkusvill_cart_link_create."
                 ),

@@ -384,6 +384,11 @@ class CartProcessor:
             logger.warning("Верификация корзины: %s", issues)
         else:
             report["ok"] = True
+            report["message"] = (
+                "Все ингредиенты найдены и добавлены в корзину. "
+                "Корзина полностью соответствует запросу. "
+                "Сформируй красивый ответ пользователю."
+            )
 
         return report
 

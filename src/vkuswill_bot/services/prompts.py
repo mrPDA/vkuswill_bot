@@ -70,6 +70,34 @@ RECIPE_TOOL: dict = {
     },
 }
 
+RECIPE_SEARCH_TOOL: dict = {
+    "name": "recipe_search",
+    "description": (
+        "Пакетный поиск товаров для ингредиентов рецепта. "
+        "Вызывай после recipe_ingredients и передавай ВЕСЬ массив ingredients. "
+        "Возвращает best_match, alternatives и suggested_q для каждого ингредиента."
+    ),
+    "parameters": {
+        "type": "object",
+        "properties": {
+            "ingredients": {
+                "type": "array",
+                "description": "Массив ингредиентов из результата recipe_ingredients",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "name": {"type": "string"},
+                        "search_query": {"type": "string"},
+                        "quantity": {"type": "number"},
+                        "unit": {"type": "string"},
+                    },
+                },
+            },
+        },
+        "required": ["ingredients"],
+    },
+}
+
 CART_PREVIOUS_TOOL: dict = {
     "name": "get_previous_cart",
     "description": (

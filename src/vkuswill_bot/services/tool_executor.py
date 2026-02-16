@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING
 from gigachat.models import Messages, MessagesRole
 
 if TYPE_CHECKING:
+    from vkuswill_bot.services.recipe_search import RecipeSearchService
     from vkuswill_bot.services.user_store import UserStore
 
 from vkuswill_bot.services.cart_processor import CartProcessor
@@ -47,6 +48,7 @@ LOCAL_TOOL_NAMES = frozenset(
         "user_preferences_set",
         "user_preferences_delete",
         "recipe_ingredients",
+        "recipe_search",
         "get_previous_cart",
         "nutrition_lookup",
     }
@@ -104,6 +106,7 @@ class ToolExecutor:
         preferences_store: PreferencesStore | None = None,
         cart_snapshot_store: CartSnapshotStore | None = None,
         nutrition_service: NutritionService | None = None,
+        recipe_search_service: RecipeSearchService | None = None,
         user_store: UserStore | None = None,
     ) -> None:
         self._mcp_client = mcp_client
@@ -112,6 +115,7 @@ class ToolExecutor:
         self._prefs_store = preferences_store
         self._cart_snapshot_store = cart_snapshot_store
         self._nutrition_service = nutrition_service
+        self._recipe_search_service = recipe_search_service
         self._user_store = user_store
 
     # ---- Публичные свойства для доступа к процессорам (DI) ----
@@ -125,6 +129,11 @@ class ToolExecutor:
     def cart_processor(self) -> CartProcessor:
         """CartProcessor (read-only доступ для GigaChatService DI)."""
         return self._cart_processor
+
+    @property
+    def has_recipe_search(self) -> bool:
+        """Доступен ли локальный recipe_search."""
+        return self._recipe_search_service is not None
 
     # ---- Парсинг аргументов ----
 
@@ -423,6 +432,26 @@ class ToolExecutor:
                     logger.debug("Ошибка логирования product_search")
             result = self._search_processor.trim_search_result(result)
 
+        elif tool_name == "recipe_search":
+            # recipe_search уже обновляет price_cache, здесь синхронизируем search_log
+            # для последующей верификации корзины.
+            try:
+                parsed = json.loads(result)
+                recipe_log = parsed.get("search_log", {}) if isinstance(parsed, dict) else {}
+                if isinstance(recipe_log, dict):
+                    for query, xml_ids in recipe_log.items():
+                        if not query or not isinstance(xml_ids, list):
+                            continue
+                        valid_ids = {
+                            int(x)
+                            for x in xml_ids
+                            if isinstance(x, int) or (isinstance(x, str) and x.isdigit())
+                        }
+                        if valid_ids:
+                            search_log[query] = valid_ids
+            except (json.JSONDecodeError, TypeError, ValueError):
+                logger.debug("Не удалось синхронизировать search_log из recipe_search")
+
         elif tool_name == "vkusvill_cart_link_create":
             # Если были неизвестные xml_id — добавляем подсказку в ошибку
             unknown_ids = args.pop("_unknown_xml_ids", None)
@@ -676,6 +705,20 @@ class ToolExecutor:
                 {"ok": False, "error": "Кеш рецептов не настроен"},
                 ensure_ascii=False,
             )
+
+        if tool_name == "recipe_search":
+            if self._recipe_search_service is None:
+                return json.dumps(
+                    {"ok": False, "error": "Сервис recipe_search не настроен"},
+                    ensure_ascii=False,
+                )
+            ingredients = args.get("ingredients")
+            if not isinstance(ingredients, list):
+                return json.dumps(
+                    {"ok": False, "error": "Не указан массив ingredients"},
+                    ensure_ascii=False,
+                )
+            return await self._recipe_search_service.search_ingredients(ingredients)
 
         if tool_name == "nutrition_lookup":
             if self._nutrition_service is None:
