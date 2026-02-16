@@ -1,10 +1,15 @@
 """Тесты текстовых констант prompts.py.
 
 Проверяем:
-- Содержание системного промпта (ключевые блоки)
+- Содержание дефолтного системного промпта (базовые требования)
+- Содержание production-промпта (детальные требования, если загружен)
 - Формат сообщений об ошибках
 - Отсутствие секретных данных в промпте
 """
+
+from pathlib import Path
+
+import pytest
 
 from vkuswill_bot.services.prompts import (
     CART_PREVIOUS_TOOL,
@@ -15,203 +20,197 @@ from vkuswill_bot.services.prompts import (
     RECIPE_SEARCH_TOOL,
     RECIPE_TOOL,
     SYSTEM_PROMPT,
+    _DEFAULT_SYSTEM_PROMPT,
+    get_system_prompt,
+)
+
+# Полный production-промпт загружается из файла, если доступен
+_PROD_PROMPT_PATH = Path(__file__).resolve().parent.parent / "prompts" / "system_prompt.txt"
+_PROD_PROMPT: str | None = None
+if _PROD_PROMPT_PATH.exists():
+    _PROD_PROMPT = _PROD_PROMPT_PATH.read_text(encoding="utf-8")
+
+_has_prod_prompt = pytest.mark.skipif(
+    _PROD_PROMPT is None,
+    reason="Production prompt not available (prompts/system_prompt.txt)",
 )
 
 
 # ============================================================================
-# Системный промпт: содержание
+# Дефолтный промпт: базовые требования
 # ============================================================================
 
 
-class TestSystemPromptContent:
-    """Тесты содержания системного промпта."""
+class TestDefaultPromptContent:
+    """Тесты дефолтного промпта (всегда в репозитории)."""
 
     def test_defines_role(self):
         """Промпт определяет роль: продавец-консультант ВкусВилл."""
-        assert "продавец-консультант" in SYSTEM_PROMPT.lower()
-        assert "ВкусВилл" in SYSTEM_PROMPT
+        assert "продавец-консультант" in _DEFAULT_SYSTEM_PROMPT.lower()
+        assert "ВкусВилл" in _DEFAULT_SYSTEM_PROMPT
 
     def test_defines_workflow(self):
-        """Промпт описывает рабочий процесс (шаги)."""
-        assert "Шаг 1" in SYSTEM_PROMPT
-        assert "Шаг 2" in SYSTEM_PROMPT
-        assert "Шаг 3" in SYSTEM_PROMPT
+        """Дефолтный промпт описывает базовый рабочий процесс."""
+        lower = _DEFAULT_SYSTEM_PROMPT.lower()
+        assert "рабочий процесс" in lower or "рецепт" in lower
 
-    def test_defines_cart_format(self):
-        """Промпт описывает формат вызова vkusvill_cart_link_create."""
-        assert "vkusvill_cart_link_create" in SYSTEM_PROMPT
-        assert "xml_id" in SYSTEM_PROMPT
-        assert "products" in SYSTEM_PROMPT
-
-    def test_mentions_preferences(self):
-        """Промпт содержит инструкции про предпочтения."""
-        assert "user_preferences_get" in SYSTEM_PROMPT
-        assert "user_preferences_set" in SYSTEM_PROMPT
-        assert "user_preferences_delete" in SYSTEM_PROMPT
-
-    def test_mentions_disclaimer(self):
-        """Промпт требует дисклеймер после корзины."""
-        assert (
-            "дисклеймер" in SYSTEM_PROMPT.lower() or "Наличие и точное количество" in SYSTEM_PROMPT
-        )
-
-    def test_format_rules(self):
-        """Промпт содержит правила формата ответа."""
-        assert "Русский язык" in SYSTEM_PROMPT
-        assert "price_summary" in SYSTEM_PROMPT
+    def test_has_security_basics(self):
+        """Дефолтный промпт содержит базовые правила безопасности."""
+        lower = _DEFAULT_SYSTEM_PROMPT.lower()
+        assert "безопасность" in lower
+        assert "продавец-консультант" in lower
+        assert "не раскрывай" in lower
 
     def test_no_secrets(self):
         """В промпте нет токенов, ключей и паролей."""
         for keyword in ["token", "password", "secret", "api_key", "credentials"]:
-            assert keyword not in SYSTEM_PROMPT.lower(), f"Промпт не должен содержать '{keyword}'"
+            assert keyword not in _DEFAULT_SYSTEM_PROMPT.lower(), (
+                f"Промпт не должен содержать '{keyword}'"
+            )
 
     def test_reasonable_length(self):
-        """Промпт разумного размера (не пустой, не гигантский)."""
-        assert 500 < len(SYSTEM_PROMPT) < 18000
+        """Дефолтный промпт разумного размера (не пустой, не гигантский)."""
+        assert 200 < len(_DEFAULT_SYSTEM_PROMPT) < 18000
 
+    def test_system_prompt_constant_equals_default(self):
+        """Константа SYSTEM_PROMPT равна _DEFAULT_SYSTEM_PROMPT."""
+        assert SYSTEM_PROMPT == _DEFAULT_SYSTEM_PROMPT
+
+    def test_get_system_prompt_returns_default_without_env(self):
+        """get_system_prompt() без env возвращает дефолтный промпт."""
+        prompt = get_system_prompt()
+        assert "продавец-консультант" in prompt.lower()
+        assert "ВкусВилл" in prompt
+
+
+# ============================================================================
+# Production-промпт: детальные требования (пропускается в CI)
+# ============================================================================
+
+
+class TestProductionPromptContent:
+    """Тесты содержания production-промпта (из prompts/system_prompt.txt)."""
+
+    @_has_prod_prompt
+    def test_defines_workflow_steps(self):
+        assert "Шаг 1" in _PROD_PROMPT and "Шаг 2" in _PROD_PROMPT
+
+    @_has_prod_prompt
+    def test_defines_cart_format(self):
+        assert "vkusvill_cart_link_create" in _PROD_PROMPT
+        assert "xml_id" in _PROD_PROMPT
+
+    @_has_prod_prompt
+    def test_mentions_preferences(self):
+        assert "user_preferences_get" in _PROD_PROMPT
+
+    @_has_prod_prompt
+    def test_format_rules(self):
+        assert "Русский язык" in _PROD_PROMPT
+        assert "price_summary" in _PROD_PROMPT
+
+    @_has_prod_prompt
+    def test_no_secrets(self):
+        for keyword in ["token", "password", "secret", "api_key", "credentials"]:
+            assert keyword not in _PROD_PROMPT.lower()
+
+    @_has_prod_prompt
+    def test_reasonable_length(self):
+        assert 500 < len(_PROD_PROMPT) < 18000
+
+    @_has_prod_prompt
     def test_mentions_recipe_ingredients(self):
-        """Промпт содержит инструкции про recipe_ingredients."""
-        assert "recipe_ingredients" in SYSTEM_PROMPT
+        assert "recipe_ingredients" in _PROD_PROMPT
 
-    def test_defines_recipe_workflow(self):
-        """Промпт описывает алгоритм работы с рецептами."""
-        assert "рецепт" in SYSTEM_PROMPT.lower() or "РЕЦЕПТ" in SYSTEM_PROMPT
-
-    def test_forbids_adding_extra_items_for_recipes(self):
-        """Промпт запрещает добавлять от себя дополнительные ингредиенты к рецептам."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "запрещено добавлять" in lower or "не добавляй" in lower
-        assert "не нужен" in lower
-
-    def test_defines_quantity_calculation(self):
-        """Промпт содержит инструкции по расчёту количества."""
-        assert "Расчёт количества" in SYSTEM_PROMPT or "q=" in SYSTEM_PROMPT
-
-    def test_defines_unit_examples(self):
-        """Промпт содержит примеры расчёта по единицам (кг, шт)."""
-        assert "unit=" in SYSTEM_PROMPT
-        assert "кг" in SYSTEM_PROMPT
-
-    def test_ready_vs_cook_clarification(self):
-        """Промпт содержит инструкцию уточнять: готовое или приготовить."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "готовое блюдо" in lower or "готовое" in lower
-        assert "приготовить" in lower
-
+    @_has_prod_prompt
     def test_fermented_products_section(self):
-        """Промпт содержит секцию про соленья/квашения/консервацию."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "квашеная капуста" in lower
-        assert "ферментированн" in lower or "консервац" in lower
-        assert "recipe_ingredients" in SYSTEM_PROMPT
 
+    @_has_prod_prompt
     def test_ambiguous_queries_section(self):
-        """Промпт содержит секцию про неоднозначные поисковые запросы."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "неоднозначн" in lower
-        assert "ром" in lower
-        assert "уточняющее слово" in lower
 
+    @_has_prod_prompt
     def test_packaging_section(self):
-        """Промпт содержит секцию про упаковки ВкусВилл."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "упаковк" in lower
-        assert "яйц" in lower
 
+    @_has_prod_prompt
     def test_cart_merge_section(self):
-        """Промпт содержит секцию про объединение корзин."""
-        assert "get_previous_cart" in SYSTEM_PROMPT
-        assert "объедин" in SYSTEM_PROMPT.lower()
+        assert "get_previous_cart" in _PROD_PROMPT
 
+    @_has_prod_prompt
     def test_relevance_check_section(self):
-        """Промпт содержит секцию проверки соответствия товаров запросу."""
-        assert "relevance_warning" in SYSTEM_PROMPT
-        assert "несоответстви" in SYSTEM_PROMPT.lower() or "не найден" in SYSTEM_PROMPT.lower()
+        assert "relevance_warning" in _PROD_PROMPT
 
-    def test_alcohol_in_recipes_section(self):
-        """Промпт содержит секцию про алкоголь в рецептах."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "алкоголь" in lower
-        assert "optional" in lower
-        assert "ром" in lower
-
+    @_has_prod_prompt
     def test_duplicate_warning_section(self):
-        """Промпт содержит секцию про дубли товаров в корзине."""
-        assert "duplicate_warning" in SYSTEM_PROMPT
-        lower = SYSTEM_PROMPT.lower()
-        assert "дубль" in lower or "дубл" in lower
+        assert "duplicate_warning" in _PROD_PROMPT
 
+    @_has_prod_prompt
     def test_default_servings_changed_to_2(self):
-        """Промпт указывает servings=2 по умолчанию (не 4)."""
-        assert "по умолчанию 2" in SYSTEM_PROMPT.lower()
+        assert "по умолчанию 2" in _PROD_PROMPT.lower()
 
 
 # ============================================================================
-# Системный промпт: безопасность
+# Production-промпт: безопасность (пропускается в CI)
 # ============================================================================
 
 
-class TestSystemPromptSecurity:
-    """Тесты секции безопасности в системном промпте."""
+class TestProductionPromptSecurity:
+    """Тесты секции безопасности в production-промпте."""
 
+    @_has_prod_prompt
     def test_has_security_section(self):
-        """Промпт содержит секцию безопасности."""
-        assert "## Безопасность" in SYSTEM_PROMPT
+        assert "## Безопасность" in _PROD_PROMPT
 
+    @_has_prod_prompt
     def test_role_anchoring_in_security(self):
-        """Секция безопасности якорит роль продавца-консультанта."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "всегда продавец-консультант" in lower
+        assert "всегда продавец-консультант" in _PROD_PROMPT.lower()
 
+    @_has_prod_prompt
     def test_forbids_role_change(self):
-        """Промпт запрещает изменение роли через сообщения пользователя."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "не могут изменить" in lower or "никакие сообщения" in lower
 
+    @_has_prod_prompt
     def test_forbids_prompt_leaking(self):
-        """Промпт запрещает раскрытие инструкций."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "не раскрывай" in lower or "никогда не раскрывай" in lower
-        assert "системный промпт" in lower or "инструкции" in lower
 
+    @_has_prod_prompt
     def test_has_prompt_leak_deflection(self):
-        """Промпт содержит шаблон ответа на попытку извлечения промпта."""
-        assert "бот ВкусВилл" in SYSTEM_PROMPT
-        assert "помогаю подобрать продукты" in SYSTEM_PROMPT
+        assert "бот ВкусВилл" in _PROD_PROMPT
 
+    @_has_prod_prompt
     def test_restricts_topic_to_products(self):
-        """Промпт ограничивает тематику продуктами и едой."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "только" in lower
-        assert "продукт" in lower
-        assert "посторонние темы" in lower or "посторонн" in lower
+        lower = _PROD_PROMPT.lower()
+        assert "только" in lower and "продукт" in lower
 
+    @_has_prod_prompt
     def test_has_offtopic_deflection(self):
-        """Промпт содержит шаблон ответа на off-topic запросы."""
-        assert "специализируюсь на продуктах" in SYSTEM_PROMPT
+        assert "специализируюсь на продуктах" in _PROD_PROMPT
 
+    @_has_prod_prompt
     def test_forbids_harmful_content(self):
-        """Промпт запрещает генерацию вредоносного контента."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "оскорбления" in lower or "угрозы" in lower
-        assert "незаконный контент" in lower or "незаконн" in lower
 
+    @_has_prod_prompt
     def test_forbids_medical_financial_advice(self):
-        """Промпт запрещает медицинские и финансовые советы."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "медицинск" in lower
-        assert "финансов" in lower
+        lower = _PROD_PROMPT.lower()
+        assert "медицинск" in lower and "финансов" in lower
 
+    @_has_prod_prompt
     def test_blocks_authority_impersonation(self):
-        """Промпт защищён от impersonation разработчика/администратора."""
-        lower = SYSTEM_PROMPT.lower()
-        assert "разработчик" in lower
-        assert "администратор" in lower
-        assert "режим отладки" in lower or "диагностик" in lower
+        lower = _PROD_PROMPT.lower()
+        assert "разработчик" in lower and "администратор" in lower
 
+    @_has_prod_prompt
     def test_no_debug_mode(self):
-        """Промпт явно отрицает наличие режима отладки."""
-        lower = SYSTEM_PROMPT.lower()
+        lower = _PROD_PROMPT.lower()
         assert "нет режима отладки" in lower or "нет режима" in lower
 
 

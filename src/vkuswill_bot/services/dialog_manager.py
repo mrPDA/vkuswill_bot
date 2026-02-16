@@ -17,7 +17,7 @@ from collections.abc import Callable
 
 from gigachat.models import Messages, MessagesRole
 
-from vkuswill_bot.services.prompts import SYSTEM_PROMPT
+from vkuswill_bot.services.prompts import get_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -283,7 +283,7 @@ class DialogManager:
                     self._max_conversations,
                 )
             self._conversations[user_id] = [
-                Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)
+                Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())
             ]
         return self._conversations[user_id]
 
