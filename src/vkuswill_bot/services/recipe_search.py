@@ -17,6 +17,20 @@ class RecipeSearchService:
     """Пакетный поиск ингредиентов рецепта через MCP."""
 
     _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
+    _MICRO_UNITS = frozenset(
+        {
+            "зубчик",
+            "ст.л.",
+            "ч.л.",
+            "пучок",
+            "щепотка",
+            "веточка",
+            "долька",
+            "стебель",
+            "лист",
+        }
+    )
+    _MAX_DISCRETE_Q = 5
 
     def __init__(
         self,
@@ -179,17 +193,26 @@ class RecipeSearchService:
         product_unit_norm = product_unit.lower().strip()
 
         if product_unit_norm in self._DISCRETE_UNITS:
-            # Вес упаковки известен + эквивалент веса/объёма → кол-во упаковок.
+            # Вес упаковки известен + эквивалент веса → кол-во упаковок.
             if weight_grams and weight_grams > 0:
                 if kg_equivalent and kg_equivalent > 0:
-                    return max(1, math.ceil((kg_equivalent * 1000) / weight_grams))
+                    q = math.ceil((kg_equivalent * 1000) / weight_grams)
+                    return max(1, min(q, self._MAX_DISCRETE_Q))
                 if l_equivalent and l_equivalent > 0:
-                    return max(1, math.ceil((l_equivalent * 1000) / weight_grams))
+                    q = math.ceil((l_equivalent * 1000) / weight_grams)
+                    return max(1, min(q, self._MAX_DISCRETE_Q))
                 if unit == "г":
-                    return max(1, math.ceil(quantity / weight_grams))
+                    q = math.ceil(quantity / weight_grams)
+                    return max(1, min(q, self._MAX_DISCRETE_Q))
                 if unit == "мл":
-                    return max(1, math.ceil(quantity / weight_grams))
-            return max(1, math.ceil(quantity))
+                    q = math.ceil(quantity / weight_grams)
+                    return max(1, min(q, self._MAX_DISCRETE_Q))
+            # Нет weight_grams: микро-единицы (зубчик, ст.л. и т.д.)
+            # почти всегда помещаются в 1 упаковку магазинного товара.
+            if unit in self._MICRO_UNITS:
+                return 1
+            q = math.ceil(quantity)
+            return max(1, min(q, self._MAX_DISCRETE_Q))
 
         if product_unit_norm == "кг":
             if kg_equivalent and kg_equivalent > 0:

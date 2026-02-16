@@ -241,6 +241,106 @@ class TestRecipeSearchService:
         parsed = json.loads(result)
         assert parsed["results"][0]["best_match"]["suggested_q"] == 1.05
 
+    async def test_micro_units_without_kg_equivalent_default_to_one(
+        self,
+        service,
+        mock_mcp_client,
+    ):
+        """Микро-единицы (зубчик, ст.л., пучок) без kg_equivalent → q=1."""
+        mock_mcp_client.call_tool.side_effect = [
+            _search_response(
+                "чеснок",
+                [
+                    {
+                        "xml_id": 700,
+                        "name": "Чеснок Фермерский, 100 г",
+                        "price": {"current": 145},
+                        "unit": "шт",
+                        "weight": {"value": 100, "unit": "г"},
+                    }
+                ],
+            ),
+            _search_response(
+                "укроп",
+                [
+                    {
+                        "xml_id": 701,
+                        "name": "Укроп, 50 г",
+                        "price": {"current": 80},
+                        "unit": "шт",
+                        "weight": {"value": 50, "unit": "г"},
+                    }
+                ],
+            ),
+            _search_response(
+                "лавровый лист",
+                [
+                    {
+                        "xml_id": 702,
+                        "name": "Лавровый лист 10 г",
+                        "price": {"current": 40},
+                        "unit": "шт",
+                    }
+                ],
+            ),
+        ]
+        ingredients = [
+            {
+                "name": "чеснок",
+                "search_query": "чеснок",
+                "quantity": 3,
+                "unit": "зубчик",
+            },
+            {
+                "name": "укроп",
+                "search_query": "укроп",
+                "quantity": 1.5,
+                "unit": "пучок",
+            },
+            {
+                "name": "лавровый лист",
+                "search_query": "лавровый лист",
+                "quantity": 3,
+                "unit": "лист",
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        # Микро-единицы без kg_equivalent → всегда q=1
+        assert parsed["results"][0]["best_match"]["suggested_q"] == 1
+        assert parsed["results"][1]["best_match"]["suggested_q"] == 1
+        assert parsed["results"][2]["best_match"]["suggested_q"] == 1
+
+    async def test_discrete_q_capped_at_max(self, service, mock_mcp_client):
+        """suggested_q для дискретных товаров ограничен _MAX_DISCRETE_Q."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "томатная паста",
+            [
+                {
+                    "xml_id": 800,
+                    "name": "Томатная паста 70 г",
+                    "price": {"current": 90},
+                    "unit": "шт",
+                    "weight": {"value": 70, "unit": "г"},
+                }
+            ],
+        )
+        ingredients = [
+            {
+                "name": "томатная паста",
+                "search_query": "томатная паста",
+                "quantity": 3,
+                "unit": "ст.л.",
+                "kg_equivalent": 0.45,
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        # ceil(450/70) = 7, но cap = 5
+        assert parsed["results"][0]["best_match"]["suggested_q"] == 5
+
     async def test_partial_errors_do_not_break_batch(self, service, mock_mcp_client):
         mock_mcp_client.call_tool.side_effect = [
             RuntimeError("mcp unavailable"),
