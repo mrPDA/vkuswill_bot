@@ -1065,6 +1065,38 @@ async def cmd_admin_user(
     await message.answer(text)
 
 
+@admin_router.message(Command("admin_reset_carts"))
+async def cmd_admin_reset_carts(
+    message: Message,
+    user_store: UserStore,
+) -> None:
+    """Сбросить счётчик корзин: /admin_reset_carts <user_id>."""
+    if not message.text:
+        return
+
+    parts = message.text.split(maxsplit=1)
+    if len(parts) < 2:
+        await message.answer("Использование: /admin_reset_carts &lt;user_id&gt;")
+        return
+
+    try:
+        target_id = int(parts[1])
+    except ValueError:
+        await message.answer("user_id должен быть числом.")
+        return
+
+    result = await user_store.reset_carts(target_id)
+    if result:
+        await message.answer(
+            f"Счётчик корзин сброшен для {target_id}.\n"
+            f"carts_created: {result['carts_created']}, "
+            f"cart_limit: {result['cart_limit']}, "
+            f"survey_completed: {result['survey_completed']}"
+        )
+    else:
+        await message.answer(f"Пользователь {target_id} не найден.")
+
+
 @admin_router.message(Command("admin_analytics"))
 async def cmd_admin_analytics(
     message: Message,
