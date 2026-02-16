@@ -32,12 +32,53 @@ from vkuswill_bot.services.gigachat_service import (
     MAX_SEARCH_LOG_QUERIES,
     MAX_USER_MESSAGE_LENGTH,
 )
+from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.search_processor import SearchProcessor
+from vkuswill_bot.services.tool_executor import ToolExecutor
 from helpers import make_text_response, make_function_call_response
 
 
 # ============================================================================
 # Фикстуры
 # ============================================================================
+
+
+class _LangfuseGenSpy:
+    def end(self, **_kwargs):
+        return None
+
+
+class _LangfuseSpanSpy:
+    def __init__(self, sink: list[dict]):
+        self._sink = sink
+
+    def end(self, **kwargs):
+        self._sink.append(kwargs)
+
+
+class _LangfuseTraceSpy:
+    def __init__(self):
+        self.generation_metadata: list[dict] = []
+        self.span_end_calls: list[dict] = []
+        self.updates: list[dict] = []
+
+    def generation(self, **kwargs):
+        self.generation_metadata.append(kwargs.get("metadata", {}))
+        return _LangfuseGenSpy()
+
+    def span(self, **_kwargs):
+        return _LangfuseSpanSpy(self.span_end_calls)
+
+    def update(self, **kwargs):
+        self.updates.append(kwargs)
+
+
+class _LangfuseServiceSpy:
+    def __init__(self):
+        self.trace_spy = _LangfuseTraceSpy()
+
+    def trace(self, **_kwargs):
+        return self.trace_spy
 
 
 @pytest.fixture
@@ -249,6 +290,37 @@ class TestProcessMessage:
         mock_mcp_client.call_tool.assert_called_once_with(
             "vkusvill_products_search", {"q": "сыр", "limit": 5}
         )
+
+    async def test_injects_cart_success_hint_before_final_text(self, service, mock_mcp_client):
+        """После успешной корзины в историю добавляется anti-hallucination подсказка."""
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {"ok": True, "data": {"link": "https://example.com/cart"}}
+        )
+
+        call_count = 0
+        hint_seen = False
+
+        def mock_chat(chat: Chat):
+            nonlocal call_count, hint_seen
+            call_count += 1
+            if any(
+                isinstance(msg.content, str) and "НЕ извиняйся" in msg.content
+                for msg in chat.messages
+            ):
+                hint_seen = True
+
+            if call_count == 1:
+                return make_function_call_response(
+                    "vkusvill_cart_link_create",
+                    {"products": [{"xml_id": 123, "q": 1}]},
+                )
+            return make_text_response("Корзина успешно собрана!")
+
+        with patch.object(service._client, "chat", side_effect=mock_chat):
+            result = await service.process_message(user_id=1, text="Собери корзину")
+
+        assert "корзин" in result.lower()
+        assert hint_seen is True
 
     async def test_mcp_error_handled(self, service, mock_mcp_client):
         """Ошибка MCP не крашит процесс, результат ошибки передаётся в GigaChat."""
@@ -487,6 +559,123 @@ class TestClose:
         with patch.object(service._client, "close", side_effect=RuntimeError("close error")):
             # Не должно бросить исключение
             await service.close()
+
+
+class TestLangfuseRecipeMetadata:
+    """Тесты recipe-метаданных в Langfuse trace."""
+
+    async def test_recipe_fallback_metadata_for_sequential_search(
+        self,
+        service_with_recipes,
+        mock_recipe_store,
+        mock_mcp_client,
+    ):
+        """При поингредиентном поиске после recipe_ingredients ставится fallback."""
+        mock_recipe_store.get.return_value = {
+            "dish_name": "борщ",
+            "servings": 2,
+            "ingredients": [
+                {"name": "морковь", "quantity": 1, "unit": "шт", "search_query": "морковь"}
+            ],
+        }
+        mock_mcp_client.call_tool.return_value = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {
+                            "xml_id": 100,
+                            "name": "Морковь",
+                            "price": {"current": 50},
+                            "unit": "кг",
+                        }
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        )
+
+        langfuse_spy = _LangfuseServiceSpy()
+        service_with_recipes._langfuse = langfuse_spy
+
+        call_count = 0
+
+        def mock_chat(chat: Chat):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_function_call_response(
+                    "recipe_ingredients",
+                    {"dish": "борщ", "servings": 2},
+                )
+            if call_count == 2:
+                return make_function_call_response("vkusvill_products_search", {"q": "морковь"})
+            return make_text_response("Готово")
+
+        with patch.object(service_with_recipes._client, "chat", side_effect=mock_chat):
+            await service_with_recipes.process_message(user_id=1, text="Собери борщ")
+
+        final_meta = langfuse_spy.trace_spy.updates[-1]["metadata"]
+        assert final_meta["recipe_mode"] is True
+        assert final_meta["recipe_search_used"] is False
+        assert final_meta["recipe_search_fallback"] is True
+        assert final_meta["recipe_ingredient_count"] == 1
+        assert final_meta["recipe_not_found_count"] == 0
+
+    async def test_recipe_search_metadata_not_found(self, mock_mcp_client):
+        """recipe_search заполняет used + not_found_count в финальном metadata."""
+        search_processor = SearchProcessor()
+        cart_processor = CartProcessor(search_processor.price_cache)
+        recipe_search_service = AsyncMock()
+        recipe_search_service.search_ingredients.return_value = json.dumps(
+            {
+                "ok": True,
+                "results": [],
+                "not_found": ["лавровый лист"],
+                "search_log": {},
+            },
+            ensure_ascii=False,
+        )
+        tool_executor = ToolExecutor(
+            mcp_client=mock_mcp_client,
+            search_processor=search_processor,
+            cart_processor=cart_processor,
+            recipe_search_service=recipe_search_service,
+        )
+        recipe_store = AsyncMock()
+        service = GigaChatService(
+            credentials="test-creds",
+            model="GigaChat",
+            scope="GIGACHAT_API_PERS",
+            mcp_client=mock_mcp_client,
+            recipe_store=recipe_store,
+            tool_executor=tool_executor,
+            max_tool_calls=5,
+            max_history=10,
+        )
+        langfuse_spy = _LangfuseServiceSpy()
+        service._langfuse = langfuse_spy
+
+        call_count = 0
+
+        def mock_chat(chat: Chat):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return make_function_call_response(
+                    "recipe_search",
+                    {"ingredients": [{"name": "лавровый лист", "search_query": "лавровый лист"}]},
+                )
+            return make_text_response("Готово")
+
+        with patch.object(service._client, "chat", side_effect=mock_chat):
+            await service.process_message(user_id=1, text="Собери ингредиенты")
+
+        recipe_search_service.search_ingredients.assert_called_once()
+        final_meta = langfuse_spy.trace_spy.updates[-1]["metadata"]
+        assert final_meta["recipe_mode"] is True
+        assert final_meta["recipe_search_used"] is True
+        assert final_meta["recipe_not_found_count"] == 1
 
 
 class TestGetFunctions:
@@ -915,18 +1104,21 @@ class TestGetFunctionsWithRecipes:
         functions = await service_with_recipes._get_functions()
         names = [f["name"] for f in functions]
         assert "recipe_ingredients" in names
+        assert "recipe_search" in names
 
     async def test_excludes_recipe_tool_without_store(self, service):
         """Без recipe_store инструмента recipe_ingredients нет."""
         functions = await service._get_functions()
         names = [f["name"] for f in functions]
         assert "recipe_ingredients" not in names
+        assert "recipe_search" not in names
 
     async def test_includes_both_recipes_and_prefs(self, service_with_all):
         """С обоими хранилищами — оба набора инструментов."""
         functions = await service_with_all._get_functions()
         names = [f["name"] for f in functions]
         assert "recipe_ingredients" in names
+        assert "recipe_search" in names
         assert "user_preferences_get" in names
 
 
