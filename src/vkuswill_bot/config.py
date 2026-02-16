@@ -99,6 +99,9 @@ class Config(BaseSettings):
     bonus_cart_limit: int = 5  # Tier 2: бонус за survey
     referral_cart_bonus: int = 3  # Tier 3: бонус за приглашение друга
 
+    # Системный промпт (переопределение через env для production)
+    system_prompt: str = ""
+
     # Отладка
     debug: bool = False
 

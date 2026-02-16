@@ -18,7 +18,7 @@ from gigachat.models import FunctionCall, Messages, MessagesRole
 from redis.asyncio import Redis
 
 from vkuswill_bot.services.dialog_manager import trim_message_list
-from vkuswill_bot.services.prompts import SYSTEM_PROMPT
+from vkuswill_bot.services.prompts import get_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -100,7 +100,7 @@ class RedisDialogManager:
                 )
 
         # Новый диалог
-        return [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        return [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
 
     async def save_history(
         self,

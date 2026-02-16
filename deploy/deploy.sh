@@ -128,13 +128,18 @@ load_lockbox_secrets() {
   fi
 
   # Lockbox — основной источник секретов, перезаписывает .env
+  # Многострочные значения (например, SYSTEM_PROMPT) оборачиваются в кавычки
   echo "$LOCKBOX_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 for entry in data.get('entries', []):
     key = entry['key']
     value = entry.get('text_value', '')
-    print(f'{key}={value}')
+    if '\n' in value or '\"' in value:
+        escaped = value.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
+        print(f'{key}=\"{escaped}\"')
+    else:
+        print(f'{key}={value}')
 " > "$ENV_FILE"
 
   chmod 600 "$ENV_FILE"

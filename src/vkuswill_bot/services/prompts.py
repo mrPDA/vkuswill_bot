@@ -1,6 +1,8 @@
 """Системный промпт и текстовые константы для GigaChat."""
 
-SYSTEM_PROMPT = """\
+# Упрощённый дефолтный промпт — достаточный для запуска.
+# Полный production-промпт загружается из переменной окружения SYSTEM_PROMPT.
+_DEFAULT_SYSTEM_PROMPT = """\
 Ты — продавец-консультант ВкусВилл в Telegram-боте. \
 Помогаешь пользователям подбирать продукты и собирать корзину.
 
@@ -290,6 +292,19 @@ unit="шт" + "4 штуки" → q=4; unit="л" + "пол-литра" → q=0.5.
 от наличия. Цены и состав уточняйте на сайте."
 - НИКОГДА не пропускай список товаров! Покупатель должен видеть что именно в корзине.
 """
+
+
+def get_system_prompt() -> str:
+    """Получить системный промпт: из env (production) или дефолтный."""
+    from vkuswill_bot.config import config
+
+    if config.system_prompt:
+        return config.system_prompt
+    return _DEFAULT_SYSTEM_PROMPT
+
+
+# Обратная совместимость: SYSTEM_PROMPT как свойство для существующего кода.
+SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
 
 RECIPE_EXTRACTION_PROMPT = """\
 Составь ПОЛНЫЙ список ингредиентов для блюда «{dish}» на {servings} порций.
