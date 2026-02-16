@@ -350,6 +350,28 @@ class UserStore:
             row = await conn.fetchrow(sql, user_id)
         return dict(row) if row else {}
 
+    async def reset_carts(self, user_id: int) -> dict[str, Any] | None:
+        """Сбросить счётчик корзин пользователя до 0.
+
+        Также сбрасывает survey_completed и cart_limit до дефолта.
+
+        Returns:
+            Обновлённые данные пользователя или None, если не найден.
+        """
+        await self.ensure_schema()
+        sql = """
+            UPDATE users
+            SET carts_created = 0,
+                cart_limit = 5,
+                survey_completed = FALSE,
+                updated_at = NOW()
+            WHERE user_id = $1
+            RETURNING carts_created, cart_limit, survey_completed
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(sql, user_id)
+        return dict(row) if row else None
+
     async def grant_bonus_carts(self, user_id: int, amount: int = 5) -> int:
         """Увеличить лимит корзин.
 
