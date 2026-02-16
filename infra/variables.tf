@@ -131,7 +131,7 @@ variable "gigachat_model" {
 }
 
 variable "webhook_host" {
-  description = "External hostname/IP for Telegram webhook (e.g. YOUR_SERVER_IP)"
+  description = "External hostname/IP for Telegram webhook (e.g. 1.2.3.4)"
   type        = string
 }
 
