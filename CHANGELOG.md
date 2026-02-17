@@ -5,6 +5,25 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.17.0] — 2026-02-17
+
+### Безопасность
+
+- **Очистка Git-истории от секретов** — удалены `infra/sa-key.json`, `terraform.tfvars`, `backend.conf`, `tfplan`, `.terraform/` из всей истории через `git filter-repo`
+- **Ротация всех скомпрометированных ключей** — Yandex Cloud SA, S3, PostgreSQL, Redis, Langfuse, Metabase, Bot Token, GigaChat API
+- **SYSTEM_PROMPT вынесен в Yandex Lockbox** — промпт больше не хранится в репозитории, передаётся через секрет-менеджер
+
+### Исправлено
+
+- **GigaChat SSL** — CA bundle (`russian_ca_bundle.pem`) включён в Docker-образ (`COPY certs/`), GigaChat работает с `verify=True`
+- **Баг с предпочтениями** — LLM больше не перезаписывает предпочтения при обычных заказах («хочу молоко» = покупка, не предпочтение); добавлено предупреждение при перезаписи существующего предпочтения
+- **S3 Lifecycle Policy** — убран дублирующий runtime-вызов `ensure_lifecycle_policy()`, политика управляется через Terraform
+
+### Изменено
+
+- **GitHub Actions обновлены** — `actions/checkout` v4→v6, `astral-sh/setup-uv` v4→v7, `actions/upload-artifact` v4→v6, `docker/build-push-action` v5→v6
+- **deploy.sh** — `SYSTEM_PROMPT` передаётся отдельным файлом вместо `--env-file` (поддержка многострочных значений)
+
 ## [0.16.0] — 2026-02-16
 
 ### Добавлено
