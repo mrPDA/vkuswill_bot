@@ -110,8 +110,8 @@ def _setup_logging() -> None:
             )
             logging.getLogger().addHandler(s3_handler)
 
-            # Установить Lifecycle Policy для автоудаления логов (152-ФЗ)
-            s3_handler.ensure_lifecycle_policy()
+            # Lifecycle Policy управляется через Terraform (s3_logs.tf),
+            # дублирующий вызов из кода не нужен и требует лишних прав.
         except Exception as exc:
             logging.getLogger(__name__).warning("S3 логирование не запущено: %s", exc)
 

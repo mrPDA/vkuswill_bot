@@ -32,9 +32,9 @@ jobs:
     name: Pre-deploy tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
-      - uses: astral-sh/setup-uv@v4
+      - uses: astral-sh/setup-uv@v7
         with:
           version: "latest"
 
@@ -55,7 +55,7 @@ jobs:
       full_image: ${{ steps.meta.outputs.full_image }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Extract tag
         id: meta
@@ -75,7 +75,7 @@ jobs:
               --password-stdin
 
       - name: Build and push
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@v6
         with:
           context: .
           push: true
@@ -96,7 +96,7 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup SSH
         run: |
