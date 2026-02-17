@@ -11,7 +11,7 @@
 import pytest
 from unittest.mock import AsyncMock
 
-from vkuswill_bot.services.price_cache import PriceInfo, TwoLevelPriceCache
+from vkuswill_bot.services.price_cache import TwoLevelPriceCache
 
 
 @pytest.fixture
@@ -35,7 +35,7 @@ class TestGet:
 
     async def test_l1_hit(self, cache, mock_redis):
         """L1 hit — Redis не вызывается."""
-        cache._data[100] = PriceInfo("Молоко", 79.0, "шт")
+        cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
 
         result = await cache.get(100)
 
@@ -60,7 +60,7 @@ class TestGet:
         assert result.unit == "шт"
         mock_redis.hgetall.assert_called_once_with("price:100")
         # Промотировано в L1
-        assert 100 in cache._data
+        assert 100 in cache
 
     async def test_l2_hit_with_weight(self, cache, mock_redis):
         """L2 hit с weight — weight промотируется в L1."""
@@ -133,8 +133,9 @@ class TestSet:
         await cache.set(100, "Молоко", 79.0, "шт")
 
         # L1
-        assert 100 in cache._data
-        assert cache._data[100].name == "Молоко"
+        l1_result = await cache.get(100)
+        assert l1_result is not None
+        assert l1_result.name == "Молоко"
         # L2
         mock_redis.hset.assert_called_once_with(
             "price:100",
@@ -154,8 +155,10 @@ class TestSet:
         )
 
         # L1
-        assert cache._data[100].weight_value == 1.0
-        assert cache._data[100].weight_unit == "кг"
+        l1_result = await cache.get(100)
+        assert l1_result is not None
+        assert l1_result.weight_value == 1.0
+        assert l1_result.weight_unit == "кг"
         # L2
         mock_redis.hset.assert_called_once_with(
             "price:100",
@@ -175,8 +178,10 @@ class TestSet:
         await cache.set(100, "Молоко", 79.0, "шт")
 
         # L1 работает
-        assert 100 in cache._data
-        assert cache._data[100].price == 79.0
+        result = await cache.get(100)
+        assert result is not None
+        assert result.price == 79.0
+        mock_redis.hgetall.assert_not_called()
 
 
 class TestDictAPI:
@@ -186,13 +191,13 @@ class TestDictAPI:
         """__setitem__ пишет только в L1 (sync)."""
         cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
 
-        assert 100 in cache._data
+        assert 100 in cache
         # Redis НЕ вызывается (sync shortcut)
         mock_redis.hset.assert_not_called()
 
     def test_getitem_reads_l1_only(self, cache):
         """__getitem__ читает только из L1 (sync)."""
-        cache._data[100] = PriceInfo("Молоко", 79.0, "шт")
+        cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
 
         info = cache[100]
 
@@ -201,13 +206,13 @@ class TestDictAPI:
     def test_contains(self, cache):
         """__contains__ проверяет только L1."""
         assert 100 not in cache
-        cache._data[100] = PriceInfo("Молоко", 79.0, "шт")
+        cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
         assert 100 in cache
 
     def test_len(self, cache):
         """__len__ считает только L1."""
         assert len(cache) == 0
-        cache._data[100] = PriceInfo("Молоко", 79.0, "шт")
+        cache[100] = {"name": "Молоко", "price": 79.0, "unit": "шт"}
         assert len(cache) == 1
 
     def test_bool_always_true(self, cache):

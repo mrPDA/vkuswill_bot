@@ -227,10 +227,16 @@ class TestHandleText:
         """Индикатор набора отправляется во время обработки."""
         msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
+        typing_sent = asyncio.Event()
 
-        # process_message с задержкой, чтобы typing-таск успел сработать
+        async def mark_typing(*args, **kwargs):
+            typing_sent.set()
+
+        msg.bot.send_chat_action.side_effect = mark_typing
+
+        # Ждём факт отправки typing, без реальных sleep
         async def slow_process(*args, **kwargs):
-            await asyncio.sleep(0.1)
+            await typing_sent.wait()
             return "Ответ"
 
         mock_service.process_message.side_effect = slow_process
@@ -244,13 +250,16 @@ class TestHandleText:
         """Ошибка send_chat_action не крашит бота (lines 118-119)."""
         msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
+        typing_attempted = asyncio.Event()
 
-        # send_chat_action выбрасывает исключение
-        msg.bot.send_chat_action.side_effect = RuntimeError("Network error")
+        async def failing_typing(*args, **kwargs):
+            typing_attempted.set()
+            raise RuntimeError("Network error")
 
-        # process_message с задержкой, чтобы typing-таск успел сработать
+        msg.bot.send_chat_action.side_effect = failing_typing
+
         async def slow_process(*args, **kwargs):
-            await asyncio.sleep(0.15)
+            await typing_attempted.wait()
             return "Ответ"
 
         mock_service.process_message.side_effect = slow_process
