@@ -128,22 +128,29 @@ load_lockbox_secrets() {
   fi
 
   # Lockbox — основной источник секретов, перезаписывает .env
-  # Многострочные значения (например, SYSTEM_PROMPT) оборачиваются в кавычки
+  # SYSTEM_PROMPT сохраняется в отдельный файл (Docker --env-file не поддерживает многострочные значения)
+  PROMPT_FILE="/opt/vkuswill-bot/system_prompt.txt"
   echo "$LOCKBOX_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
+prompt = ''
+env_lines = []
 for entry in data.get('entries', []):
     key = entry['key']
     value = entry.get('text_value', '')
-    if '\n' in value or '\"' in value:
-        escaped = value.replace('\\\\', '\\\\\\\\').replace('\"', '\\\\\"')
-        print(f'{key}=\"{escaped}\"')
+    if key == 'SYSTEM_PROMPT':
+        prompt = value
     else:
-        print(f'{key}={value}')
-" > "$ENV_FILE"
+        env_lines.append(f'{key}={value}')
+with open('${ENV_FILE}', 'w') as f:
+    f.write('\n'.join(env_lines) + '\n')
+with open('${PROMPT_FILE}', 'w') as f:
+    f.write(prompt)
+print(f'env={len(env_lines)} prompt={len(prompt)}')
+"
 
-  chmod 600 "$ENV_FILE"
-  log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей)"
+  chmod 600 "$ENV_FILE" "$PROMPT_FILE"
+  log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей, промпт: $(wc -c < "$PROMPT_FILE") байт)"
 }
 
 # ─── 3. Очистка места перед pull ────────────────────────────
@@ -359,12 +366,24 @@ if [[ -n "$GIGACHAT_MODEL_OVERRIDE" ]]; then
   log "Модель GigaChat: ${GIGACHAT_MODEL_OVERRIDE} (override)"
 fi
 
+# SYSTEM_PROMPT хранится в отдельном файле (Docker --env-file не поддерживает многострочные значения)
+# Экспортируем в окружение, а docker run наследует через `-e SYSTEM_PROMPT` (без =value)
+PROMPT_FILE="/opt/vkuswill-bot/system_prompt.txt"
+PROMPT_ENV=""
+if [[ -f "$PROMPT_FILE" ]] && [[ -s "$PROMPT_FILE" ]]; then
+  export SYSTEM_PROMPT
+  SYSTEM_PROMPT=$(cat "$PROMPT_FILE")
+  PROMPT_ENV="-e SYSTEM_PROMPT"
+  log "SYSTEM_PROMPT загружен из ${PROMPT_FILE} ($(wc -c < "$PROMPT_FILE") байт)"
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --restart unless-stopped \
   --network host \
   $ENV_FLAG \
   $MODEL_ENV \
+  $PROMPT_ENV \
   -v "${DATA_DIR}:/app/data" \
   $SSL_MOUNT \
   $SSL_ENV \
