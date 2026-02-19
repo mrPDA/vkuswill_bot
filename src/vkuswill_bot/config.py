@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,6 +28,13 @@ class Config(BaseSettings):
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
+    # API key для входящих запросов к локальному MCP-серверу (HTTP transport).
+    # Пусто = проверка отключена (обратная совместимость / локальная разработка).
+    mcp_server_api_key: str = ""
+    # Реестр API ключей MCP в JSON-формате:
+    # {"agent_a":"key1","agent_b":"key2"}
+    # Используется для multi-client сценария; может применяться вместе с mcp_server_api_key.
+    mcp_server_api_keys: dict[str, str] = {}
 
     # Лимиты
     max_tool_calls: int = 20
@@ -68,6 +77,36 @@ class Config(BaseSettings):
                 return []
             return [int(x.strip()) for x in v.split(",") if x.strip()]
         return []  # type: ignore[return-value]
+
+    @field_validator("mcp_server_api_keys", mode="before")
+    @classmethod
+    def _parse_mcp_server_api_keys(cls, v: object) -> dict[str, str]:
+        """Принять JSON-объект ключей MCP-клиентов из env."""
+        if v is None:
+            return {}
+
+        raw: object = v
+        if isinstance(v, str):
+            stripped = v.strip()
+            if not stripped:
+                return {}
+            try:
+                raw = json.loads(stripped)
+            except json.JSONDecodeError as exc:
+                raise ValueError("mcp_server_api_keys must be a JSON object") from exc
+
+        if not isinstance(raw, dict):
+            raise ValueError("mcp_server_api_keys must be a JSON object")
+
+        parsed: dict[str, str] = {}
+        for key, value in raw.items():
+            if not isinstance(key, str) or not isinstance(value, str):
+                raise ValueError("mcp_server_api_keys entries must be string:string")
+            client_id = key.strip()
+            api_key = value.strip()
+            if client_id and api_key:
+                parsed[client_id] = api_key
+        return parsed
 
     # Webhook
     use_webhook: bool = False

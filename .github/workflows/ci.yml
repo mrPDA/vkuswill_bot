@@ -80,6 +80,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Secrets scan — Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_CONFIG: .gitleaks.toml
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:
