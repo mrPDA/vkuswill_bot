@@ -1,0 +1,36 @@
+title = "vkuswill-bot gitleaks config"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Example placeholders in docs and templates"
+paths = [
+  '''^\.env\.example$''',
+  '''^README\.md$''',
+  '''^CONTRIBUTING\.md$''',
+  '''^infra/terraform\.tfvars\.example$''',
+]
+regexes = [
+  '''(?i)your_telegram_bot_token''',
+  '''(?i)your_gigachat_auth_key''',
+  '''(?i)change_me_[a-z0-9_]+''',
+  '''123456:ABC-DEF\.\.\.''',
+]
+
+[[allowlists]]
+description = "Test-only synthetic credentials"
+paths = [
+  '''^tests/test_config_security\.py$''',
+]
+regexes = [
+  '''AKIA_TEST''',
+  '''123456789:ABCdefGHIjklMNOpqrsTUVwxyz''',
+]
+
+[[allowlists]]
+description = "Public certificate bundles"
+paths = [
+  '''^certs/.*''',
+  '''^docs/cert/.*''',
+]

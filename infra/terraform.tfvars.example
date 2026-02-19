@@ -21,6 +21,10 @@ redis_password = "CHANGE_ME_strong_password_here"
 bot_token            = "123456:ABC-DEF..."
 gigachat_credentials = "your_gigachat_auth_key"
 mcp_server_url       = "https://mcp001.vkusvill.ru/mcp"
+mcp_server_enabled   = "true"
+mcp_server_port      = "8081"
+mcp_server_api_key   = "CHANGE_ME_single_key_or_leave_empty"
+mcp_server_api_keys  = "{\"agent_a\":\"CHANGE_ME_key_a\",\"agent_b\":\"CHANGE_ME_key_b\"}"
 admin_user_ids       = "[123456789]"
 
 # Webhook / Runtime

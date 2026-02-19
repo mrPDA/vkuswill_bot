@@ -15,6 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import ValidationError
+from pydantic_settings.exceptions import SettingsError
 
 from vkuswill_bot.config import Config
 
@@ -101,6 +102,12 @@ class TestDefaultValues:
         assert cfg.mcp_server_url.startswith("https://"), (
             f"MCP URL должен быть HTTPS, получено: {cfg.mcp_server_url}"
         )
+
+    def test_mcp_server_api_keys_default_empty(self):
+        """mcp_server_api_keys по умолчанию пустой словарь."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.mcp_server_api_keys == {}
 
     def test_gigachat_model_default(self):
         """Модель GigaChat по умолчанию — не пустая."""
@@ -364,6 +371,22 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.storage_backend == "redis"
+
+    def test_mcp_server_api_keys_customizable(self):
+        """mcp_server_api_keys настраивается через JSON в env."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "MCP_SERVER_API_KEYS": '{"agent_a":"key-a","agent_b":"key-b"}',
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.mcp_server_api_keys == {"agent_a": "key-a", "agent_b": "key-b"}
+
+    def test_mcp_server_api_keys_invalid_json_rejected(self):
+        """Некорректный JSON в MCP_SERVER_API_KEYS приводит к ошибке парсинга."""
+        custom_env = {**MINIMAL_ENV, "MCP_SERVER_API_KEYS": "not-a-json"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(SettingsError):
+            Config(_env_file=None)  # type: ignore[call-arg]
 
     def test_redis_url_customizable(self):
         """redis_url настраивается через переменную окружения."""

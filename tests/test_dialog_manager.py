@@ -243,15 +243,34 @@ class TestGetLock:
         """Lock действительно сериализует конкурентные операции."""
         lock = manager.get_lock(42)
         results: list[int] = []
+        second_entered = asyncio.Event()
+        release_first = asyncio.Event()
+        in_critical = 0
+        max_in_critical = 0
 
         async def task(val: int) -> None:
+            nonlocal in_critical, max_in_critical
             async with lock:
+                in_critical += 1
+                max_in_critical = max(max_in_critical, in_critical)
+                if val == 1:
+                    await release_first.wait()
+                else:
+                    second_entered.set()
                 results.append(val)
-                await asyncio.sleep(0.01)
+                in_critical -= 1
 
-        await asyncio.gather(task(1), task(2))
-        # Оба значения должны быть в results (в любом порядке)
-        assert sorted(results) == [1, 2]
+        t1 = asyncio.create_task(task(1))
+        await asyncio.sleep(0)  # Дать первому таску захватить lock
+        t2 = asyncio.create_task(task(2))
+        await asyncio.sleep(0)  # Дать второму таску попытаться войти в lock
+        assert not second_entered.is_set()
+
+        release_first.set()
+        await asyncio.gather(t1, t2)
+
+        assert results == [1, 2]
+        assert max_in_critical == 1
 
 
 # ============================================================================
