@@ -63,11 +63,10 @@ def main() -> None:
             args.host,
             args.port,
         )
-        mcp.run(
-            transport="streamable-http",
-            host=args.host,
-            port=args.port,
-        )
+        # В mcp>=1.26 host/port конфигурируются через settings, а не через kwargs run().
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.run(transport="streamable-http")
     else:
         logger.info("Запуск VkusVill MCP-сервера (stdio)...")
         mcp.run(transport="stdio")
