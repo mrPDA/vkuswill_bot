@@ -128,9 +128,7 @@ def _make_prefs_store() -> AsyncMock:
     store = AsyncMock()
     store.get_formatted.return_value = PREFS_RESULT
     store.set.return_value = json.dumps({"ok": True, "message": "Запомнил"}, ensure_ascii=False)
-    store.delete.return_value = json.dumps(
-        {"ok": True, "message": "Удалено"}, ensure_ascii=False
-    )
+    store.delete.return_value = json.dumps({"ok": True, "message": "Удалено"}, ensure_ascii=False)
     return store
 
 
@@ -266,10 +264,10 @@ class TestSearchProducts:
             (10, 10),
             (1, 1),
             (30, 30),
-            (0, 1),       # clamped to min
-            (-5, 1),      # clamped to min
-            (31, 30),     # clamped to max
-            (100, 30),    # clamped to max
+            (0, 1),  # clamped to min
+            (-5, 1),  # clamped to min
+            (31, 30),  # clamped to max
+            (100, 30),  # clamped to max
         ],
     )
     async def test_limit_clamping(self, limit_in: int, limit_expected: int) -> None:
@@ -377,9 +375,7 @@ class TestGetPreviousCart:
 
         await get_previous_cart(ctx, user_id=7)
 
-        svc.tool_executor.execute.assert_awaited_once_with(
-            "get_previous_cart", {}, user_id=7
-        )
+        svc.tool_executor.execute.assert_awaited_once_with("get_previous_cart", {}, user_id=7)
 
     async def test_user_id_passed_correctly(self) -> None:
         svc = _make_services()
@@ -464,9 +460,7 @@ class TestSetPreference:
             (10, "мороженое", "пломбир в шоколаде на палочке"),
         ],
     )
-    async def test_parametrized(
-        self, user_id: int, category: str, preference: str
-    ) -> None:
+    async def test_parametrized(self, user_id: int, category: str, preference: str) -> None:
         svc = _make_services()
         ctx = _make_ctx(svc)
 
