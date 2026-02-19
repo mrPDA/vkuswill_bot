@@ -5,6 +5,19 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.0] — 2026-02-19
+
+### Добавлено
+
+- **MCP Server в production-контуре** — в CD/deploy добавлен отдельный контейнер `vkuswill-mcp-server` с управлением через `MCP_SERVER_ENABLED` и `MCP_SERVER_PORT`, плюс health-check после деплоя
+- **Поддержка multi-client API keys для MCP** — авторизация теперь поддерживает `MCP_SERVER_API_KEYS` (JSON map) и fallback на `MCP_SERVER_API_KEY`
+- **MCP endpoint в nginx** — добавлен reverse-proxy маршрут `/mcp` на внутренний порт MCP-сервера
+
+### Изменено
+
+- **Lockbox/Terraform для MCP** — добавлены переменные и секреты `MCP_SERVER_ENABLED`, `MCP_SERVER_PORT`, `MCP_SERVER_API_KEY`, `MCP_SERVER_API_KEYS`
+- **CI security gate** — подключён `gitleaks` и исправлен checkout (`fetch-depth: 0`) для корректной работы secret scan в PR
+
 ## [0.17.0] — 2026-02-17
 
 ### Безопасность
