@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import sys
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 from vkuswill_bot.mcp_server import __main__ as mcp_main
 
@@ -21,31 +22,35 @@ class TestMcpServerMain:
         run_mock.assert_called_once_with(transport="stdio")
 
     def test_http_mode_runs_streamable_http_with_defaults(self) -> None:
+        fake_mcp = SimpleNamespace(
+            settings=SimpleNamespace(host="127.0.0.1", port=8000),
+            run=Mock(),
+        )
         with (
             patch.object(sys, "argv", ["mcp_server", "--http"]),
-            patch("vkuswill_bot.mcp_server.server.mcp.run") as run_mock,
+            patch("vkuswill_bot.mcp_server.server.mcp", fake_mcp),
         ):
             mcp_main.main()
 
-        run_mock.assert_called_once_with(
-            transport="streamable-http",
-            host="127.0.0.1",
-            port=8081,
-        )
+        fake_mcp.run.assert_called_once_with(transport="streamable-http")
+        assert fake_mcp.settings.host == "127.0.0.1"
+        assert fake_mcp.settings.port == 8081
 
     def test_http_mode_respects_custom_host_and_port(self) -> None:
+        fake_mcp = SimpleNamespace(
+            settings=SimpleNamespace(host="127.0.0.1", port=8000),
+            run=Mock(),
+        )
         with (
             patch.object(
                 sys,
                 "argv",
                 ["mcp_server", "--http", "--host", "0.0.0.0", "--port", "9000"],
             ),
-            patch("vkuswill_bot.mcp_server.server.mcp.run") as run_mock,
+            patch("vkuswill_bot.mcp_server.server.mcp", fake_mcp),
         ):
             mcp_main.main()
 
-        run_mock.assert_called_once_with(
-            transport="streamable-http",
-            host="0.0.0.0",
-            port=9000,
-        )
+        fake_mcp.run.assert_called_once_with(transport="streamable-http")
+        assert fake_mcp.settings.host == "0.0.0.0"
+        assert fake_mcp.settings.port == 9000
