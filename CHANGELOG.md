@@ -5,6 +5,13 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.1] — 2026-02-19
+
+### Исправлено
+
+- **MCP HTTP startup в production** — убран некорректный вызов `FastMCP.run(..., host=..., port=...)`; host/port теперь задаются через `mcp.settings`, что совместимо с `mcp==1.26.x`
+- **Тесты entrypoint MCP** — обновлены проверки `tests/test_mcp_server_main.py` для валидации HTTP-запуска через `settings`
+
 ## [0.18.0] — 2026-02-19
 
 ### Добавлено
