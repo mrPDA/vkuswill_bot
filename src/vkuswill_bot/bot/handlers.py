@@ -281,6 +281,7 @@ async def cmd_start(
             "<b>Команды:</b>\n"
             "/reset — начать новый диалог\n"
             "/link_voice — привязать Алису\n"
+            "/unlink_voice — отвязать Алису\n"
             "/invite — пригласить друга\n"
             "/privacy — политика конфиденциальности\n"
             "/help — помощь",
@@ -298,6 +299,7 @@ async def cmd_start(
             "<b>Команды:</b>\n"
             "/reset — начать новый диалог\n"
             "/link_voice — привязать Алису\n"
+            "/unlink_voice — отвязать Алису\n"
             "/invite — пригласить друга\n"
             "/privacy — политика конфиденциальности\n"
             "/help — помощь"
@@ -331,6 +333,7 @@ async def consent_accept_callback(
         "<b>Команды:</b>\n"
         "/reset — начать новый диалог\n"
         "/link_voice — привязать Алису\n"
+        "/unlink_voice — отвязать Алису\n"
         "/invite — пригласить друга\n"
         "/privacy — политика конфиденциальности\n"
         "/help — помощь"
@@ -437,6 +440,7 @@ async def cmd_help(message: Message) -> None:
         "<b>Команды:</b>\n"
         "/reset — сбросить историю диалога\n"
         "/link_voice — привязать Алису\n"
+        "/unlink_voice — отвязать Алису\n"
         "/invite — пригласить друга и получить бонусные корзины\n"
         "/survey — пройти опрос и получить бонусные корзины\n"
         "/privacy — политика конфиденциальности"
@@ -565,6 +569,45 @@ async def cmd_link_voice(
         "3. После этого можно заказывать голосом.\n\n"
         f"Код действует <b>{ttl_minutes} минут</b> и работает один раз."
     )
+
+
+@router.message(Command("unlink_voice"))
+async def cmd_unlink_voice(
+    message: Message,
+    user_store: UserStore | None = None,
+) -> None:
+    """Отвязать аккаунт Алисы от текущего Telegram-пользователя."""
+    if not message.from_user:
+        return
+    if user_store is None:
+        await message.answer("Отвязка Алисы временно недоступна.")
+        return
+
+    try:
+        revoked = await user_store.revoke_voice_links_for_user(
+            user_id=message.from_user.id,
+            provider="alice",
+        )
+        await user_store.log_event(
+            message.from_user.id,
+            "voice_link_revoked",
+            {"provider": "alice", "revoked": revoked},
+        )
+    except Exception as e:
+        logger.error("Ошибка отвязки Алисы для %s: %s", message.from_user.id, e)
+        await message.answer("Не удалось отвязать Алису. Попробуйте позже.")
+        return
+
+    if revoked > 0:
+        await message.answer(
+            "<b>Алиса отвязана.</b>\n\n"
+            "Голосовые заказы больше не связаны с вашим аккаунтом.\n"
+            "Чтобы привязать снова, используйте /link_voice."
+        )
+    else:
+        await message.answer(
+            "Активная привязка Алисы не найдена.\nЧтобы привязать аккаунт, используйте /link_voice."
+        )
 
 
 @router.message(Command("reset"))
