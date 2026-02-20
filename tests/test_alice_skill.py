@@ -51,6 +51,49 @@ class FakeMCPClient:
         raise AssertionError(f"Unexpected tool call: {name}")
 
 
+class FakeMCPClientAltCartPayload(FakeMCPClient):
+    """Фейковый MCP-клиент с альтернативной схемой cart payload."""
+
+    async def call_tool(self, name: str, arguments: dict) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {"ok": True, "data": [{"xml_id": 101, "name": "Молоко 3.2%"}]},
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "cart_link": "https://shop.example/cart/alt",
+                        "total": 640,
+                        "products_count": 2,
+                    },
+                },
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+
+class FakeMCPClientLinkOnly(FakeMCPClient):
+    """Фейковый MCP-клиент, который возвращает только ссылку на корзину."""
+
+    async def call_tool(self, name: str, arguments: dict) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {"ok": True, "data": [{"xml_id": 101, "name": "Молоко 3.2%"}]},
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/link-only"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_success():
     mcp = FakeMCPClient()
@@ -72,6 +115,49 @@ async def test_orchestrator_success():
     assert result.delivery.channel == "alice_app_card"
     assert "ссылку отправила в приложение" in result.voice_text.lower()
     assert ("vkusvill_products_search", {"q": "молоко", "limit": 5}) in mcp.calls
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_supports_alternative_cart_payload():
+    mcp = FakeMCPClientAltCartPayload()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-7",
+        utterance="закажи молоко",
+    )
+
+    assert result.ok is True
+    assert result.cart_link == "https://shop.example/cart/alt"
+    assert result.total_rub == 640.0
+    assert result.items_count == 2
+    assert "2 позиций" in result.voice_text
+    assert "640" in result.voice_text
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_items_count_falls_back_to_requested_products():
+    mcp = FakeMCPClientLinkOnly()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-8",
+        utterance="закажи молоко",
+    )
+
+    assert result.ok is True
+    assert result.cart_link == "https://shop.example/cart/link-only"
+    assert result.items_count == 1
+    assert "1 позиций" in result.voice_text
+    assert "0 позиций" not in result.voice_text
 
 
 @pytest.mark.asyncio
@@ -136,6 +222,21 @@ async def test_orchestrator_link_code_then_order():
 )
 def test_extract_link_code_variants(utterance: str, expected: str | None):
     assert AliceOrderOrchestrator.extract_link_code(utterance) == expected
+
+
+def test_extract_cart_parses_root_fallback_payload():
+    result = AliceOrderOrchestrator._extract_cart(
+        {
+            "cart_link": "https://shop.example/cart/root",
+            "total": "780.5",
+            "count": "3",
+        },
+    )
+    assert result == {
+        "link": "https://shop.example/cart/root",
+        "total_rub": 780.5,
+        "items_count": 3,
+    }
 
 
 @pytest.mark.asyncio
