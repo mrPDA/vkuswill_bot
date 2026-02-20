@@ -800,6 +800,30 @@ class TestVoiceLinking:
         assert user_id is None
         conn.execute.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_revoke_voice_links_for_user_success(self, store):
+        """revoke_voice_links_for_user возвращает число отвязанных связей."""
+        s, conn = store
+        conn.execute.return_value = "UPDATE 2"
+
+        revoked = await s.revoke_voice_links_for_user(user_id=123, provider="alice")
+
+        assert revoked == 2
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "UPDATE voice_account_links" in sql
+        assert "status = 'revoked'" in sql
+
+    @pytest.mark.asyncio
+    async def test_revoke_voice_links_for_user_invalid_provider(self, store):
+        """revoke_voice_links_for_user валидирует provider."""
+        s, conn = store
+
+        with pytest.raises(ValueError):
+            await s.revoke_voice_links_for_user(user_id=123, provider=" ")
+
+        conn.execute.assert_not_called()
+
 
 # ---------------------------------------------------------------------------
 # Тесты: константы
