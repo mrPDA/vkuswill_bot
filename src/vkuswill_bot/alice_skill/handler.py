@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import logging
 import os
@@ -20,15 +21,21 @@ from vkuswill_bot.alice_skill.account_linking import (
     HttpAccountLinkStore,
     InMemoryAccountLinkStore,
     PostgresAccountLinkStore,
+    UnavailableAccountLinkStore,
 )
 from vkuswill_bot.alice_skill.delivery import AliceAppDeliveryAdapter
 from vkuswill_bot.alice_skill.idempotency import InMemoryIdempotencyStore
+from vkuswill_bot.alice_skill.idempotency import RedisIdempotencyStore
 from vkuswill_bot.alice_skill.models import VoiceOrderResult
 from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
+from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
+from vkuswill_bot.alice_skill.rate_limit import RedisRateLimiter
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+from vkuswill_bot.services.redis_client import create_redis_client
 from vkuswill_bot.services.user_store import UserStore
 
 DEFAULT_MCP_URL = "https://mcp001.vkusvill.ru/mcp"
+DEFAULT_WEBHOOK_HEADER_NAME = "X-Alice-Webhook-Token"
 _RUNTIME: _Runtime | None = None
 _EVENT_LOOP: asyncio.AbstractEventLoop | None = None
 logger = logging.getLogger(__name__)
@@ -109,8 +116,21 @@ async def _get_runtime() -> _Runtime:
     mcp_url = os.getenv("ALICE_MCP_SERVER_URL", DEFAULT_MCP_URL)
     mcp_api_key = os.getenv("ALICE_MCP_API_KEY", "")
     require_linked_account = _parse_bool_env("ALICE_REQUIRE_LINKED_ACCOUNT", default=False)
+    linking_fail_closed = _parse_bool_env("ALICE_LINKING_FAIL_CLOSED", default=True)
     degrade_to_guest = _parse_bool_env("ALICE_DEGRADE_TO_GUEST_ON_DB_ERROR", default=False)
     idempotency_ttl = _parse_int_env("ALICE_IDEMPOTENCY_TTL_SECONDS", default=90)
+    idempotency_key_prefix = os.getenv("ALICE_IDEMPOTENCY_KEY_PREFIX", "alice:idem:")
+    rate_limit_key_prefix = os.getenv("ALICE_RATE_LIMIT_KEY_PREFIX", "alice:rl:")
+    order_rate_limit = _parse_int_env("ALICE_ORDER_RATE_LIMIT", default=12)
+    order_rate_window_seconds = _parse_int_env("ALICE_ORDER_RATE_WINDOW_SECONDS", default=60)
+    link_code_rate_limit = _parse_int_env("ALICE_LINK_CODE_RATE_LIMIT", default=6)
+    link_code_rate_window_seconds = _parse_int_env(
+        "ALICE_LINK_CODE_RATE_WINDOW_SECONDS",
+        default=600,
+    )
+    max_utterance_chars = _parse_int_env("ALICE_MAX_UTTERANCE_CHARS", default=512)
+    max_products_per_order = _parse_int_env("ALICE_MAX_PRODUCTS_PER_ORDER", default=20)
+    redis_url = (os.getenv("ALICE_REDIS_URL", "") or os.getenv("REDIS_URL", "")).strip()
     db_connect_timeout = _parse_float_env("ALICE_DB_CONNECT_TIMEOUT_SECONDS", default=3.0)
     link_api_timeout = _parse_float_env("ALICE_LINK_API_TIMEOUT_SECONDS", default=5.0)
     link_api_verify_ssl = _parse_bool_env("ALICE_LINK_API_VERIFY_SSL", default=True)
@@ -118,11 +138,15 @@ async def _get_runtime() -> _Runtime:
     link_api_key = os.getenv("ALICE_LINK_API_KEY", "").strip()
     database_url = os.getenv("ALICE_DATABASE_URL", "") or os.getenv("DATABASE_URL", "")
     effective_require_linked = require_linked_account
+    misconfigured_link_api = bool(link_api_url or link_api_key) and not (
+        link_api_url and link_api_key
+    )
 
     mcp_client = VkusvillMCPClient(
         server_url=mcp_url,
         api_key=mcp_api_key or None,
     )
+
     if link_api_url and link_api_key:
         account_links = HttpAccountLinkStore(
             base_url=link_api_url,
@@ -131,6 +155,15 @@ async def _get_runtime() -> _Runtime:
             timeout_seconds=link_api_timeout,
             verify_ssl=link_api_verify_ssl,
         )
+    elif misconfigured_link_api:
+        logger.warning(
+            "Alice skill: ALICE_LINK_API_URL/ALICE_LINK_API_KEY misconfigured, fail_closed=%s",
+            linking_fail_closed,
+        )
+        if require_linked_account and linking_fail_closed:
+            account_links = UnavailableAccountLinkStore()
+        else:
+            account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
     elif database_url:
         try:
             pool = await asyncpg.create_pool(
@@ -144,19 +177,61 @@ async def _get_runtime() -> _Runtime:
             account_links = PostgresAccountLinkStore(user_store, provider="alice")
         except Exception:
             logger.exception("Alice skill: DB init failed, fallback mode")
-            account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
+            if require_linked_account and linking_fail_closed and not degrade_to_guest:
+                account_links = UnavailableAccountLinkStore()
+            else:
+                account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
             if degrade_to_guest:
                 effective_require_linked = False
     else:
-        account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
+        if require_linked_account and linking_fail_closed:
+            account_links = UnavailableAccountLinkStore()
+        else:
+            account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
+
+    fallback_rate_limiter = InMemoryRateLimiter()
+    order_rate_limiter = fallback_rate_limiter
+    link_code_rate_limiter = fallback_rate_limiter
+    idempotency_store = InMemoryIdempotencyStore()
+    if redis_url:
+        try:
+            redis_client = await create_redis_client(
+                redis_url,
+                decode_responses=False,
+                socket_connect_timeout=db_connect_timeout,
+                socket_timeout=max(db_connect_timeout, 5.0),
+            )
+            idempotency_store = RedisIdempotencyStore(
+                redis_client,
+                key_prefix=idempotency_key_prefix,
+            )
+            shared_rate_limiter = RedisRateLimiter(
+                redis_client,
+                key_prefix=rate_limit_key_prefix,
+                fallback_limiter=fallback_rate_limiter,
+            )
+            order_rate_limiter = shared_rate_limiter
+            link_code_rate_limiter = shared_rate_limiter
+        except Exception:
+            logger.exception(
+                "Alice skill: Redis init failed for idempotency/rate-limit, fallback to in-memory",
+            )
 
     orchestrator = AliceOrderOrchestrator(
         mcp_client,
         account_links=account_links,
         delivery_adapter=AliceAppDeliveryAdapter(),
-        idempotency_store=InMemoryIdempotencyStore(),
+        idempotency_store=idempotency_store,
         require_linked_account=effective_require_linked,
         idempotency_ttl_seconds=idempotency_ttl,
+        max_utterance_chars=max_utterance_chars,
+        max_products_per_order=max_products_per_order,
+        order_rate_limiter=order_rate_limiter,
+        link_code_rate_limiter=link_code_rate_limiter,
+        order_rate_limit=order_rate_limit,
+        order_rate_window_seconds=order_rate_window_seconds,
+        link_code_rate_limit=link_code_rate_limit,
+        link_code_rate_window_seconds=link_code_rate_window_seconds,
     )
     _RUNTIME = _Runtime(orchestrator=orchestrator)
     return _RUNTIME
@@ -201,8 +276,57 @@ def _to_alice_response(event: dict[str, Any], result: VoiceOrderResult) -> dict[
     }
 
 
+def _forbidden_alice_response(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": event.get("version", "1.0"),
+        "session": event.get("session", {}),
+        "response": {
+            "text": "Доступ к навыку ограничен. Попробуйте позже.",
+            "end_session": True,
+        },
+    }
+
+
 def _is_http_proxy_event(event: dict[str, Any]) -> bool:
     return "httpMethod" in event or "requestContext" in event
+
+
+def _header_value(event: dict[str, Any], header_name: str) -> str | None:
+    headers = event.get("headers")
+    if not isinstance(headers, dict):
+        return None
+    lookup = header_name.strip().lower()
+    for key, value in headers.items():
+        if isinstance(key, str) and key.lower() == lookup and isinstance(value, str):
+            return value
+    return None
+
+
+def _is_allowed_http_event(event: dict[str, Any]) -> bool:
+    token = os.getenv("ALICE_WEBHOOK_TOKEN", "").strip()
+    if not token:
+        return True
+    header_name = os.getenv("ALICE_WEBHOOK_TOKEN_HEADER", DEFAULT_WEBHOOK_HEADER_NAME).strip()
+    if not header_name:
+        header_name = DEFAULT_WEBHOOK_HEADER_NAME
+    provided = _header_value(event, header_name)
+    if provided is None:
+        return False
+    return hmac.compare_digest(provided.strip(), token)
+
+
+def _is_allowed_alice_event(event: dict[str, Any]) -> bool:
+    expected_skill_id = os.getenv("ALICE_SKILL_ID", "").strip()
+    if not expected_skill_id:
+        return True
+
+    session = event.get("session")
+    if not isinstance(session, dict):
+        return False
+    skill_id = session.get("skill_id")
+    if not isinstance(skill_id, str):
+        return False
+    return hmac.compare_digest(skill_id.strip(), expected_skill_id)
 
 
 def _unwrap_http_event(event: dict[str, Any]) -> dict[str, Any]:
@@ -253,12 +377,21 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     del context
     alice_event = event
     if _is_http_proxy_event(event):
+        if not _is_allowed_http_event(event):
+            logger.warning("Alice skill: rejected unauthorized HTTP event")
+            return _wrap_http_response({"error": "forbidden"}, status_code=403)
         alice_event = _unwrap_http_event(event)
         if not alice_event:
             return _wrap_http_response(
                 {"error": "invalid_request_body"},
                 status_code=400,
             )
+        if not _is_allowed_alice_event(alice_event):
+            logger.warning("Alice skill: rejected event with invalid skill_id (HTTP)")
+            return _wrap_http_response({"error": "forbidden"}, status_code=403)
+    elif not _is_allowed_alice_event(event):
+        logger.warning("Alice skill: rejected event with invalid skill_id")
+        return _forbidden_alice_response(event)
 
     global _EVENT_LOOP
     if _EVENT_LOOP is None or _EVENT_LOOP.is_closed():

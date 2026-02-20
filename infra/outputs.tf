@@ -116,3 +116,8 @@ output "alice_function_invoke_url" {
   description = "Alice function HTTPS invoke URL (set in Yandex Dialogs)"
   value       = var.alice_function_enabled ? "https://functions.yandexcloud.net/${yandex_function.alice_skill[0].id}" : null
 }
+
+output "alice_link_api_url_effective" {
+  description = "Effective voice-link API URL used by Alice function"
+  value       = var.alice_function_enabled ? local.alice_link_api_url_effective : null
+}

@@ -1,6 +1,6 @@
-.PHONY: help install test test-cov test-security lint format run run-debug clean \
+.PHONY: help install test test-cov test-security secret-scan lint format run run-debug clean \
        docker-build docker-up docker-down docker-logs docker-ps \
-       tf-init tf-plan tf-apply tf-destroy
+       tf-init tf-plan tf-apply tf-destroy build-alice-zip
 
 # Цвета
 BLUE := \033[34m
@@ -28,6 +28,9 @@ test-cov: ## Тесты с покрытием
 
 test-security: ## Тесты безопасности
 	uv run pytest tests/test_security_sast.py tests/test_config_security.py tests/test_ai_safety.py -v
+
+secret-scan: ## Поиск утечек секретов (требует gitleaks)
+	gitleaks detect --source . --no-banner --redact --config .gitleaks.toml
 
 lint: ## Проверка линтером (ruff)
 	uv run ruff check src/ tests/
@@ -91,3 +94,7 @@ tf-apply: ## Применить изменения инфраструктуры
 tf-destroy: ## Уничтожить инфраструктуру (ОСТОРОЖНО!)
 	@echo "$(YELLOW)ВНИМАНИЕ: удаление всех ресурсов YC!$(RESET)"
 	cd infra && terraform destroy
+
+build-alice-zip: ## Собрать ZIP-артефакт serverless-функции Алисы (linux-совместимый)
+	bash scripts/build_alice_function_zip.sh
+	@echo "$(GREEN)Alice Function ZIP собран: dist/alice-skill.zip$(RESET)"

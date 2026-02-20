@@ -11,8 +11,10 @@ from typing import Any
 
 from vkuswill_bot.alice_skill.account_linking import AccountLinkStore
 from vkuswill_bot.alice_skill.delivery import LinkDeliveryAdapter
+from vkuswill_bot.alice_skill.idempotency import IdempotencyStore
 from vkuswill_bot.alice_skill.idempotency import InMemoryIdempotencyStore
 from vkuswill_bot.alice_skill.models import VoiceOrderResult
+from vkuswill_bot.alice_skill.rate_limit import RateLimiter
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 
 logger = logging.getLogger(__name__)
@@ -70,9 +72,17 @@ class AliceOrderOrchestrator:
         *,
         account_links: AccountLinkStore | None = None,
         delivery_adapter: LinkDeliveryAdapter | None = None,
-        idempotency_store: InMemoryIdempotencyStore | None = None,
+        idempotency_store: IdempotencyStore | None = None,
         require_linked_account: bool = False,
         idempotency_ttl_seconds: int = 90,
+        max_utterance_chars: int = 512,
+        max_products_per_order: int = 20,
+        order_rate_limiter: RateLimiter | None = None,
+        link_code_rate_limiter: RateLimiter | None = None,
+        order_rate_limit: int = 0,
+        order_rate_window_seconds: int = 60,
+        link_code_rate_limit: int = 0,
+        link_code_rate_window_seconds: int = 600,
     ) -> None:
         self._mcp_client = mcp_client
         self._account_links = account_links
@@ -80,6 +90,14 @@ class AliceOrderOrchestrator:
         self._idempotency_store = idempotency_store or InMemoryIdempotencyStore()
         self._require_linked_account = require_linked_account
         self._idempotency_ttl_seconds = idempotency_ttl_seconds
+        self._max_utterance_chars = max_utterance_chars
+        self._max_products_per_order = max_products_per_order
+        self._order_rate_limiter = order_rate_limiter
+        self._link_code_rate_limiter = link_code_rate_limiter
+        self._order_rate_limit = max(0, order_rate_limit)
+        self._order_rate_window_seconds = max(1, order_rate_window_seconds)
+        self._link_code_rate_limit = max(0, link_code_rate_limit)
+        self._link_code_rate_window_seconds = max(1, link_code_rate_window_seconds)
 
     @staticmethod
     def extract_product_queries(utterance: str) -> list[str]:
@@ -178,8 +196,31 @@ class AliceOrderOrchestrator:
         utterance: str,
     ) -> VoiceOrderResult:
         """Обработать голосовую команду и собрать корзину."""
+        if len(utterance.strip()) > self._max_utterance_chars:
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    "Слишком длинная команда. "
+                    f"Опишите заказ короче (до {self._max_utterance_chars} символов)."
+                ),
+                error_code="utterance_too_long",
+            )
+
         link_code = self.extract_link_code(utterance)
         if link_code is not None:
+            if self._link_code_rate_limiter is not None and self._link_code_rate_limit > 0:
+                allowed = await self._link_code_rate_limiter.allow(
+                    f"link:{voice_user_id}",
+                    limit=self._link_code_rate_limit,
+                    window_seconds=self._link_code_rate_window_seconds,
+                )
+                if not allowed:
+                    return VoiceOrderResult(
+                        ok=False,
+                        voice_text=("Слишком много попыток ввода кода привязки. Попробуйте позже."),
+                        error_code="link_rate_limited",
+                    )
+
             if self._account_links is None:
                 return VoiceOrderResult(
                     ok=False,
@@ -201,6 +242,8 @@ class AliceOrderOrchestrator:
             reason = str(link_result.get("reason", "invalid_code"))
             if reason == "code_expired":
                 text = "Код привязки истёк. Запросите новый в Telegram через /link_voice."
+            elif reason == "linking_unavailable":
+                text = "Сервис привязки сейчас недоступен. Попробуйте позже."
             else:
                 text = "Код неверный. Проверьте и повторите привязку."
             return VoiceOrderResult(
@@ -216,6 +259,27 @@ class AliceOrderOrchestrator:
                 voice_text="Скажите, что заказать. Например: закажи молоко и яйца.",
                 error_code="empty_order",
             )
+        if len(products) > self._max_products_per_order:
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    f"За один запрос можно добавить до {self._max_products_per_order} "
+                    "товаров. Разделите заказ на несколько команд."
+                ),
+                error_code="too_many_products",
+            )
+        if self._order_rate_limiter is not None and self._order_rate_limit > 0:
+            allowed = await self._order_rate_limiter.allow(
+                f"order:{voice_user_id}",
+                limit=self._order_rate_limit,
+                window_seconds=self._order_rate_window_seconds,
+            )
+            if not allowed:
+                return VoiceOrderResult(
+                    ok=False,
+                    voice_text="Слишком много заказов за короткое время. Попробуйте позже.",
+                    error_code="order_rate_limited",
+                )
 
         linked_user_id: int | None = None
         if self._account_links is not None:
