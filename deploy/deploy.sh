@@ -155,6 +155,71 @@ print(f'env={len(env_lines)} prompt={len(prompt)}')
   log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей, промпт: $(wc -c < "$PROMPT_FILE") байт)"
 }
 
+# ─── 2b. Идемпотентная настройка nginx для voice-link ───────
+ensure_voice_link_nginx_route() {
+  local NGINX_CONF="/etc/nginx/sites-available/vkuswill-bot"
+
+  if [[ ! -f "$NGINX_CONF" ]]; then
+    warn "Nginx-конфиг ${NGINX_CONF} не найден, пропускаем проверку /voice-link/"
+    return 0
+  fi
+
+  if grep -qE 'location[[:space:]]+/voice-link/' "$NGINX_CONF"; then
+    log "Nginx route /voice-link/ уже настроен"
+    return 0
+  fi
+
+  if ! sudo -n true 2>/dev/null; then
+    warn "Нет прав sudo без пароля, пропускаем автоматическое добавление /voice-link/ в nginx"
+    return 0
+  fi
+
+  log "Добавление nginx route /voice-link/ в ${NGINX_CONF}..."
+
+  if ! sudo python3 - "$NGINX_CONF" <<'PYCODE'
+import pathlib
+import sys
+
+conf_path = pathlib.Path(sys.argv[1])
+content = conf_path.read_text(encoding="utf-8")
+
+if "location /voice-link/" in content:
+    raise SystemExit(0)
+
+block = """    # Voice-link API для привязки аккаунта в Alice Skill
+    location /voice-link/ {
+        proxy_pass http://127.0.0.1:8080/voice-link/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 20s;
+        proxy_send_timeout 20s;
+    }
+"""
+
+needle = "    location / {\\n        return 404;\\n    }\\n"
+parts = content.rsplit(needle, 1)
+if len(parts) != 2:
+    raise SystemExit("cannot_find_fallback_location_block")
+
+updated = parts[0] + block + "\\n" + needle + parts[1]
+conf_path.write_text(updated, encoding="utf-8")
+PYCODE
+  then
+    err "Не удалось обновить nginx-конфиг для /voice-link/"
+    return 1
+  fi
+
+  if ! sudo nginx -t >/dev/null 2>&1; then
+    err "nginx -t не прошел после добавления /voice-link/"
+    return 1
+  fi
+
+  sudo systemctl reload nginx
+  log "Nginx конфиг обновлён и перезагружен (/voice-link/)"
+}
+
 # ─── 3. Очистка места перед pull ────────────────────────────
 log "Очистка Docker (образы, кеш, остановленные контейнеры)..."
 # Удаляем остановленные контейнеры, висячие образы и build-кеш
@@ -189,6 +254,9 @@ fi
 
 # ─── 6. Загрузка секретов ────────────────────────────────────
 load_lockbox_secrets
+
+# ─── 6a. Проверка nginx voice-link route ─────────────────────
+ensure_voice_link_nginx_route
 
 # ─── 6b. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
