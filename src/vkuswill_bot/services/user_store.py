@@ -859,6 +859,36 @@ class UserStore:
             )
             return row["user_id"]
 
+    async def revoke_voice_links_for_user(
+        self,
+        user_id: int,
+        provider: str = "alice",
+    ) -> int:
+        """Отвязать voice-аккаунты пользователя по провайдеру.
+
+        Возвращает количество деактивированных активных связей.
+        """
+        await self.ensure_schema()
+        provider = provider.strip().lower()
+        if not provider:
+            raise ValueError("provider должен быть непустым")
+
+        sql = """
+            UPDATE voice_account_links
+            SET status = 'revoked',
+                updated_at = NOW()
+            WHERE user_id = $1
+              AND voice_provider = $2
+              AND status = 'active'
+        """
+        async with self._pool.acquire() as conn:
+            status = await conn.execute(sql, user_id, provider)
+        # asyncpg возвращает строку вида "UPDATE <n>".
+        try:
+            return int(str(status).split()[-1])
+        except (ValueError, IndexError):
+            return 0
+
     # ------------------------------------------------------------------
     # Админские запросы
     # ------------------------------------------------------------------

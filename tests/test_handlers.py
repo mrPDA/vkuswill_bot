@@ -25,6 +25,7 @@ from vkuswill_bot.bot.handlers import (
     cart_feedback_reason,
     cmd_help,
     cmd_link_voice,
+    cmd_unlink_voice,
     cmd_privacy,
     cmd_reset,
     cmd_start,
@@ -181,6 +182,42 @@ class TestCommands:
 
         msg.answer.assert_called_once()
         assert "недоступна" in msg.answer.call_args[0][0]
+
+    async def test_cmd_unlink_voice_success(self):
+        """/unlink_voice отвязывает аккаунт и сообщает об успехе."""
+        msg = make_message("/unlink_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.revoke_voice_links_for_user.return_value = 1
+
+        await cmd_unlink_voice(msg, user_store=mock_store)
+
+        mock_store.revoke_voice_links_for_user.assert_awaited_once_with(
+            user_id=42,
+            provider="alice",
+        )
+        mock_store.log_event.assert_awaited_once()
+        msg.answer.assert_called_once()
+        assert "отвязана" in msg.answer.call_args[0][0].lower()
+
+    async def test_cmd_unlink_voice_not_linked(self):
+        """/unlink_voice сообщает, если активной привязки нет."""
+        msg = make_message("/unlink_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.revoke_voice_links_for_user.return_value = 0
+
+        await cmd_unlink_voice(msg, user_store=mock_store)
+
+        msg.answer.assert_called_once()
+        assert "не найдена" in msg.answer.call_args[0][0].lower()
+
+    async def test_cmd_unlink_voice_no_store(self):
+        """/unlink_voice без user_store сообщает о недоступности."""
+        msg = make_message("/unlink_voice", user_id=42)
+
+        await cmd_unlink_voice(msg, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "недоступна" in msg.answer.call_args[0][0].lower()
 
 
 # ============================================================================
