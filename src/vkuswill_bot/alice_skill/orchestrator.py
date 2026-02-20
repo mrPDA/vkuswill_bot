@@ -217,10 +217,7 @@ class AliceOrderOrchestrator:
                 if not allowed:
                     return VoiceOrderResult(
                         ok=False,
-                        voice_text=(
-                            "Слишком много попыток ввода кода привязки. "
-                            "Попробуйте позже."
-                        ),
+                        voice_text=("Слишком много попыток ввода кода привязки. Попробуйте позже."),
                         error_code="link_rate_limited",
                     )
 
