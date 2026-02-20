@@ -5,6 +5,35 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.2] — 2026-02-20
+
+### Исправлено
+
+- **MCP ingress через nginx** — для маршрута `/mcp` зафиксирован upstream `Host: 127.0.0.1:8081`, чтобы исключить `421 Invalid Host header` от FastMCP при внешних запросах
+- **Self-signed SSL nginx-конфиг** — в `setup-selfsigned-ssl.sh` добавлены маршруты `/mcp` и `/langfuse/`, чтобы не терять эти endpoint после bootstrap
+- **Fallback SSL-конфиг в setup-ssl.sh** — синхронизирован с production-маршрутами `/mcp` и `/langfuse/`
+- **Langfuse DATABASE_URL обработка** — устранено двойное URL-кодирование пароля в `deploy.sh`, из-за которого Langfuse падал с `P1000` (auth failed)
+
+## [0.18.1] — 2026-02-19
+
+### Исправлено
+
+- **MCP HTTP startup в production** — убран некорректный вызов `FastMCP.run(..., host=..., port=...)`; host/port теперь задаются через `mcp.settings`, что совместимо с `mcp==1.26.x`
+- **Тесты entrypoint MCP** — обновлены проверки `tests/test_mcp_server_main.py` для валидации HTTP-запуска через `settings`
+
+## [0.18.0] — 2026-02-19
+
+### Добавлено
+
+- **MCP Server в production-контуре** — в CD/deploy добавлен отдельный контейнер `vkuswill-mcp-server` с управлением через `MCP_SERVER_ENABLED` и `MCP_SERVER_PORT`, плюс health-check после деплоя
+- **Поддержка multi-client API keys для MCP** — авторизация теперь поддерживает `MCP_SERVER_API_KEYS` (JSON map) и fallback на `MCP_SERVER_API_KEY`
+- **MCP endpoint в nginx** — добавлен reverse-proxy маршрут `/mcp` на внутренний порт MCP-сервера
+
+### Изменено
+
+- **Lockbox/Terraform для MCP** — добавлены переменные и секреты `MCP_SERVER_ENABLED`, `MCP_SERVER_PORT`, `MCP_SERVER_API_KEY`, `MCP_SERVER_API_KEYS`
+- **CI security gate** — подключён `gitleaks` и исправлен checkout (`fetch-depth: 0`) для корректной работы secret scan в PR
+
 ## [0.17.0] — 2026-02-17
 
 ### Безопасность

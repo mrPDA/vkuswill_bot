@@ -23,7 +23,9 @@ TAG=""
 LOCKBOX_SECRET_ID=""
 GIGACHAT_MODEL_OVERRIDE=""
 CONTAINER_NAME="vkuswill-bot"
+MCP_CONTAINER_NAME="vkuswill-mcp-server"
 HEALTH_PORT=8080
+MCP_DEFAULT_PORT=8081
 HEALTH_RETRIES=10
 HEALTH_DELAY=5
 
@@ -241,6 +243,15 @@ else
   warn "Контейнер ${CONTAINER_NAME} не запущен"
 fi
 
+if docker ps -q -f "name=${MCP_CONTAINER_NAME}" | grep -q .; then
+  log "Остановка текущего контейнера ${MCP_CONTAINER_NAME}..."
+  docker stop "$MCP_CONTAINER_NAME" --time 30 2>/dev/null || true
+  docker rm "$MCP_CONTAINER_NAME" 2>/dev/null || true
+  log "Старый контейнер MCP остановлен"
+elif docker ps -aq -f "name=${MCP_CONTAINER_NAME}" | grep -q .; then
+  docker rm "$MCP_CONTAINER_NAME" 2>/dev/null || true
+fi
+
 # ─── 6. Загрузка секретов ────────────────────────────────────
 load_lockbox_secrets
 
@@ -268,11 +279,15 @@ deploy_langfuse() {
   if [[ -n "$LF_DB_URL" ]]; then
     LF_DB_URL=$(echo "$LF_DB_URL" | python3 -c "
 import sys
-from urllib.parse import urlparse, quote, urlunparse
+from urllib.parse import urlparse, quote, unquote, urlunparse
 url = sys.stdin.read().strip()
 u = urlparse(url)
 if u.password:
-    netloc = f'{quote(u.username, safe=\"\")}:{quote(u.password, safe=\"\")}@{u.hostname}:{u.port}'
+    user = unquote(u.username or '')
+    password = unquote(u.password or '')
+    host = u.hostname or ''
+    port = f':{u.port}' if u.port else ''
+    netloc = f'{quote(user, safe=\"\")}:{quote(password, safe=\"\")}@{host}{port}'
     print(urlunparse(u._replace(netloc=netloc)))
 else:
     print(url)
@@ -418,6 +433,22 @@ else
   warn "Убедитесь, что .env файл создан вручную или секреты доступны через Lockbox."
 fi
 
+# Параметры MCP-сервера из .env
+MCP_ENABLED="false"
+MCP_PORT="${MCP_DEFAULT_PORT}"
+if [[ -f "$ENV_FILE" ]]; then
+  mcp_enabled_raw=$(grep -E '^MCP_SERVER_ENABLED=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- || true)
+  if [[ "${mcp_enabled_raw,,}" == "true" ]]; then
+    MCP_ENABLED="true"
+  fi
+
+  mcp_port_raw=$(grep -E '^MCP_SERVER_PORT=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- || true)
+  if [[ "$mcp_port_raw" =~ ^[0-9]+$ ]] && (( mcp_port_raw >= 1 && mcp_port_raw <= 65535 )); then
+    MCP_PORT="$mcp_port_raw"
+  fi
+fi
+log "MCP_SERVER_ENABLED=${MCP_ENABLED}, MCP_SERVER_PORT=${MCP_PORT}"
+
 # Директория для persistent-данных (SQLite preferences)
 DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
@@ -484,6 +515,50 @@ docker run -d \
   --label "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
   "$IMAGE"
 
+deploy_mcp_server() {
+  if [[ "$MCP_ENABLED" != "true" ]]; then
+    log "MCP-сервер отключён (MCP_SERVER_ENABLED!=true), пропускаем запуск"
+    return
+  fi
+
+  log "Запуск контейнера ${MCP_CONTAINER_NAME} на порту ${MCP_PORT}..."
+  docker run -d \
+    --name "$MCP_CONTAINER_NAME" \
+    --restart unless-stopped \
+    --network host \
+    $ENV_FLAG \
+    -v "${DATA_DIR}:/app/data" \
+    --health-cmd "python -c \"import socket; socket.create_connection(('127.0.0.1', ${MCP_PORT}), 3).close()\" 2>/dev/null || exit 1" \
+    --health-interval=30s \
+    --health-timeout=10s \
+    --health-start-period=10s \
+    --health-retries=3 \
+    --log-driver json-file \
+    --log-opt max-size=50m \
+    --log-opt max-file=3 \
+    --label "service=mcp-server" \
+    --label "version=${TAG}" \
+    --label "deployed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    "$IMAGE" \
+    python -m vkuswill_bot.mcp_server --http --host 0.0.0.0 --port "${MCP_PORT}"
+
+  for i in $(seq 1 "$HEALTH_RETRIES"); do
+    sleep "$HEALTH_DELAY"
+    if python3 -c "import socket; socket.create_connection(('127.0.0.1', ${MCP_PORT}), 3).close()" 2>/dev/null; then
+      log "MCP health check OK (попытка ${i}/${HEALTH_RETRIES})"
+      return
+    fi
+    warn "MCP health check попытка ${i}/${HEALTH_RETRIES}: port ${MCP_PORT} недоступен"
+  done
+
+  err "MCP health check FAILED после ${HEALTH_RETRIES} попыток!"
+  err "Логи контейнера ${MCP_CONTAINER_NAME}:"
+  docker logs --tail 50 "$MCP_CONTAINER_NAME" 2>&1 || true
+  exit 1
+}
+
+deploy_mcp_server
+
 # ─── 8. Health check ────────────────────────────────────────
 log "Проверка health (${HEALTH_RETRIES} попыток, интервал ${HEALTH_DELAY}s)..."
 
@@ -513,8 +588,12 @@ log "═════════════════════════
 log "Деплой ${TAG} завершён успешно!"
 log "Image:     ${IMAGE}"
 log "Container: ${CONTAINER_NAME}"
+if [[ "$MCP_ENABLED" == "true" ]]; then
+  log "MCP:       http://localhost:${MCP_PORT}/mcp"
+fi
 log "Health:    http://localhost:${HEALTH_PORT}/health"
 log "════════════════════════════════════════"
 
 # Показать статус
 docker ps --filter "name=${CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+docker ps --filter "name=${MCP_CONTAINER_NAME}" --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"

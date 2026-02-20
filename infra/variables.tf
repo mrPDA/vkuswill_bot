@@ -116,18 +116,30 @@ variable "mcp_server_url" {
   default     = "https://mcp001.vkusvill.ru/mcp"
 }
 
+variable "mcp_server_enabled" {
+  description = "Enable dedicated MCP server container in production"
+  type        = string
+  default     = "true"
+}
+
+variable "mcp_server_port" {
+  description = "MCP server HTTP port on VM"
+  type        = string
+  default     = "8081"
+}
+
 variable "mcp_server_api_key" {
-  description = "MCP Server API key for Alice skill"
+  description = "Single API key for MCP server HTTP auth (legacy)"
   type        = string
   sensitive   = true
   default     = ""
 }
 
 variable "mcp_server_api_keys" {
-  description = "JSON map of MCP API keys for multiple clients"
+  description = "JSON map of MCP client API keys for multi-client auth"
   type        = string
   sensitive   = true
-  default     = ""
+  default     = "{}"
 }
 
 variable "voice_link_api_key" {

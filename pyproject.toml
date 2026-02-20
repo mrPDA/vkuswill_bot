@@ -1,6 +1,6 @@
 [project]
 name = "vkuswill-bot"
-version = "0.17.0"
+version = "0.18.2"
 description = "Telegram-бот для заказа продуктов из ВкусВилл с GigaChat и MCP"
 license = "Apache-2.0"
 requires-python = ">=3.11"
@@ -13,7 +13,7 @@ dependencies = [
     "redis[hiredis]>=5.0",
     "asyncpg>=0.29",
     "boto3>=1.35",
-    "langfuse>=2.60,<3",
+    "langfuse>=2.60,<4",
 ]
 
 [project.optional-dependencies]

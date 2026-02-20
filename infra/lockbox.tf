@@ -38,6 +38,16 @@ resource "yandex_lockbox_secret_version" "bot" {
   }
 
   entries {
+    key        = "MCP_SERVER_ENABLED"
+    text_value = var.mcp_server_enabled
+  }
+
+  entries {
+    key        = "MCP_SERVER_PORT"
+    text_value = var.mcp_server_port
+  }
+
+  entries {
     key        = "MCP_SERVER_API_KEY"
     text_value = var.mcp_server_api_key
   }
