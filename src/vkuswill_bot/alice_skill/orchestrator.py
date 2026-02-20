@@ -320,11 +320,5 @@ class AliceOrderOrchestrator:
     @staticmethod
     def _build_success_text(total_rub: float | None, items_count: int) -> str:
         if total_rub is None:
-            return (
-                f"Готово. Корзина на {items_count} позиций, "
-                "ссылку отправила в приложение."
-            )
-        return (
-            f"Готово. Корзина на {_format_rub(total_rub)} рублей, "
-            "ссылку отправила в приложение."
-        )
+            return f"Готово. Корзина на {items_count} позиций, ссылку отправила в приложение."
+        return f"Готово. Корзина на {_format_rub(total_rub)} рублей, ссылку отправила в приложение."
