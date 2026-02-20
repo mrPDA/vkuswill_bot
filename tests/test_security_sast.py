@@ -36,6 +36,95 @@ def _all_source_code() -> list[tuple[Path, str]]:
     return [(p, _read_source(p)) for p in SOURCE_FILES]
 
 
+def _rel_path(path: Path) -> str:
+    """Путь файла относительно корня репозитория."""
+    return str(path.relative_to(SRC_DIR.parent.parent))
+
+
+_USER_MESSAGE_METHODS = frozenset({"answer", "edit_text"})
+_BROAD_EXCEPT_NAMES = frozenset({"Exception", "BaseException"})
+_LEAK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\btraceback\b"), "traceback в ответе пользователю"),
+    (re.compile(r"\bformat_exc\s*\("), "traceback.format_exc() в ответе пользователю"),
+    (re.compile(r"\bexc_info\b"), "exc_info в ответе пользователю"),
+    (
+        re.compile(r"\b(?:str|repr)\s*\(\s*(?:e|exc|error|exception)\s*\)"),
+        "str()/repr() от исключения в ответе пользователю",
+    ),
+    (
+        re.compile(r"\{[^}]*\b(?:e|exc|error|exception)\b[^}]*\}"),
+        "f-string с переменной исключения в ответе пользователю",
+    ),
+]
+
+# Допустимые и документированные исключения SSL (точечный allowlist).
+_SSL_FALSE_ALLOWLIST = {
+    ("src/vkuswill_bot/services/gigachat_service.py", "verify_ssl", 114),
+}
+
+
+def _iter_user_message_text_expr(
+    tree: ast.AST,
+    code: str,
+) -> list[tuple[int, str, ast.AST]]:
+    """Найти выражения текста, отправляемого пользователю.
+
+    Ищем вызовы ``*.answer(...)`` и ``*.edit_text(...)``.
+    """
+    result: list[tuple[int, str, ast.AST]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr not in _USER_MESSAGE_METHODS:
+            continue
+
+        text_arg: ast.AST | None = None
+        if node.args:
+            text_arg = node.args[0]
+        else:
+            for kw in node.keywords:
+                if kw.arg == "text":
+                    text_arg = kw.value
+                    break
+
+        if text_arg is None:
+            continue
+
+        expr = ast.get_source_segment(code, text_arg) or ast.unparse(text_arg)
+        result.append((node.lineno, expr, text_arg))
+
+    return result
+
+
+def _extract_string_literals(node: ast.AST) -> list[str]:
+    """Извлечь строковые литералы из выражения."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return [node.value]
+    if isinstance(node, ast.JoinedStr):
+        return [
+            part.value
+            for part in node.values
+            if isinstance(part, ast.Constant) and isinstance(part.value, str)
+        ]
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _extract_string_literals(node.left) + _extract_string_literals(node.right)
+    return []
+
+
+def _is_broad_except(handler: ast.ExceptHandler) -> bool:
+    """True для bare except и except Exception/BaseException."""
+    if handler.type is None:
+        return True
+    if isinstance(handler.type, ast.Name):
+        return handler.type.id in _BROAD_EXCEPT_NAMES
+    if isinstance(handler.type, ast.Tuple):
+        names = {elt.id for elt in handler.type.elts if isinstance(elt, ast.Name)}
+        return bool(names & _BROAD_EXCEPT_NAMES)
+    return False
+
+
 # ============================================================================
 # Захардкоженные секреты
 # ============================================================================
@@ -174,29 +263,51 @@ class TestSSLSecurity:
     """Проверка настроек SSL/TLS."""
 
     def test_ssl_verification_settings(self):
-        """Проверка конфигурации SSL в проекте."""
+        """Проверка отключения SSL через AST (без ложных срабатываний regex)."""
         findings = []
         for path, code in _all_source_code():
-            # Ищем отключённую проверку SSL
-            ssl_disabled_patterns = [
-                (r"verify\s*=\s*False", "verify=False"),
-                (r"verify_ssl\s*=\s*False", "verify_ssl=False"),
-                (r"verify_ssl_certs\s*=\s*False", "verify_ssl_certs=False"),
-                (r"CERT_NONE", "ssl.CERT_NONE"),
-            ]
-            for pattern, description in ssl_disabled_patterns:
-                matches = list(re.finditer(pattern, code))
-                for match in matches:
-                    line_num = code[: match.start()].count("\n") + 1
-                    rel_path = path.relative_to(SRC_DIR.parent.parent)
-                    findings.append(f"  {rel_path}:{line_num}: SSL отключён — {description}")
+            try:
+                tree = ast.parse(code)
+            except SyntaxError:
+                pytest.skip(f"Не удалось распарсить {path}")
 
-        # Это предупреждение, а не ошибка (GigaChat SDK требует verify_ssl_certs=False)
-        if findings:
-            pytest.xfail(
-                "SSL-проверка отключена (может быть оправдано для GigaChat):\n"
-                + "\n".join(findings)
-            )
+            rel_path = _rel_path(path)
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                    if node.value.value is not False:
+                        continue
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id in {
+                            "verify",
+                            "verify_ssl",
+                            "verify_ssl_certs",
+                        }:
+                            key = (rel_path, target.id, node.lineno)
+                            if key not in _SSL_FALSE_ALLOWLIST:
+                                findings.append(
+                                    f"  {rel_path}:{node.lineno}: SSL отключён — {target.id}=False"
+                                )
+
+                if isinstance(node, ast.Call):
+                    for kw in node.keywords:
+                        if (
+                            kw.arg in {"verify", "verify_ssl", "verify_ssl_certs"}
+                            and isinstance(kw.value, ast.Constant)
+                            and kw.value.value is False
+                        ):
+                            findings.append(
+                                f"  {rel_path}:{node.lineno}: SSL отключён — {kw.arg}=False"
+                            )
+
+                if (
+                    isinstance(node, ast.Attribute)
+                    and isinstance(node.value, ast.Name)
+                    and node.value.id == "ssl"
+                    and node.attr == "CERT_NONE"
+                ):
+                    findings.append(f"  {rel_path}:{node.lineno}: SSL отключён — ssl.CERT_NONE")
+
+        assert not findings, "SSL-проверка отключена:\n" + "\n".join(findings)
 
 
 # ============================================================================
@@ -210,39 +321,40 @@ class TestInformationLeakage:
 
     @pytest.mark.parametrize("path,code", _all_source_code(), ids=_param_id)
     def test_no_stack_trace_in_user_messages(self, path: Path, code: str):
-        """Пользователь не видит stack trace или внутренние ошибки."""
-        violations = []
-        # Ищем traceback.format_exc() в строках, отправляемых пользователю
-        # Паттерн: message.answer(...traceback...)
-        patterns = [
-            (r"message\.answer\s*\([^)]*traceback", "traceback в ответе пользователю"),
-            (r"message\.answer\s*\([^)]*str\(e\)", "str(e) в ответе пользователю"),
-            (r"message\.answer\s*\([^)]*repr\(e\)", "repr(e) в ответе пользователю"),
-            (r"message\.answer\s*\([^)]*exc_info", "exc_info в ответе пользователю"),
-        ]
-        for pattern, description in patterns:
-            matches = list(re.finditer(pattern, code, re.DOTALL))
-            for match in matches:
-                line_num = code[: match.start()].count("\n") + 1
-                violations.append(f"  Строка {line_num}: {description}")
+        """Пользователь не видит traceback/exception details в ответах."""
+        try:
+            tree = ast.parse(code)
+        except SyntaxError:
+            pytest.skip(f"Не удалось распарсить {path}")
 
-        assert not violations, (
-            f"\nУтечка информации в {path.relative_to(SRC_DIR.parent.parent)}:\n"
-            + "\n".join(violations)
-        )
+        violations = []
+        for line_num, text_expr, _node in _iter_user_message_text_expr(tree, code):
+            for pattern, description in _LEAK_PATTERNS:
+                if pattern.search(text_expr):
+                    violations.append(f"  Строка {line_num}: {description}")
+
+        assert not violations, f"\nУтечка информации в {_rel_path(path)}:\n" + "\n".join(violations)
 
     def test_error_messages_are_generic(self):
-        """Сообщения об ошибках для пользователя — обобщённые, без деталей."""
-        handlers_code = _read_source(SRC_DIR / "bot" / "handlers.py")
+        """Литералы в пользовательских сообщениях не содержат тех-деталей."""
+        handlers_path = SRC_DIR / "bot" / "handlers.py"
+        handlers_code = _read_source(handlers_path)
+        tree = ast.parse(handlers_code)
 
-        # Находим все строки ответов при ошибках
-        error_responses = re.findall(r'response\s*=\s*\(\s*"([^"]*)"', handlers_code)
+        violations = []
+        banned_terms = ("traceback", "exception", "stack trace", "exc_info")
+        for line_num, _expr, text_node in _iter_user_message_text_expr(tree, handlers_code):
+            for literal in _extract_string_literals(text_node):
+                lowered = literal.lower()
+                bad = next((term for term in banned_terms if term in lowered), None)
+                if bad:
+                    violations.append(
+                        f"  Строка {line_num}: найдено '{bad}' в пользовательском сообщении"
+                    )
 
-        for response in error_responses:
-            # Не должно содержать технических деталей
-            assert "traceback" not in response.lower(), f"Ответ содержит traceback: {response[:50]}"
-            assert "exception" not in response.lower(), f"Ответ содержит exception: {response[:50]}"
-            assert "stack" not in response.lower(), f"Ответ содержит stack trace: {response[:50]}"
+        assert not violations, (
+            f"\nНеобобщённые сообщения в {_rel_path(handlers_path)}:\n" + "\n".join(violations)
+        )
 
 
 # ============================================================================
@@ -268,18 +380,9 @@ class TestCodeStructure:
         violations = []
         for node in ast.walk(tree):
             if isinstance(node, ast.ExceptHandler) and node.type is None:
-                # Проверяем, есть ли хотя бы pass или логирование
                 violations.append(f"  Строка {node.lineno}: bare except (без типа исключения)")
 
-        # bare except допускается в _send_typing_periodically (некритичная операция)
-        if violations:
-            # Фильтруем известные допустимые случаи
-            critical = [v for v in violations if "bare except" in v]
-            if critical:
-                pytest.xfail(
-                    f"Bare except в {path.relative_to(SRC_DIR.parent.parent)}:\n"
-                    + "\n".join(critical)
-                )
+        assert not violations, f"Bare except в {_rel_path(path)}:\n" + "\n".join(violations)
 
     @pytest.mark.parametrize("path,code", _all_source_code(), ids=_param_id)
     def test_exception_handling_logs_errors(self, path: Path, code: str):
@@ -291,20 +394,17 @@ class TestCodeStructure:
 
         violations = []
         for node in ast.walk(tree):
-            if isinstance(node, ast.ExceptHandler) and node.body:
-                # Проверяем, что тело except не состоит только из pass
-                body_types = [type(stmt).__name__ for stmt in node.body]
-                if body_types == ["Pass"]:
-                    violations.append(
-                        f"  Строка {node.lineno}: except с только pass "
-                        f"(ошибка глушится без логирования)"
-                    )
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if not node.body or not _is_broad_except(node):
+                continue
+            if len(node.body) == 1 and isinstance(node.body[0], ast.Pass):
+                violations.append(
+                    f"  Строка {node.lineno}: broad except с только pass "
+                    f"(ошибка глушится без логирования)"
+                )
 
-        if violations:
-            pytest.xfail(
-                f"Глушение ошибок в {path.relative_to(SRC_DIR.parent.parent)}:\n"
-                + "\n".join(violations)
-            )
+        assert not violations, f"Глушение ошибок в {_rel_path(path)}:\n" + "\n".join(violations)
 
 
 # ============================================================================

@@ -51,6 +51,7 @@ loadtests/*.session
 
 #развитие
 HABR_STRATEGY.md
+TEST_REVIEW_RECOMMENDATIONS.md
 articles/
 docs/*
 !docs/PRIVACY_POLICY.md

@@ -116,6 +116,39 @@ variable "mcp_server_url" {
   default     = "https://mcp001.vkusvill.ru/mcp"
 }
 
+variable "mcp_server_enabled" {
+  description = "Enable dedicated MCP server container in production"
+  type        = string
+  default     = "true"
+}
+
+variable "mcp_server_port" {
+  description = "MCP server HTTP port on VM"
+  type        = string
+  default     = "8081"
+}
+
+variable "mcp_server_api_key" {
+  description = "Single API key for MCP server HTTP auth (legacy)"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
+variable "mcp_server_api_keys" {
+  description = "JSON map of MCP client API keys for multi-client auth"
+  type        = string
+  sensitive   = true
+  default     = "{}"
+}
+
+variable "voice_link_api_key" {
+  description = "API key for /voice-link/* API on bot VM"
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "admin_user_ids" {
   description = "Telegram admin user IDs (JSON array)"
   type        = string
@@ -128,6 +161,74 @@ variable "gigachat_model" {
   description = "GigaChat model name"
   type        = string
   default     = "GigaChat-2-Max"
+}
+
+# ─── Alice Skill (Yandex Serverless Function) ─────────────────
+
+variable "alice_function_enabled" {
+  description = "Create and manage Alice skill serverless function"
+  type        = bool
+  default     = false
+}
+
+variable "alice_function_name" {
+  description = "Serverless function name for Alice skill"
+  type        = string
+  default     = "vkuswill-alice-skill"
+}
+
+variable "alice_function_zip_path" {
+  description = "Path to ZIP archive with Alice skill code"
+  type        = string
+  default     = "../dist/alice-skill.zip"
+}
+
+variable "alice_function_network_id" {
+  description = "VPC network ID for Alice function private connectivity to internal VM API"
+  type        = string
+  default     = ""
+}
+
+variable "alice_link_api_url" {
+  description = "Voice-link API URL for Alice function (empty = auto internal VM IP:8080/voice-link)"
+  type        = string
+  default     = ""
+}
+
+variable "alice_idempotency_ttl_seconds" {
+  description = "Idempotency TTL for Alice skill requests"
+  type        = number
+  default     = 90
+}
+
+variable "alice_db_connect_timeout_seconds" {
+  description = "DB connect timeout for Alice skill cold start"
+  type        = number
+  default     = 3
+}
+
+variable "alice_link_api_timeout_seconds" {
+  description = "HTTP timeout for voice-link API calls from Alice skill"
+  type        = number
+  default     = 5
+}
+
+variable "alice_link_api_verify_ssl" {
+  description = "Verify TLS certificate when Alice skill calls voice-link API"
+  type        = bool
+  default     = true
+}
+
+variable "alice_degrade_to_guest_on_db_error" {
+  description = "Allow guest ordering when DB for linking is temporarily unavailable"
+  type        = bool
+  default     = true
+}
+
+variable "voice_link_code_ttl_minutes" {
+  description = "TTL for /link_voice one-time codes"
+  type        = number
+  default     = 10
 }
 
 variable "webhook_host" {

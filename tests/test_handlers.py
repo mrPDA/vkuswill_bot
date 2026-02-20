@@ -24,6 +24,8 @@ from vkuswill_bot.bot.handlers import (
     cart_feedback_positive,
     cart_feedback_reason,
     cmd_help,
+    cmd_link_voice,
+    cmd_unlink_voice,
     cmd_privacy,
     cmd_reset,
     cmd_start,
@@ -157,6 +159,66 @@ class TestCommands:
         mock_service.reset_conversation.assert_not_called()
         msg.answer.assert_called_once()
 
+    async def test_cmd_link_voice_success(self):
+        """/link_voice генерирует код и отправляет инструкцию."""
+        msg = make_message("/link_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.create_voice_link_code.return_value = "123456"
+
+        await cmd_link_voice(msg, user_store=mock_store)
+
+        mock_store.create_voice_link_code.assert_awaited_once()
+        mock_store.log_event.assert_awaited_once()
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "код 123456" in text
+        assert "Привязка Алисы" in text
+
+    async def test_cmd_link_voice_no_store(self):
+        """/link_voice без user_store сообщает о недоступности."""
+        msg = make_message("/link_voice", user_id=42)
+
+        await cmd_link_voice(msg, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "недоступна" in msg.answer.call_args[0][0]
+
+    async def test_cmd_unlink_voice_success(self):
+        """/unlink_voice отвязывает аккаунт и сообщает об успехе."""
+        msg = make_message("/unlink_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.revoke_voice_links_for_user.return_value = 1
+
+        await cmd_unlink_voice(msg, user_store=mock_store)
+
+        mock_store.revoke_voice_links_for_user.assert_awaited_once_with(
+            user_id=42,
+            provider="alice",
+        )
+        mock_store.log_event.assert_awaited_once()
+        msg.answer.assert_called_once()
+        assert "отвязана" in msg.answer.call_args[0][0].lower()
+
+    async def test_cmd_unlink_voice_not_linked(self):
+        """/unlink_voice сообщает, если активной привязки нет."""
+        msg = make_message("/unlink_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.revoke_voice_links_for_user.return_value = 0
+
+        await cmd_unlink_voice(msg, user_store=mock_store)
+
+        msg.answer.assert_called_once()
+        assert "не найдена" in msg.answer.call_args[0][0].lower()
+
+    async def test_cmd_unlink_voice_no_store(self):
+        """/unlink_voice без user_store сообщает о недоступности."""
+        msg = make_message("/unlink_voice", user_id=42)
+
+        await cmd_unlink_voice(msg, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "недоступна" in msg.answer.call_args[0][0].lower()
+
 
 # ============================================================================
 # handle_text
@@ -227,10 +289,16 @@ class TestHandleText:
         """Индикатор набора отправляется во время обработки."""
         msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
+        typing_sent = asyncio.Event()
 
-        # process_message с задержкой, чтобы typing-таск успел сработать
+        async def mark_typing(*args, **kwargs):
+            typing_sent.set()
+
+        msg.bot.send_chat_action.side_effect = mark_typing
+
+        # Ждём факт отправки typing, без реальных sleep
         async def slow_process(*args, **kwargs):
-            await asyncio.sleep(0.1)
+            await typing_sent.wait()
             return "Ответ"
 
         mock_service.process_message.side_effect = slow_process
@@ -244,13 +312,16 @@ class TestHandleText:
         """Ошибка send_chat_action не крашит бота (lines 118-119)."""
         msg = make_message("Тест", user_id=1)
         mock_service = AsyncMock()
+        typing_attempted = asyncio.Event()
 
-        # send_chat_action выбрасывает исключение
-        msg.bot.send_chat_action.side_effect = RuntimeError("Network error")
+        async def failing_typing(*args, **kwargs):
+            typing_attempted.set()
+            raise RuntimeError("Network error")
 
-        # process_message с задержкой, чтобы typing-таск успел сработать
+        msg.bot.send_chat_action.side_effect = failing_typing
+
         async def slow_process(*args, **kwargs):
-            await asyncio.sleep(0.15)
+            await typing_attempted.wait()
             return "Ответ"
 
         mock_service.process_message.side_effect = slow_process

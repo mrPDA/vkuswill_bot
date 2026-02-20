@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime, UTC
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -708,6 +708,124 @@ class TestFreemiumSurvey:
 
 
 # ---------------------------------------------------------------------------
+# Тесты: Voice account linking
+# ---------------------------------------------------------------------------
+
+
+class TestVoiceLinking:
+    """Тесты production-linking: коды и voice account links."""
+
+    @pytest.mark.asyncio
+    async def test_create_voice_link_code(self, store):
+        """create_voice_link_code создаёт одноразовый код."""
+        s, conn = store
+        with patch.object(UserStore, "_generate_voice_link_code", return_value="123456"):
+            code = await s.create_voice_link_code(
+                user_id=123,
+                provider="alice",
+                ttl_minutes=10,
+            )
+        assert code == "123456"
+        assert conn.execute.call_count >= 2
+        assert "voice_link_codes" in conn.execute.call_args_list[0][0][0]
+        assert "INSERT INTO voice_link_codes" in conn.execute.call_args_list[1][0][0]
+
+    @pytest.mark.asyncio
+    async def test_consume_voice_link_code_success(self, store):
+        """consume_voice_link_code привязывает аккаунт при валидном коде."""
+        s, conn = store
+        tx = AsyncMock()
+        tx.__aenter__ = AsyncMock(return_value=None)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+        conn.fetchrow.return_value = {
+            "id": 1,
+            "user_id": 123,
+            "expires_at": datetime.now(UTC) + timedelta(minutes=5),
+        }
+
+        result = await s.consume_voice_link_code(
+            provider="alice",
+            voice_user_id="alice-user-1",
+            code="123456",
+        )
+
+        assert result["ok"] is True
+        assert result["reason"] == "ok"
+        assert result["user_id"] == 123
+        assert conn.execute.call_count >= 3
+
+    @pytest.mark.asyncio
+    async def test_consume_voice_link_code_expired(self, store):
+        """consume_voice_link_code отклоняет истёкший код."""
+        s, conn = store
+        tx = AsyncMock()
+        tx.__aenter__ = AsyncMock(return_value=None)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+        conn.fetchrow.return_value = {
+            "id": 1,
+            "user_id": 123,
+            "expires_at": datetime.now(UTC) - timedelta(minutes=1),
+        }
+
+        result = await s.consume_voice_link_code(
+            provider="alice",
+            voice_user_id="alice-user-1",
+            code="123456",
+        )
+
+        assert result["ok"] is False
+        assert result["reason"] == "code_expired"
+
+    @pytest.mark.asyncio
+    async def test_resolve_voice_link_found(self, store):
+        """resolve_voice_link возвращает user_id для активной связи."""
+        s, conn = store
+        conn.fetchrow.return_value = {"user_id": 123}
+
+        user_id = await s.resolve_voice_link("alice", "alice-user-1")
+
+        assert user_id == 123
+        conn.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_resolve_voice_link_not_found(self, store):
+        """resolve_voice_link возвращает None если связи нет."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        user_id = await s.resolve_voice_link("alice", "alice-user-1")
+
+        assert user_id is None
+        conn.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_revoke_voice_links_for_user_success(self, store):
+        """revoke_voice_links_for_user возвращает число отвязанных связей."""
+        s, conn = store
+        conn.execute.return_value = "UPDATE 2"
+
+        revoked = await s.revoke_voice_links_for_user(user_id=123, provider="alice")
+
+        assert revoked == 2
+        conn.execute.assert_called_once()
+        sql = conn.execute.call_args[0][0]
+        assert "UPDATE voice_account_links" in sql
+        assert "status = 'revoked'" in sql
+
+    @pytest.mark.asyncio
+    async def test_revoke_voice_links_for_user_invalid_provider(self, store):
+        """revoke_voice_links_for_user валидирует provider."""
+        s, conn = store
+
+        with pytest.raises(ValueError):
+            await s.revoke_voice_links_for_user(user_id=123, provider=" ")
+
+        conn.execute.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Тесты: константы
 # ---------------------------------------------------------------------------
 
@@ -730,6 +848,7 @@ class TestConstants:
         sql_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
         assert len(sql_files) >= 1, "Нет SQL-миграций в migrations/"
         assert any("001" in f.name for f in sql_files)
+        assert any("008" in f.name for f in sql_files)
 
 
 # ---------------------------------------------------------------------------

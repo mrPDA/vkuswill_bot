@@ -232,6 +232,11 @@ class TestHeaders:
         headers = mcp_client._headers()
         assert headers["mcp-session-id"] == "test-session-123"
 
+    def test_with_api_key(self):
+        client = VkusvillMCPClient(MCP_URL, api_key="secret")
+        headers = client._headers()
+        assert headers["Authorization"] == "Bearer secret"
+
 
 class TestNextId:
     """Тесты _next_id: инкрементальный счётчик."""
@@ -259,6 +264,26 @@ def _mock_init_and_notify(mock: respx.MockRouter) -> None:
             ),
             # notifications/initialized → 202
             httpx.Response(202),
+        ]
+    )
+
+
+def _mock_init_notify_and_call(
+    mock: respx.MockRouter,
+    tool_response: httpx.Response,
+    *,
+    session_id: str = "sid-test",
+) -> None:
+    """Замокировать initialize + notify + один tools/call."""
+    mock.post(MCP_URL).mock(
+        side_effect=[
+            httpx.Response(
+                200,
+                json=INIT_RESPONSE_JSON,
+                headers={"mcp-session-id": session_id},
+            ),
+            httpx.Response(202),
+            tool_response,
         ]
     )
 
@@ -295,14 +320,26 @@ class TestGetTools:
     @respx.mock
     async def test_caching(self, mcp_client):
         """Повторный вызов возвращает кеш, без HTTP-запросов."""
-        mcp_client._tools_cache = [{"name": "cached_tool", "description": "", "parameters": {}}]
+        respx.post(MCP_URL).mock(
+            side_effect=[
+                httpx.Response(
+                    200,
+                    json=INIT_RESPONSE_JSON,
+                    headers={"mcp-session-id": "sid-cache"},
+                ),
+                httpx.Response(202),
+                httpx.Response(200, json=TOOLS_LIST_RESPONSE_JSON),
+            ]
+        )
 
         tools = await mcp_client.get_tools()
+        calls_before = respx.calls.call_count
+        tools_cached = await mcp_client.get_tools()
 
-        assert len(tools) == 1
-        assert tools[0]["name"] == "cached_tool"
+        assert len(tools) == 3
+        assert tools == tools_cached
         # Проверяем, что HTTP-запросов не было
-        assert respx.calls.call_count == 0
+        assert respx.calls.call_count == calls_before
 
     @respx.mock
     async def test_retry_on_failure(self, mcp_client):
@@ -344,12 +381,10 @@ class TestCallTool:
     @respx.mock
     async def test_success(self, mcp_client):
         """Успешный вызов инструмента."""
-        # Сессия уже инициализирована
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+            session_id="sid-existing",
         )
 
         result = await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
@@ -361,9 +396,6 @@ class TestCallTool:
     @respx.mock
     async def test_cart_args_passthrough(self, mcp_client):
         """call_tool передаёт аргументы корзины без предобработки (она в ToolExecutor)."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
         cart_response = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -371,8 +403,10 @@ class TestCallTool:
                 "content": [{"type": "text", "text": '{"url": "https://vkusvill.ru/cart/123"}'}]
             },
         }
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=cart_response),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=cart_response),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool(
@@ -389,11 +423,10 @@ class TestCallTool:
     @respx.mock
     async def test_search_passthrough_no_limit(self, mcp_client):
         """call_tool не добавляет limit — это делает ToolExecutor.preprocess_args."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
@@ -406,11 +439,10 @@ class TestCallTool:
     @respx.mock
     async def test_search_limit_not_overwritten(self, mcp_client):
         """Если limit уже указан явно, он не перезаписывается."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко", "limit": 20})
@@ -423,9 +455,6 @@ class TestCallTool:
     @respx.mock
     async def test_search_limit_not_added_to_other_tools(self, mcp_client):
         """Лимит НЕ добавляется к другим инструментам (корзина и т.д.)."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
         cart_response = {
             "jsonrpc": "2.0",
             "id": 1,
@@ -433,8 +462,10 @@ class TestCallTool:
                 "content": [{"type": "text", "text": '{"url": "https://vkusvill.ru/cart/123"}'}]
             },
         }
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=cart_response),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=cart_response),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool(
@@ -474,19 +505,18 @@ class TestCallTool:
     @respx.mock
     async def test_sse_response(self, mcp_client):
         """Обработка SSE-ответа от сервера."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
         sse_body = (
             'data: {"jsonrpc":"2.0","id":1,"result":'
             '{"content":[{"type":"text","text":"SSE result"}]}}\n\n'
         )
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(
                 200,
                 text=sse_body,
                 headers={"content-type": "text/event-stream"},
             ),
+            session_id="sid-existing",
         )
 
         result = await mcp_client.call_tool("vkusvill_products_search", {"q": "тест"})
@@ -497,11 +527,10 @@ class TestCallTool:
     @respx.mock
     async def test_empty_result(self, mcp_client):
         """Если сервер вернул 202 (нет результата) — пустая строка."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(202),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(202),
+            session_id="sid-existing",
         )
 
         result = await mcp_client.call_tool("vkusvill_products_search", {"q": "тест"})
@@ -542,8 +571,7 @@ class TestRpcCallErrors:
     @respx.mock
     async def test_json_rpc_error_in_json_response(self, mcp_client):
         """JSON-RPC ошибка в обычном JSON-ответе (не SSE) вызывает RuntimeError."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
+        client = await mcp_client._get_client()
 
         error_response = {
             "jsonrpc": "2.0",
@@ -555,21 +583,20 @@ class TestRpcCallErrors:
         )
 
         with pytest.raises(RuntimeError, match="Method not found"):
-            await mcp_client._rpc_call(mcp_client._client, "nonexistent/method")
+            await mcp_client._rpc_call(client, "nonexistent/method")
         await mcp_client.close()
 
     @respx.mock
     async def test_rpc_notify_with_params(self, mcp_client):
         """_rpc_notify передаёт params если указаны."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
+        client = await mcp_client._get_client()
 
         respx.post(MCP_URL).mock(
             return_value=httpx.Response(202),
         )
 
         await mcp_client._rpc_notify(
-            mcp_client._client,
+            client,
             "notifications/test",
             params={"key": "value"},
         )
@@ -581,15 +608,14 @@ class TestRpcCallErrors:
     @respx.mock
     async def test_rpc_notify_error_status(self, mcp_client):
         """_rpc_notify вызывает raise_for_status при ошибке."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
+        client = await mcp_client._get_client()
 
         respx.post(MCP_URL).mock(
             return_value=httpx.Response(500, text="Internal Server Error"),
         )
 
         with pytest.raises(httpx.HTTPStatusError):
-            await mcp_client._rpc_notify(mcp_client._client, "notifications/test")
+            await mcp_client._rpc_notify(client, "notifications/test")
         await mcp_client.close()
 
     @respx.mock
@@ -605,16 +631,15 @@ class TestRpcCallErrors:
     @respx.mock
     async def test_call_tool_no_text_content(self, mcp_client):
         """call_tool с ответом без text-элементов возвращает JSON."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
         response = {
             "jsonrpc": "2.0",
             "id": 1,
             "result": {"content": [{"type": "image", "data": "base64..."}]},
         }
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=response),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=response),
+            session_id="sid-existing",
         )
 
         result = await mcp_client.call_tool("vkusvill_product_details", {"xml_id": 123})
@@ -660,11 +685,10 @@ class TestSearchQueryCleaningInCallTool:
     @respx.mock
     async def test_search_query_passthrough(self, mcp_client):
         """call_tool не очищает запрос — это делает ToolExecutor.preprocess_args."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool("vkusvill_products_search", {"q": "Творог 5% 400 гр"})
@@ -678,11 +702,10 @@ class TestSearchQueryCleaningInCallTool:
     @respx.mock
     async def test_query_without_numbers_unchanged(self, mcp_client):
         """Запрос без цифр отправляется без изменений."""
-        mcp_client._session_id = "sid-existing"
-        mcp_client._client = httpx.AsyncClient()
-
-        respx.post(MCP_URL).mock(
-            return_value=httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+        _mock_init_notify_and_call(
+            respx,
+            httpx.Response(200, json=TOOL_CALL_RESPONSE_JSON),
+            session_id="sid-existing",
         )
 
         await mcp_client.call_tool("vkusvill_products_search", {"q": "молоко"})
@@ -721,19 +744,31 @@ class TestSessionManagement:
 
     async def test_ensure_initialized_reuses_session(self, mcp_client):
         """Если сессия уже есть — не переинициализирует."""
-        mcp_client._session_id = "existing-sid"
-        mcp_client._client = httpx.AsyncClient()
+        with respx.mock:
+            respx.post(MCP_URL).mock(
+                side_effect=[
+                    httpx.Response(
+                        200,
+                        json=INIT_RESPONSE_JSON,
+                        headers={"mcp-session-id": "existing-sid"},
+                    ),
+                    httpx.Response(202),
+                ]
+            )
 
-        client = await mcp_client._ensure_initialized()
+            client = await mcp_client._ensure_initialized()
+            call_count_before = respx.calls.call_count
+            same_client = await mcp_client._ensure_initialized()
+            assert respx.calls.call_count == call_count_before
 
-        assert mcp_client._session_id == "existing-sid"
-        assert client is mcp_client._client
+        assert same_client is client
         await mcp_client.close()
 
     async def test_reset_session(self, mcp_client):
         """_reset_session сбрасывает session_id и закрывает клиент."""
-        mcp_client._session_id = "old-sid"
-        mcp_client._client = httpx.AsyncClient()
+        with respx.mock:
+            _mock_init_and_notify(respx)
+            await mcp_client._ensure_initialized()
 
         await mcp_client._reset_session()
 
@@ -742,8 +777,9 @@ class TestSessionManagement:
 
     async def test_close(self, mcp_client):
         """close() корректно очищает ресурсы."""
-        mcp_client._session_id = "sid"
-        mcp_client._client = httpx.AsyncClient()
+        with respx.mock:
+            _mock_init_and_notify(respx)
+            await mcp_client._ensure_initialized()
 
         await mcp_client.close()
 
