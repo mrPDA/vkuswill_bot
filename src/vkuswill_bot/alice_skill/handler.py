@@ -10,12 +10,18 @@ import os
 from dataclasses import dataclass
 from typing import Any
 
-import asyncpg
-
 try:
     import sniffio
 except ImportError:  # pragma: no cover - optional in local dev, bundled in function artifact
     sniffio = None
+
+try:
+    import asyncpg
+except Exception as asyncpg_import_error:  # pragma: no cover - runtime guard for broken artifacts
+    asyncpg = None
+    _ASYNCPG_IMPORT_ERROR = asyncpg_import_error
+else:
+    _ASYNCPG_IMPORT_ERROR = None
 
 from vkuswill_bot.alice_skill.account_linking import (
     HttpAccountLinkStore,
@@ -31,8 +37,14 @@ from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
 from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
 from vkuswill_bot.alice_skill.rate_limit import RedisRateLimiter
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
-from vkuswill_bot.services.redis_client import create_redis_client
-from vkuswill_bot.services.user_store import UserStore
+
+try:
+    from vkuswill_bot.services.redis_client import create_redis_client
+except Exception as redis_import_error:  # pragma: no cover - runtime guard for broken artifacts
+    create_redis_client = None
+    _REDIS_IMPORT_ERROR = redis_import_error
+else:
+    _REDIS_IMPORT_ERROR = None
 
 DEFAULT_MCP_URL = "https://mcp001.vkusvill.ru/mcp"
 DEFAULT_WEBHOOK_HEADER_NAME = "X-Alice-Webhook-Token"
@@ -165,24 +177,38 @@ async def _get_runtime() -> _Runtime:
         else:
             account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
     elif database_url:
-        try:
-            pool = await asyncpg.create_pool(
-                dsn=database_url,
-                min_size=1,
-                max_size=3,
-                timeout=db_connect_timeout,
-                command_timeout=db_connect_timeout,
+        if asyncpg is None:
+            logger.warning(
+                "Alice skill: asyncpg import failed (%r), fallback mode",
+                _ASYNCPG_IMPORT_ERROR,
             )
-            user_store = UserStore(pool, schema_ready=True)
-            account_links = PostgresAccountLinkStore(user_store, provider="alice")
-        except Exception:
-            logger.exception("Alice skill: DB init failed, fallback mode")
             if require_linked_account and linking_fail_closed and not degrade_to_guest:
                 account_links = UnavailableAccountLinkStore()
             else:
                 account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
             if degrade_to_guest:
                 effective_require_linked = False
+        else:
+            try:
+                from vkuswill_bot.services.user_store import UserStore
+
+                pool = await asyncpg.create_pool(
+                    dsn=database_url,
+                    min_size=1,
+                    max_size=3,
+                    timeout=db_connect_timeout,
+                    command_timeout=db_connect_timeout,
+                )
+                user_store = UserStore(pool, schema_ready=True)
+                account_links = PostgresAccountLinkStore(user_store, provider="alice")
+            except Exception:
+                logger.exception("Alice skill: DB init failed, fallback mode")
+                if require_linked_account and linking_fail_closed and not degrade_to_guest:
+                    account_links = UnavailableAccountLinkStore()
+                else:
+                    account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
+                if degrade_to_guest:
+                    effective_require_linked = False
     else:
         if require_linked_account and linking_fail_closed:
             account_links = UnavailableAccountLinkStore()
@@ -194,28 +220,35 @@ async def _get_runtime() -> _Runtime:
     link_code_rate_limiter = fallback_rate_limiter
     idempotency_store = InMemoryIdempotencyStore()
     if redis_url:
-        try:
-            redis_client = await create_redis_client(
-                redis_url,
-                decode_responses=False,
-                socket_connect_timeout=db_connect_timeout,
-                socket_timeout=max(db_connect_timeout, 5.0),
+        if create_redis_client is None:
+            logger.warning(
+                "Alice skill: Redis client import failed (%r), fallback to in-memory",
+                _REDIS_IMPORT_ERROR,
             )
-            idempotency_store = RedisIdempotencyStore(
-                redis_client,
-                key_prefix=idempotency_key_prefix,
-            )
-            shared_rate_limiter = RedisRateLimiter(
-                redis_client,
-                key_prefix=rate_limit_key_prefix,
-                fallback_limiter=fallback_rate_limiter,
-            )
-            order_rate_limiter = shared_rate_limiter
-            link_code_rate_limiter = shared_rate_limiter
-        except Exception:
-            logger.exception(
-                "Alice skill: Redis init failed for idempotency/rate-limit, fallback to in-memory",
-            )
+        else:
+            try:
+                redis_client = await create_redis_client(
+                    redis_url,
+                    decode_responses=False,
+                    socket_connect_timeout=db_connect_timeout,
+                    socket_timeout=max(db_connect_timeout, 5.0),
+                )
+                idempotency_store = RedisIdempotencyStore(
+                    redis_client,
+                    key_prefix=idempotency_key_prefix,
+                )
+                shared_rate_limiter = RedisRateLimiter(
+                    redis_client,
+                    key_prefix=rate_limit_key_prefix,
+                    fallback_limiter=fallback_rate_limiter,
+                )
+                order_rate_limiter = shared_rate_limiter
+                link_code_rate_limiter = shared_rate_limiter
+            except Exception:
+                logger.exception(
+                    "Alice skill: Redis init failed for idempotency/rate-limit, "
+                    "fallback to in-memory",
+                )
 
     orchestrator = AliceOrderOrchestrator(
         mcp_client,
