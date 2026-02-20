@@ -55,4 +55,9 @@ resource "yandex_compute_instance" "bot" {
   scheduling_policy {
     preemptible = false
   }
+
+  lifecycle {
+    # Не пересоздаём production VM автоматически при смене latest-образа в family.
+    ignore_changes = [boot_disk[0].initialize_params[0].image_id]
+  }
 }

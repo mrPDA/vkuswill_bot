@@ -80,6 +80,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Install gitleaks
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin v8.24.2
+
+      - name: Secret scan — gitleaks
+        run: gitleaks detect --source . --no-banner --redact --config .gitleaks.toml
+
       - name: Install uv
         uses: astral-sh/setup-uv@v7
         with:

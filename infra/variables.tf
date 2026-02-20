@@ -183,6 +183,54 @@ variable "alice_link_api_url" {
   default     = ""
 }
 
+variable "alice_skill_id" {
+  description = "Yandex Dialogs skill_id for inbound event validation in Alice function"
+  type        = string
+  default     = ""
+}
+
+variable "alice_linking_fail_closed" {
+  description = "Fail closed for account linking when DB/API backend is unavailable"
+  type        = bool
+  default     = true
+}
+
+variable "alice_idempotency_key_prefix" {
+  description = "Redis key prefix for Alice idempotency records"
+  type        = string
+  default     = "alice:idem:"
+}
+
+variable "alice_rate_limit_key_prefix" {
+  description = "Redis key prefix for Alice rate limiting counters"
+  type        = string
+  default     = "alice:rl:"
+}
+
+variable "alice_order_rate_limit" {
+  description = "Max order requests per voice user within order_rate_window_seconds"
+  type        = number
+  default     = 12
+}
+
+variable "alice_order_rate_window_seconds" {
+  description = "Window for Alice order rate limiting in seconds"
+  type        = number
+  default     = 60
+}
+
+variable "alice_link_code_rate_limit" {
+  description = "Max link code attempts per voice user within link_code_rate_window_seconds"
+  type        = number
+  default     = 6
+}
+
+variable "alice_link_code_rate_window_seconds" {
+  description = "Window for Alice link code rate limiting in seconds"
+  type        = number
+  default     = 600
+}
+
 variable "alice_idempotency_ttl_seconds" {
   description = "Idempotency TTL for Alice skill requests"
   type        = number
@@ -210,7 +258,7 @@ variable "alice_link_api_verify_ssl" {
 variable "alice_degrade_to_guest_on_db_error" {
   description = "Allow guest ordering when DB for linking is temporarily unavailable"
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "voice_link_code_ttl_minutes" {

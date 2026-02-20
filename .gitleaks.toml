@@ -1,0 +1,4 @@
+title = "vkuswill-bot gitleaks config"
+
+[extend]
+useDefault = true

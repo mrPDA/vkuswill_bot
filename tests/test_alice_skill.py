@@ -8,11 +8,17 @@ import json
 import httpx
 import pytest
 
-from vkuswill_bot.alice_skill.account_linking import HttpAccountLinkStore, InMemoryAccountLinkStore
+from vkuswill_bot.alice_skill.account_linking import (
+    HttpAccountLinkStore,
+    InMemoryAccountLinkStore,
+    UnavailableAccountLinkStore,
+)
 from vkuswill_bot.alice_skill.delivery import AliceAppDeliveryAdapter
 from vkuswill_bot.alice_skill.idempotency import InMemoryIdempotencyStore
+from vkuswill_bot.alice_skill.idempotency import RedisIdempotencyStore
 from vkuswill_bot.alice_skill.models import DeliveryResult, VoiceOrderResult
 from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
+from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
 
 
 class FakeMCPClient:
@@ -94,6 +100,120 @@ class FakeMCPClientLinkOnly(FakeMCPClient):
         raise AssertionError(f"Unexpected tool call: {name}")
 
 
+class DummyRedis:
+    """Минимальный async-Redis для тестов идемпотентности."""
+
+    def __init__(self) -> None:
+        self.data: dict[str, str] = {}
+
+    async def get(self, key: str) -> str | None:
+        return self.data.get(key)
+
+    async def set(
+        self,
+        key: str,
+        value: str,
+        *,
+        ex: int | None = None,
+        nx: bool = False,
+    ) -> bool | None:
+        del ex
+        if nx and key in self.data:
+            return None
+        self.data[key] = value
+        return True
+
+    async def delete(self, key: str) -> int:
+        existed = key in self.data
+        self.data.pop(key, None)
+        return int(existed)
+
+
+class DummyBrokenRedis:
+    """Redis-заглушка, имитирующая деградацию сети."""
+
+    async def get(self, key: str) -> str | None:
+        del key
+        raise RuntimeError("redis unavailable")
+
+    async def set(
+        self,
+        key: str,
+        value: str,
+        *,
+        ex: int | None = None,
+        nx: bool = False,
+    ) -> bool | None:
+        del key, value, ex, nx
+        raise RuntimeError("redis unavailable")
+
+    async def delete(self, key: str) -> int:
+        del key
+        raise RuntimeError("redis unavailable")
+
+
+class CountingLinkStore(InMemoryAccountLinkStore):
+    def __init__(self) -> None:
+        super().__init__(links={}, codes={})
+        self.consume_calls = 0
+
+    async def consume_link_code(
+        self,
+        voice_user_id: str,
+        code: str,
+    ) -> dict[str, object]:
+        self.consume_calls += 1
+        return await super().consume_link_code(voice_user_id, code)
+
+
+@pytest.mark.asyncio
+async def test_redis_idempotency_store_roundtrip():
+    redis = DummyRedis()
+    store = RedisIdempotencyStore(redis)
+    key = "k-1"
+
+    started = await store.try_start(key, ttl_seconds=30)
+    assert started is True
+    started_again = await store.try_start(key, ttl_seconds=30)
+    assert started_again is False
+
+    expected = VoiceOrderResult(
+        ok=True,
+        voice_text="OK",
+        cart_link="https://shop.example/cart/123",
+        total_rub=350.0,
+        items_count=2,
+        delivery=DeliveryResult(
+            status="delivered",
+            channel="alice_app_card",
+            button_title="Открыть корзину",
+            button_url="https://shop.example/cart/123",
+        ),
+    )
+    await store.mark_done(key, expected, ttl_seconds=30)
+    loaded = await store.get_done(key)
+
+    assert loaded == expected
+
+    await store.clear(key)
+    assert await store.get_done(key) is None
+
+
+@pytest.mark.asyncio
+async def test_redis_idempotency_store_fallbacks_to_memory_on_errors():
+    store = RedisIdempotencyStore(DummyBrokenRedis())
+    key = "k-broken"
+    started = await store.try_start(key, ttl_seconds=30)
+    assert started is True
+    started_again = await store.try_start(key, ttl_seconds=30)
+    assert started_again is False
+
+    expected = VoiceOrderResult(ok=True, voice_text="OK")
+    await store.mark_done(key, expected, ttl_seconds=30)
+    loaded = await store.get_done(key)
+    assert loaded == expected
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_success():
     mcp = FakeMCPClient()
@@ -115,6 +235,101 @@ async def test_orchestrator_success():
     assert result.delivery.channel == "alice_app_card"
     assert "ссылку отправила в приложение" in result.voice_text.lower()
     assert ("vkusvill_products_search", {"q": "молоко", "limit": 5}) in mcp.calls
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_too_long_utterance():
+    mcp = FakeMCPClient()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        idempotency_store=InMemoryIdempotencyStore(),
+        max_utterance_chars=12,
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-long",
+        utterance="закажи молоко и яйца",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "utterance_too_long"
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_rejects_too_many_products():
+    mcp = FakeMCPClient()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        idempotency_store=InMemoryIdempotencyStore(),
+        max_products_per_order=2,
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-many",
+        utterance="закажи молоко, хлеб, сыр",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "too_many_products"
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_order_rate_limited():
+    mcp = FakeMCPClient()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        idempotency_store=InMemoryIdempotencyStore(),
+        order_rate_limiter=InMemoryRateLimiter(),
+        order_rate_limit=1,
+        order_rate_window_seconds=60,
+    )
+
+    first = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-rate-order",
+        utterance="закажи молоко",
+    )
+    second = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-rate-order",
+        utterance="закажи кефир",
+    )
+
+    assert first.ok is True
+    assert second.ok is False
+    assert second.error_code == "order_rate_limited"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_link_code_rate_limited():
+    mcp = FakeMCPClient()
+    links = CountingLinkStore()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        account_links=links,
+        idempotency_store=InMemoryIdempotencyStore(),
+        link_code_rate_limiter=InMemoryRateLimiter(),
+        link_code_rate_limit=1,
+        link_code_rate_window_seconds=600,
+    )
+
+    first = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-rate-link",
+        utterance="код 111111",
+    )
+    second = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-user-rate-link",
+        utterance="код 222222",
+    )
+
+    assert first.ok is False
+    assert first.error_code == "invalid_code"
+    assert second.ok is False
+    assert second.error_code == "link_rate_limited"
+    assert links.consume_calls == 1
 
 
 @pytest.mark.asyncio
@@ -375,6 +590,132 @@ def test_cloud_function_http_proxy_response(monkeypatch):
     assert response["headers"]["Content-Type"].startswith("application/json")
 
 
+def test_cloud_function_raw_requires_skill_id(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_SKILL_ID", "alice.skill.expected")
+
+    event = {
+        "version": "1.0",
+        "session": {"user": {"user_id": "alice-user-raw"}, "skill_id": "alice.skill.other"},
+        "request": {"command": "закажи молоко"},
+    }
+    response = module.handler(event, None)
+
+    assert response["response"]["end_session"] is True
+    assert "доступ" in response["response"]["text"].lower()
+
+
+def test_cloud_function_raw_accepts_skill_id(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_SKILL_ID", "alice.skill.expected")
+
+    class DummyOrchestrator:
+        async def create_order_from_utterance(
+            self,
+            voice_user_id: str,
+            utterance: str,
+        ) -> VoiceOrderResult:
+            assert voice_user_id == "alice-user-raw"
+            assert utterance == "закажи молоко"
+            return VoiceOrderResult(ok=True, voice_text="OK")
+
+    module._RUNTIME = module._Runtime(orchestrator=DummyOrchestrator())
+    event = {
+        "version": "1.0",
+        "session": {"user": {"user_id": "alice-user-raw"}, "skill_id": "alice.skill.expected"},
+        "request": {"command": "закажи молоко"},
+    }
+    response = module.handler(event, None)
+
+    assert response["response"]["text"] == "OK"
+
+
+def test_cloud_function_http_proxy_requires_webhook_token(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_WEBHOOK_TOKEN", "super-secret")
+
+    event = {
+        "httpMethod": "POST",
+        "requestContext": {},
+        "headers": {"content-type": "application/json"},
+        "body": json.dumps(
+            {
+                "version": "1.0",
+                "session": {"user": {"user_id": "alice-http-user"}},
+                "request": {"command": "закажи молоко"},
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+    response = module.handler(event, None)
+    assert response["statusCode"] == 403
+    assert json.loads(response["body"])["error"] == "forbidden"
+
+
+def test_cloud_function_http_proxy_accepts_valid_webhook_token(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_WEBHOOK_TOKEN", "super-secret")
+
+    class DummyOrchestrator:
+        async def create_order_from_utterance(
+            self,
+            voice_user_id: str,
+            utterance: str,
+        ) -> VoiceOrderResult:
+            assert voice_user_id == "alice-http-user"
+            assert utterance == "закажи молоко"
+            return VoiceOrderResult(ok=True, voice_text="OK")
+
+    module._RUNTIME = module._Runtime(orchestrator=DummyOrchestrator())
+
+    event = {
+        "httpMethod": "POST",
+        "requestContext": {},
+        "headers": {"x-alice-webhook-token": "super-secret"},
+        "body": json.dumps(
+            {
+                "version": "1.0",
+                "session": {"user": {"user_id": "alice-http-user"}},
+                "request": {"command": "закажи молоко"},
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+    response = module.handler(event, None)
+    assert response["statusCode"] == 200
+    payload = json.loads(response["body"])
+    assert payload["response"]["text"] == "OK"
+
+
+def test_cloud_function_http_proxy_rejects_wrong_skill_id(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_WEBHOOK_TOKEN", "super-secret")
+    monkeypatch.setenv("ALICE_SKILL_ID", "alice.skill.expected")
+
+    event = {
+        "httpMethod": "POST",
+        "requestContext": {},
+        "headers": {"x-alice-webhook-token": "super-secret"},
+        "body": json.dumps(
+            {
+                "version": "1.0",
+                "session": {
+                    "user": {"user_id": "alice-http-user"},
+                    "skill_id": "alice.skill.other",
+                },
+                "request": {"command": "закажи молоко"},
+            },
+            ensure_ascii=False,
+        ),
+    }
+
+    response = module.handler(event, None)
+    assert response["statusCode"] == 403
+    assert json.loads(response["body"])["error"] == "forbidden"
+
+
 @pytest.mark.asyncio
 async def test_runtime_db_failure_degrades_to_guest(monkeypatch):
     module = importlib.import_module("vkuswill_bot.alice_skill.handler")
@@ -397,6 +738,66 @@ async def test_runtime_db_failure_degrades_to_guest(monkeypatch):
     runtime = await module._get_runtime()
 
     assert runtime.orchestrator._require_linked_account is False
+    module._RUNTIME = None
+
+
+@pytest.mark.asyncio
+async def test_runtime_db_failure_fail_closed_linking(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    module._RUNTIME = None
+
+    class DummyMCPClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    async def raise_db_error(*args, **kwargs):
+        raise TimeoutError("db timeout")
+
+    monkeypatch.setattr(module, "VkusvillMCPClient", DummyMCPClient)
+    monkeypatch.setattr(module.asyncpg, "create_pool", raise_db_error)
+    monkeypatch.setenv("ALICE_DATABASE_URL", "postgresql://x:y@db:6432/vkuswill")
+    monkeypatch.setenv("ALICE_REQUIRE_LINKED_ACCOUNT", "true")
+    monkeypatch.setenv("ALICE_DEGRADE_TO_GUEST_ON_DB_ERROR", "false")
+    monkeypatch.setenv("ALICE_LINKING_FAIL_CLOSED", "true")
+
+    runtime = await module._get_runtime()
+    assert runtime.orchestrator._require_linked_account is True
+    assert isinstance(runtime.orchestrator._account_links, UnavailableAccountLinkStore)
+    module._RUNTIME = None
+
+
+@pytest.mark.asyncio
+async def test_runtime_uses_redis_idempotency_store(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    module._RUNTIME = None
+
+    class DummyMCPClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    class DummyRedisClient:
+        async def get(self, key: str) -> str | None:
+            del key
+            return None
+
+        async def set(self, key: str, value: str, *, ex: int | None = None, nx: bool = False):
+            del key, value, ex, nx
+            return True
+
+        async def delete(self, key: str) -> int:
+            del key
+            return 1
+
+    async def fake_create_redis_client(*args, **kwargs):
+        del args, kwargs
+        return DummyRedisClient()
+
+    monkeypatch.setattr(module, "VkusvillMCPClient", DummyMCPClient)
+    monkeypatch.setattr(module, "create_redis_client", fake_create_redis_client)
+    monkeypatch.setenv("ALICE_REDIS_URL", "redis://localhost:6379/0")
+
+    runtime = await module._get_runtime()
+    assert isinstance(runtime.orchestrator._idempotency_store, RedisIdempotencyStore)
     module._RUNTIME = None
 
 

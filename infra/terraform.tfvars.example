@@ -34,12 +34,20 @@ alice_function_enabled          = true
 alice_function_name             = "vkuswill-alice-skill"
 alice_function_zip_path         = "../dist/alice-skill.zip"
 alice_function_network_id       = "enp1gdenmvuu3e1ffi93"
-alice_link_api_url              = ""
+alice_link_api_url              = "" # empty -> auto http://<VM_INTERNAL_IP>:8080/voice-link
+alice_skill_id                  = "your-yandex-dialogs-skill-id"
+alice_linking_fail_closed       = true
+alice_idempotency_key_prefix    = "alice:idem:"
+alice_rate_limit_key_prefix     = "alice:rl:"
+alice_order_rate_limit          = 12
+alice_order_rate_window_seconds = 60
+alice_link_code_rate_limit      = 6
+alice_link_code_rate_window_seconds = 600
 alice_link_api_timeout_seconds  = 5
 alice_link_api_verify_ssl       = true
 alice_idempotency_ttl_seconds   = 90
 alice_db_connect_timeout_seconds = 3
-alice_degrade_to_guest_on_db_error = true
+alice_degrade_to_guest_on_db_error = false
 voice_link_code_ttl_minutes     = 10
 
 # Langfuse (LLM-observability, self-hosted)
