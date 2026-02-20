@@ -84,6 +84,16 @@ resource "yandex_vpc_security_group" "bot" {
     v4_cidr_blocks = data.yandex_vpc_subnet.default_a.v4_cidr_blocks
   }
 
+  # Redis для serverless-функции Алисы
+  ingress {
+    description = "Internal Redis (6379)"
+    protocol    = "TCP"
+    port        = 6379
+    # Для MDB Redis source range serverless egress может не попадать в RFC1918.
+    # Оставляем открытым, пока не зафиксируем точные service CIDR.
+    v4_cidr_blocks = ["0.0.0.0/0"]
+  }
+
   # Весь исходящий трафик (Telegram API, GigaChat, MCP)
   egress {
     description    = "Outbound: all"
