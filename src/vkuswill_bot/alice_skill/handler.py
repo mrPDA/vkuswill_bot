@@ -235,8 +235,7 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             "session": event.get("session", {}),
             "response": {
                 "text": (
-                    "Привет! Скажите, что добавить в корзину. "
-                    "Например: закажи молоко и яйца."
+                    "Привет! Скажите, что добавить в корзину. Например: закажи молоко и яйца."
                 ),
                 "end_session": False,
             },

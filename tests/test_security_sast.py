@@ -305,9 +305,7 @@ class TestSSLSecurity:
                     and node.value.id == "ssl"
                     and node.attr == "CERT_NONE"
                 ):
-                    findings.append(
-                        f"  {rel_path}:{node.lineno}: SSL отключён — ssl.CERT_NONE"
-                    )
+                    findings.append(f"  {rel_path}:{node.lineno}: SSL отключён — ssl.CERT_NONE")
 
         assert not findings, "SSL-проверка отключена:\n" + "\n".join(findings)
 
@@ -335,10 +333,7 @@ class TestInformationLeakage:
                 if pattern.search(text_expr):
                     violations.append(f"  Строка {line_num}: {description}")
 
-        assert not violations, (
-            f"\nУтечка информации в {_rel_path(path)}:\n"
-            + "\n".join(violations)
-        )
+        assert not violations, f"\nУтечка информации в {_rel_path(path)}:\n" + "\n".join(violations)
 
     def test_error_messages_are_generic(self):
         """Литералы в пользовательских сообщениях не содержат тех-деталей."""
@@ -387,9 +382,7 @@ class TestCodeStructure:
             if isinstance(node, ast.ExceptHandler) and node.type is None:
                 violations.append(f"  Строка {node.lineno}: bare except (без типа исключения)")
 
-        assert not violations, (
-            f"Bare except в {_rel_path(path)}:\n" + "\n".join(violations)
-        )
+        assert not violations, f"Bare except в {_rel_path(path)}:\n" + "\n".join(violations)
 
     @pytest.mark.parametrize("path,code", _all_source_code(), ids=_param_id)
     def test_exception_handling_logs_errors(self, path: Path, code: str):
@@ -411,9 +404,7 @@ class TestCodeStructure:
                     f"(ошибка глушится без логирования)"
                 )
 
-        assert not violations, (
-            f"Глушение ошибок в {_rel_path(path)}:\n" + "\n".join(violations)
-        )
+        assert not violations, f"Глушение ошибок в {_rel_path(path)}:\n" + "\n".join(violations)
 
 
 # ============================================================================
