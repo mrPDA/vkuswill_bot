@@ -45,9 +45,9 @@ resource "yandex_vpc_security_group" "bot" {
 
   # Internal app HTTP (webhook upstream + voice-link API)
   ingress {
-    description    = "Internal app HTTP (8080)"
-    protocol       = "TCP"
-    port           = 8080
+    description = "Internal app HTTP (8080)"
+    protocol    = "TCP"
+    port        = 8080
     # Serverless function egress может идти из служебных подсетей VPC,
     # не совпадающих с CIDR VM-подсети.
     v4_cidr_blocks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]

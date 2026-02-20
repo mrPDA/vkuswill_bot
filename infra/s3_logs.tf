@@ -34,9 +34,7 @@ resource "yandex_iam_service_account_static_access_key" "log_writer_s3" {
 # ─── S3 Bucket ────────────────────────────────────────────────
 
 resource "yandex_storage_bucket" "logs" {
-  bucket     = var.s3_log_bucket
-  access_key = yandex_iam_service_account_static_access_key.log_writer_s3.access_key
-  secret_key = yandex_iam_service_account_static_access_key.log_writer_s3.secret_key
+  bucket = var.s3_log_bucket
 
   # Запретить публичный доступ
   acl = "private"

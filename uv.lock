@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 
 [[package]]
@@ -2746,7 +2746,7 @@ requires-dist = [
     { name = "bandit", marker = "extra == 'test'", specifier = ">=1.7" },
     { name = "boto3", specifier = ">=1.35" },
     { name = "gigachat", specifier = ">=0.1.36" },
-    { name = "langfuse", specifier = ">=2.60,<3" },
+    { name = "langfuse", specifier = ">=2.60,<4" },
     { name = "locust", marker = "extra == 'loadtest'", specifier = ">=2.29" },
     { name = "mcp", specifier = ">=1.9" },
     { name = "pip-audit", marker = "extra == 'test'", specifier = ">=2.7" },

@@ -55,6 +55,22 @@ class InMemoryAccountLinkStore:
         return {"ok": True, "reason": "ok", "user_id": user_id}
 
 
+class UnavailableAccountLinkStore:
+    """Заглушка fail-closed для production linking."""
+
+    async def resolve_internal_user_id(self, voice_user_id: str) -> int | None:
+        del voice_user_id
+        return None
+
+    async def consume_link_code(
+        self,
+        voice_user_id: str,
+        code: str,
+    ) -> dict[str, object]:
+        del voice_user_id, code
+        return {"ok": False, "reason": "linking_unavailable", "user_id": None}
+
+
 class PostgresAccountLinkStore:
     """Хранилище voice linking поверх UserStore (production)."""
 

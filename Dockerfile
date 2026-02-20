@@ -40,6 +40,9 @@ COPY --from=builder /app/src /app/src
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/scripts /app/scripts
 
+# CA-сертификаты НУЦ Минцифры (для SSL-верификации GigaChat)
+COPY certs/ /app/certs/
+
 # Создать директорию для данных (SQLite — legacy)
 RUN mkdir -p /app/data && chown -R botuser:botuser /app
 
