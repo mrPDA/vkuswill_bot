@@ -49,21 +49,22 @@ class VkusvillMCPClient:
     - vkusvill_cart_link_create — создание ссылки на корзину
     """
 
-    def __init__(self, server_url: str) -> None:
+    def __init__(self, server_url: str, api_key: str | None = None) -> None:
         self.server_url = server_url
+        self.api_key = api_key
         self._tools_cache: list[dict] | None = None
         self._session_id: str | None = None
         self._request_id: int = 0
-        self._client: httpx.AsyncClient | None = None
+        self._client: httpx.Client | None = None
 
     def _next_id(self) -> int:
         self._request_id += 1
         return self._request_id
 
-    async def _get_client(self) -> httpx.AsyncClient:
+    async def _get_client(self) -> httpx.Client:
         """Получить или создать постоянный httpx-клиент."""
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(
+            self._client = httpx.Client(
                 timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
                 follow_redirects=True,
                 # keep-alive включён по умолчанию в httpx
@@ -76,13 +77,15 @@ class VkusvillMCPClient:
             "Content-Type": "application/json",
             "Accept": "application/json, text/event-stream",
         }
+        if self.api_key:
+            headers["Authorization"] = f"Bearer {self.api_key}"
         if self._session_id:
             headers["mcp-session-id"] = self._session_id
         return headers
 
     async def _rpc_call(
         self,
-        client: httpx.AsyncClient,
+        client: httpx.Client,
         method: str,
         params: dict[str, Any] | None = None,
     ) -> dict[str, Any] | None:
@@ -98,7 +101,8 @@ class VkusvillMCPClient:
 
         logger.debug("JSON-RPC → %s (id=%d)", method, request_id)
 
-        response = await client.post(
+        response = await asyncio.to_thread(
+            client.post,
             self.server_url,
             json=payload,
             headers=self._headers(),
@@ -159,7 +163,7 @@ class VkusvillMCPClient:
 
     async def _rpc_notify(
         self,
-        client: httpx.AsyncClient,
+        client: httpx.Client,
         method: str,
         params: dict[str, Any] | None = None,
     ) -> None:
@@ -173,7 +177,8 @@ class VkusvillMCPClient:
 
         logger.debug("JSON-RPC notify → %s", method)
 
-        response = await client.post(
+        response = await asyncio.to_thread(
+            client.post,
             self.server_url,
             json=payload,
             headers=self._headers(),
@@ -181,7 +186,7 @@ class VkusvillMCPClient:
         if response.status_code not in (200, 202, 204):
             response.raise_for_status()
 
-    async def _ensure_initialized(self) -> httpx.AsyncClient:
+    async def _ensure_initialized(self) -> httpx.Client:
         """Убедиться, что MCP-сессия инициализирована.
 
         Если сессия уже есть — возвращает клиент.
@@ -216,7 +221,7 @@ class VkusvillMCPClient:
         """Сбросить сессию (при ошибке подключения)."""
         self._session_id = None
         if self._client and not self._client.is_closed:
-            await self._client.aclose()
+            await asyncio.to_thread(self._client.close)
         self._client = None
 
     async def close(self) -> None:

@@ -29,7 +29,7 @@ resource "yandex_lockbox_secret_version" "bot" {
 
   entries {
     key        = "DATABASE_URL"
-    text_value = "postgresql://bot:${var.pg_password}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
+    text_value = "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
   }
 
   entries {
@@ -58,6 +58,11 @@ resource "yandex_lockbox_secret_version" "bot" {
   }
 
   entries {
+    key        = "VOICE_LINK_API_KEY"
+    text_value = var.voice_link_api_key
+  }
+
+  entries {
     key        = "ADMIN_USER_IDS"
     text_value = var.admin_user_ids
   }
@@ -81,6 +86,11 @@ resource "yandex_lockbox_secret_version" "bot" {
   entries {
     key        = "WEBHOOK_PORT"
     text_value = "8080"
+  }
+
+  entries {
+    key        = "VOICE_LINK_CODE_TTL_MINUTES"
+    text_value = tostring(var.voice_link_code_ttl_minutes)
   }
 
   # Langfuse (LLM-observability, self-hosted на VM)

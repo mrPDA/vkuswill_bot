@@ -25,10 +25,24 @@ mcp_server_enabled   = "true"
 mcp_server_port      = "8081"
 mcp_server_api_key   = "CHANGE_ME_single_key_or_leave_empty"
 mcp_server_api_keys  = "{\"agent_a\":\"CHANGE_ME_key_a\",\"agent_b\":\"CHANGE_ME_key_b\"}"
+voice_link_api_key   = "CHANGE_ME_voice_link_api_key"
 admin_user_ids       = "[123456789]"
 
 # Webhook / Runtime
 webhook_host = "your-vm-external-ip-or-domain"
+
+# Alice Skill (Serverless)
+alice_function_enabled          = true
+alice_function_name             = "vkuswill-alice-skill"
+alice_function_zip_path         = "../dist/alice-skill.zip"
+alice_function_network_id       = "enp1gdenmvuu3e1ffi93"
+alice_link_api_url              = ""
+alice_link_api_timeout_seconds  = 5
+alice_link_api_verify_ssl       = true
+alice_idempotency_ttl_seconds   = 90
+alice_db_connect_timeout_seconds = 3
+alice_degrade_to_guest_on_db_error = true
+voice_link_code_ttl_minutes     = 10
 
 # Langfuse (LLM-observability, self-hosted)
 # Генерация секретов: openssl rand -base64 32
