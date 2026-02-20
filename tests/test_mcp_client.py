@@ -232,6 +232,11 @@ class TestHeaders:
         headers = mcp_client._headers()
         assert headers["mcp-session-id"] == "test-session-123"
 
+    def test_with_api_key(self):
+        client = VkusvillMCPClient(MCP_URL, api_key="secret")
+        headers = client._headers()
+        assert headers["Authorization"] == "Bearer secret"
+
 
 class TestNextId:
     """Тесты _next_id: инкрементальный счётчик."""

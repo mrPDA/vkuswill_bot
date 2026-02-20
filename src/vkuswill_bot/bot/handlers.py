@@ -280,6 +280,7 @@ async def cmd_start(
             "и улучшения качества сервиса. Подробнее: /privacy\n\n"
             "<b>Команды:</b>\n"
             "/reset — начать новый диалог\n"
+            "/link_voice — привязать Алису\n"
             "/invite — пригласить друга\n"
             "/privacy — политика конфиденциальности\n"
             "/help — помощь",
@@ -296,6 +297,7 @@ async def cmd_start(
             "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
             "<b>Команды:</b>\n"
             "/reset — начать новый диалог\n"
+            "/link_voice — привязать Алису\n"
             "/invite — пригласить друга\n"
             "/privacy — политика конфиденциальности\n"
             "/help — помощь"
@@ -328,6 +330,7 @@ async def consent_accept_callback(
         "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
         "<b>Команды:</b>\n"
         "/reset — начать новый диалог\n"
+        "/link_voice — привязать Алису\n"
         "/invite — пригласить друга\n"
         "/privacy — политика конфиденциальности\n"
         "/help — помощь"
@@ -433,6 +436,7 @@ async def cmd_help(message: Message) -> None:
         "3. Перейди по ссылке на сайт ВкусВилл для оформления заказа\n\n"
         "<b>Команды:</b>\n"
         "/reset — сбросить историю диалога\n"
+        "/link_voice — привязать Алису\n"
         "/invite — пригласить друга и получить бонусные корзины\n"
         "/survey — пройти опрос и получить бонусные корзины\n"
         "/privacy — политика конфиденциальности"
@@ -520,6 +524,47 @@ async def cmd_invite(
     text += f"Корзин доступно: <b>{remaining}</b> из <b>{cart_limit}</b>"
 
     await message.answer(text)
+
+
+@router.message(Command("link_voice"))
+async def cmd_link_voice(
+    message: Message,
+    user_store: UserStore | None = None,
+) -> None:
+    """Сгенерировать одноразовый код привязки voice-аккаунта (Алиса)."""
+    if not message.from_user:
+        return
+    if user_store is None:
+        await message.answer("Привязка Алисы временно недоступна.")
+        return
+
+    from vkuswill_bot.config import config as app_config
+
+    ttl_minutes = max(1, getattr(app_config, "voice_link_code_ttl_minutes", 10))
+    try:
+        code = await user_store.create_voice_link_code(
+            user_id=message.from_user.id,
+            provider="alice",
+            ttl_minutes=ttl_minutes,
+        )
+        await user_store.log_event(
+            message.from_user.id,
+            "voice_link_code_issued",
+            {"provider": "alice", "ttl_minutes": ttl_minutes},
+        )
+    except Exception as e:
+        logger.error("Ошибка создания voice link code для %s: %s", message.from_user.id, e)
+        await message.answer("Не удалось создать код привязки. Попробуйте позже.")
+        return
+
+    await message.answer(
+        "<b>Привязка Алисы</b>\n\n"
+        "1. Скажите в навыке Алисы: "
+        f"<code>код {code}</code>\n"
+        "2. Дождитесь подтверждения привязки.\n"
+        "3. После этого можно заказывать голосом.\n\n"
+        f"Код действует <b>{ttl_minutes} минут</b> и работает один раз."
+    )
 
 
 @router.message(Command("reset"))
