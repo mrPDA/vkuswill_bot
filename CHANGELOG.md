@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.2] — 2026-02-20
+
+### Исправлено
+
+- **MCP ingress через nginx** — для маршрута `/mcp` зафиксирован upstream `Host: 127.0.0.1:8081`, чтобы исключить `421 Invalid Host header` от FastMCP при внешних запросах
+- **Self-signed SSL nginx-конфиг** — в `setup-selfsigned-ssl.sh` добавлены маршруты `/mcp` и `/langfuse/`, чтобы не терять эти endpoint после bootstrap
+- **Fallback SSL-конфиг в setup-ssl.sh** — синхронизирован с production-маршрутами `/mcp` и `/langfuse/`
+- **Langfuse DATABASE_URL обработка** — устранено двойное URL-кодирование пароля в `deploy.sh`, из-за которого Langfuse падал с `P1000` (auth failed)
+
 ## [0.18.1] — 2026-02-19
 
 ### Исправлено
