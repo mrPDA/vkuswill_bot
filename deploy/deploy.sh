@@ -211,11 +211,15 @@ deploy_langfuse() {
   if [[ -n "$LF_DB_URL" ]]; then
     LF_DB_URL=$(echo "$LF_DB_URL" | python3 -c "
 import sys
-from urllib.parse import urlparse, quote, urlunparse
+from urllib.parse import urlparse, quote, unquote, urlunparse
 url = sys.stdin.read().strip()
 u = urlparse(url)
 if u.password:
-    netloc = f'{quote(u.username, safe=\"\")}:{quote(u.password, safe=\"\")}@{u.hostname}:{u.port}'
+    user = unquote(u.username or '')
+    password = unquote(u.password or '')
+    host = u.hostname or ''
+    port = f':{u.port}' if u.port else ''
+    netloc = f'{quote(user, safe=\"\")}:{quote(password, safe=\"\")}@{host}{port}'
     print(urlunparse(u._replace(netloc=netloc)))
 else:
     print(url)
