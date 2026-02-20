@@ -263,7 +263,7 @@ class AliceOrderOrchestrator:
                 "vkusvill_cart_link_create",
                 {"products": cart_products},
             )
-            cart = self._extract_cart(cart_raw)
+            cart = self._extract_cart(cart_raw, fallback_items_count=len(cart_products))
             if not cart["link"]:
                 await self._idempotency_store.clear(idem_key)
                 return VoiceOrderResult(
@@ -350,30 +350,106 @@ class AliceOrderOrchestrator:
         return None
 
     @staticmethod
-    def _extract_cart(cart_result: dict[str, Any]) -> dict[str, Any]:
-        data = cart_result.get("data")
+    def _extract_cart(
+        cart_result: dict[str, Any],
+        *,
+        fallback_items_count: int = 0,
+    ) -> dict[str, Any]:
+        data_raw = cart_result.get("data")
+        data = data_raw if isinstance(data_raw, dict) else cart_result
         if not isinstance(data, dict):
-            return {"link": None, "total_rub": None, "items_count": 0}
+            return {"link": None, "total_rub": None, "items_count": fallback_items_count}
 
-        link = data.get("link")
+        link = data.get("link", data.get("cart_link"))
         if not isinstance(link, str) or not link:
             link = None
 
-        total_rub = None
         summary = data.get("price_summary")
+        total_source = None
         if isinstance(summary, dict):
-            total = summary.get("total")
-            if isinstance(total, int | float):
-                total_rub = float(total)
+            total_source = summary.get("total")
+        if total_source is None:
+            total_source = data.get("total")
+        total_rub = AliceOrderOrchestrator._coerce_float(total_source)
 
         items_count = 0
         products = data.get("products")
-        if isinstance(products, list):
+        if isinstance(products, list) and products:
             items_count = len(products)
+
+        if items_count == 0 and isinstance(summary, dict):
+            summary_count = AliceOrderOrchestrator._coerce_non_negative_int(summary.get("count"))
+            if summary_count is not None and summary_count > 0:
+                items_count = summary_count
+
+        if items_count == 0:
+            count_fields = ("products_count", "items_count", "count")
+            for field in count_fields:
+                count_value = AliceOrderOrchestrator._coerce_non_negative_int(data.get(field))
+                if count_value is not None and count_value > 0:
+                    items_count = count_value
+                    break
+
+        if items_count == 0:
+            items = data.get("items")
+            if isinstance(items, list) and items:
+                items_count = len(items)
+
+        if items_count == 0 and fallback_items_count > 0:
+            items_count = fallback_items_count
+
         return {"link": link, "total_rub": total_rub, "items_count": items_count}
 
     @staticmethod
+    def _coerce_float(value: Any) -> float | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int | float):
+            return float(value)
+        if isinstance(value, str):
+            normalized = value.strip().replace(",", ".")
+            if not normalized:
+                return None
+            try:
+                return float(normalized)
+            except ValueError:
+                return None
+        return None
+
+    @staticmethod
+    def _coerce_non_negative_int(value: Any) -> int | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value if value >= 0 else None
+        if isinstance(value, float):
+            if value.is_integer() and value >= 0:
+                return int(value)
+            return None
+        if isinstance(value, str):
+            normalized = value.strip()
+            if not normalized:
+                return None
+            try:
+                parsed = int(normalized)
+            except ValueError:
+                return None
+            return parsed if parsed >= 0 else None
+        return None
+
+    @staticmethod
     def _build_success_text(total_rub: float | None, items_count: int) -> str:
-        if total_rub is None:
-            return f"Готово. Корзина на {items_count} позиций, ссылку отправила в приложение."
-        return f"Готово. Корзина на {_format_rub(total_rub)} рублей, ссылку отправила в приложение."
+        if total_rub is not None and items_count > 0:
+            return (
+                "Готово. Собрала корзину: "
+                f"{items_count} позиций на {_format_rub(total_rub)} рублей, "
+                "ссылку отправила в приложение."
+            )
+        if total_rub is not None:
+            return (
+                f"Готово. Собрала корзину на {_format_rub(total_rub)} рублей, "
+                "ссылку отправила в приложение."
+            )
+        if items_count > 0:
+            return f"Готово. Собрала корзину: {items_count} позиций, ссылку отправила в приложение."
+        return "Готово. Корзину собрала, ссылку отправила в приложение."
