@@ -24,6 +24,7 @@ from vkuswill_bot.bot.handlers import (
     cart_feedback_positive,
     cart_feedback_reason,
     cmd_help,
+    cmd_link_voice,
     cmd_privacy,
     cmd_reset,
     cmd_start,
@@ -156,6 +157,30 @@ class TestCommands:
 
         mock_service.reset_conversation.assert_not_called()
         msg.answer.assert_called_once()
+
+    async def test_cmd_link_voice_success(self):
+        """/link_voice генерирует код и отправляет инструкцию."""
+        msg = make_message("/link_voice", user_id=42)
+        mock_store = AsyncMock()
+        mock_store.create_voice_link_code.return_value = "123456"
+
+        await cmd_link_voice(msg, user_store=mock_store)
+
+        mock_store.create_voice_link_code.assert_awaited_once()
+        mock_store.log_event.assert_awaited_once()
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "код 123456" in text
+        assert "Привязка Алисы" in text
+
+    async def test_cmd_link_voice_no_store(self):
+        """/link_voice без user_store сообщает о недоступности."""
+        msg = make_message("/link_voice", user_id=42)
+
+        await cmd_link_voice(msg, user_store=None)
+
+        msg.answer.assert_called_once()
+        assert "недоступна" in msg.answer.call_args[0][0]
 
 
 # ============================================================================

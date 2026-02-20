@@ -105,9 +105,14 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
-      - name: Copy deploy script
+      - name: Sync deploy assets
         run: |
-          scp -i ~/.ssh/deploy_key deploy/deploy.sh "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/deploy.sh"
+          scp -i ~/.ssh/deploy_key \
+            deploy/deploy.sh \
+            deploy/nginx-bot.conf \
+            deploy/setup-ssl.sh \
+            deploy/setup-selfsigned-ssl.sh \
+            "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/"
 
       - name: Cleanup disk on VM
         run: |

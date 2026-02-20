@@ -43,12 +43,14 @@ resource "yandex_vpc_security_group" "bot" {
     v4_cidr_blocks = ["0.0.0.0/0"]
   }
 
-  # Webhook HTTP (прямой доступ для health check)
+  # Internal app HTTP (webhook upstream + voice-link API)
   ingress {
-    description    = "Webhook HTTP"
+    description    = "Internal app HTTP (8080)"
     protocol       = "TCP"
     port           = 8080
-    v4_cidr_blocks = ["0.0.0.0/0"]
+    # Serverless function egress может идти из служебных подсетей VPC,
+    # не совпадающих с CIDR VM-подсети.
+    v4_cidr_blocks = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
   }
 
   # Langfuse UI (self-hosted, временный прямой доступ)
@@ -72,6 +74,14 @@ resource "yandex_vpc_security_group" "bot" {
     description       = "Internal: all within SG"
     protocol          = "ANY"
     predefined_target = "self_security_group"
+  }
+
+  # PostgreSQL для serverless-функции Алисы (из той же VPC-подсети)
+  ingress {
+    description    = "PostgreSQL from VPC subnet (Alice function)"
+    protocol       = "TCP"
+    port           = 6432
+    v4_cidr_blocks = data.yandex_vpc_subnet.default_a.v4_cidr_blocks
   }
 
   # Весь исходящий трафик (Telegram API, GigaChat, MCP)

@@ -104,3 +104,15 @@ output "deployer_secret_key" {
   value       = yandex_iam_service_account_static_access_key.deployer_cr_key.secret_key
   sensitive   = true
 }
+
+# ─── Alice Skill ──────────────────────────────────────────────
+
+output "alice_function_id" {
+  description = "Alice serverless function ID"
+  value       = var.alice_function_enabled ? yandex_function.alice_skill[0].id : null
+}
+
+output "alice_function_invoke_url" {
+  description = "Alice function HTTPS invoke URL (set in Yandex Dialogs)"
+  value       = var.alice_function_enabled ? "https://functions.yandexcloud.net/${yandex_function.alice_skill[0].id}" : null
+}

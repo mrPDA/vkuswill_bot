@@ -98,6 +98,8 @@ class Config(BaseSettings):
     free_cart_limit: int = 5  # Tier 1: бесплатные корзины
     bonus_cart_limit: int = 5  # Tier 2: бонус за survey
     referral_cart_bonus: int = 3  # Tier 3: бонус за приглашение друга
+    voice_link_code_ttl_minutes: int = 10  # TTL одноразового кода привязки Алисы
+    voice_link_api_key: str = ""  # API key для /voice-link/* endpoint'ов (вариант 1)
 
     # Системный промпт (переопределение через env для production)
     system_prompt: str = ""

@@ -23,18 +23,33 @@ resource "yandex_lockbox_secret_version" "bot" {
   }
 
   entries {
-    key = "REDIS_URL"
+    key        = "REDIS_URL"
     text_value = "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
   }
 
   entries {
-    key = "DATABASE_URL"
-    text_value = "postgresql://bot:${var.pg_password}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
+    key        = "DATABASE_URL"
+    text_value = "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
   }
 
   entries {
     key        = "MCP_SERVER_URL"
     text_value = var.mcp_server_url
+  }
+
+  entries {
+    key        = "MCP_SERVER_API_KEY"
+    text_value = var.mcp_server_api_key
+  }
+
+  entries {
+    key        = "MCP_SERVER_API_KEYS"
+    text_value = var.mcp_server_api_keys
+  }
+
+  entries {
+    key        = "VOICE_LINK_API_KEY"
+    text_value = var.voice_link_api_key
   }
 
   entries {
@@ -63,6 +78,11 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = "8080"
   }
 
+  entries {
+    key        = "VOICE_LINK_CODE_TTL_MINUTES"
+    text_value = tostring(var.voice_link_code_ttl_minutes)
+  }
+
   # Langfuse (LLM-observability, self-hosted на VM)
   entries {
     key        = "LANGFUSE_ENABLED"
@@ -75,7 +95,7 @@ resource "yandex_lockbox_secret_version" "bot" {
   }
 
   entries {
-    key = "LANGFUSE_DATABASE_URL"
+    key        = "LANGFUSE_DATABASE_URL"
     text_value = "postgresql://langfuse:${urlencode(var.langfuse_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse?sslmode=require"
   }
 
@@ -106,7 +126,7 @@ resource "yandex_lockbox_secret_version" "bot" {
   }
 
   entries {
-    key = "METABASE_DATABASE_URL"
+    key        = "METABASE_DATABASE_URL"
     text_value = "postgresql://metabase:${urlencode(var.metabase_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/metabase?sslmode=require"
   }
 
