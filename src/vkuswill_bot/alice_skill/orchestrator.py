@@ -18,10 +18,39 @@ from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 logger = logging.getLogger(__name__)
 
 _VERB_RE = re.compile(r"\b(закажи|заказать|добавь|купи|нужен|нужно)\b", re.IGNORECASE)
-_LINK_CODE_RE = re.compile(
-    r"(?:код|code)\s*[:\-]?\s*([0-9]{6})",
-    re.IGNORECASE,
-)
+_LINK_CODE_PREFIX_RE = re.compile(r"(?:код|code)\s*[:\-]?\s*", re.IGNORECASE)
+_LINK_CODE_TOKEN_RE = re.compile(r"[0-9]+|[a-zа-яё]+", re.IGNORECASE)
+_LINK_CODE_SEPARATOR_TOKENS = {
+    "и",
+    "запятая",
+    "точка",
+    "тире",
+    "дефис",
+}
+_LINK_CODE_DIGIT_WORDS = {
+    "ноль": "0",
+    "нуль": "0",
+    "zero": "0",
+    "один": "1",
+    "раз": "1",
+    "one": "1",
+    "два": "2",
+    "two": "2",
+    "три": "3",
+    "three": "3",
+    "четыре": "4",
+    "four": "4",
+    "пять": "5",
+    "five": "5",
+    "шесть": "6",
+    "six": "6",
+    "семь": "7",
+    "seven": "7",
+    "восемь": "8",
+    "eight": "8",
+    "девять": "9",
+    "nine": "9",
+}
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _SPACES_RE = re.compile(r"\s+")
 
@@ -111,11 +140,37 @@ class AliceOrderOrchestrator:
 
     @staticmethod
     def extract_link_code(utterance: str) -> str | None:
-        """Извлечь код привязки вида `код 123456` из фразы."""
-        match = _LINK_CODE_RE.search(utterance)
-        if not match:
+        """Извлечь 6-значный код привязки из голосовой фразы."""
+        prefix = _LINK_CODE_PREFIX_RE.search(utterance)
+        if not prefix:
             return None
-        return match.group(1)
+
+        tail = utterance[prefix.end() :].lower()
+        digits: list[str] = []
+        started = False
+
+        # Ограничиваемся первыми токенами после слова "код", чтобы не захватывать
+        # случайные числа из дальнейшей части фразы.
+        for token_idx, match in enumerate(_LINK_CODE_TOKEN_RE.finditer(tail), start=1):
+            if token_idx > 16:
+                break
+            token = match.group(0)
+
+            if token.isdigit():
+                started = True
+                digits.extend(list(token))
+            elif token in _LINK_CODE_DIGIT_WORDS:
+                started = True
+                digits.append(_LINK_CODE_DIGIT_WORDS[token])
+            elif token in _LINK_CODE_SEPARATOR_TOKENS:
+                if started:
+                    continue
+            elif started:
+                break
+
+            if len(digits) >= 6:
+                return "".join(digits[:6])
+        return None
 
     async def create_order_from_utterance(
         self,

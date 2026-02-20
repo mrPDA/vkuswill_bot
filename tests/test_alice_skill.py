@@ -122,6 +122,22 @@ async def test_orchestrator_link_code_then_order():
     assert order_result.cart_link == "https://shop.example/cart/abc"
 
 
+@pytest.mark.parametrize(
+    ("utterance", "expected"),
+    [
+        ("код 123456", "123456"),
+        ("код 1,2,3,4,5,6", "123456"),
+        ("код 1 2 3 4 5 6", "123456"),
+        ("код 1-2-3-4-5-6", "123456"),
+        ("код один два три четыре пять шесть", "123456"),
+        ("code 1, 2, 3, 4, 5, 6", "123456"),
+        ("закажи молоко", None),
+    ],
+)
+def test_extract_link_code_variants(utterance: str, expected: str | None):
+    assert AliceOrderOrchestrator.extract_link_code(utterance) == expected
+
+
 @pytest.mark.asyncio
 async def test_orchestrator_idempotent_duplicate_request():
     mcp = FakeMCPClient()
