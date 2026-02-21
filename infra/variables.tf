@@ -177,6 +177,12 @@ variable "alice_function_name" {
   default     = "vkuswill-alice-skill"
 }
 
+variable "alice_function_execution_timeout_seconds" {
+  description = "Execution timeout for Alice serverless function"
+  type        = number
+  default     = 60
+}
+
 variable "alice_function_zip_path" {
   description = "Path to ZIP archive with Alice skill code"
   type        = string
@@ -259,6 +265,42 @@ variable "alice_link_api_timeout_seconds" {
   description = "HTTP timeout for voice-link API calls from Alice skill"
   type        = number
   default     = 5
+}
+
+variable "alice_order_api_timeout_seconds" {
+  description = "HTTP timeout for /voice-link/order calls from Alice skill"
+  type        = number
+  default     = 3
+}
+
+variable "alice_order_async_mode" {
+  description = "Use async start/status flow for voice order API in Alice function"
+  type        = bool
+  default     = true
+}
+
+variable "alice_voice_api_fallback_to_mcp" {
+  description = "Fallback to direct MCP orchestration when /voice-link/order is unavailable"
+  type        = bool
+  default     = false
+}
+
+variable "alice_orchestration_timeout_seconds" {
+  description = "Max orchestration time inside Alice function before graceful timeout response"
+  type        = number
+  default     = 3.8
+}
+
+variable "alice_handler_timeout_seconds" {
+  description = "Hard timeout for Alice handler request processing before graceful timeout response"
+  type        = number
+  default     = 4.2
+}
+
+variable "alice_langfuse_flush_timeout_seconds" {
+  description = "Max wait time for Langfuse flush in Alice function (seconds)"
+  type        = number
+  default     = 0.1
 }
 
 variable "alice_link_api_verify_ssl" {
