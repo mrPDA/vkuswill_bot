@@ -566,8 +566,7 @@ class AliceOrderOrchestrator:
             return VoiceOrderResult(
                 ok=False,
                 voice_text=(
-                    "Не удалось получить статус заказа. "
-                    "Повторите проверку через 20-30 секунд."
+                    "Не удалось получить статус заказа. Повторите проверку через 20-30 секунд."
                 ),
                 error_code="voice_order_status_unavailable",
             )
@@ -576,18 +575,14 @@ class AliceOrderOrchestrator:
         if status in {"processing", "queued", "started"}:
             return VoiceOrderResult(
                 ok=True,
-                voice_text=(
-                    "Корзину еще собираю. "
-                    "Скажите: проверь заказ через 20-30 секунд."
-                ),
+                voice_text=("Корзину еще собираю. Скажите: проверь заказ через 20-30 секунд."),
                 error_code="order_processing",
             )
         if status == "not_found":
             return VoiceOrderResult(
                 ok=False,
                 voice_text=(
-                    "Сейчас нет активной сборки корзины. "
-                    "Продиктуйте новый заказ одной фразой."
+                    "Сейчас нет активной сборки корзины. Продиктуйте новый заказ одной фразой."
                 ),
                 error_code="order_not_found",
             )
