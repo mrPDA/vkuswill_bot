@@ -342,9 +342,7 @@ class ToolExecutor:
                     survey_text = (
                         "Опрос уже пройден. "
                         if survey_done
-                        else (
-                            f"/survey — +{app_config.bonus_cart_limit} корзин сразу. "
-                        )
+                        else (f"/survey — +{app_config.bonus_cart_limit} корзин сразу. ")
                     )
                     limit_message = (
                         "Лимит корзин после пробного периода исчерпан. "
