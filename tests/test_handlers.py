@@ -34,6 +34,7 @@ from vkuswill_bot.bot.handlers import (
     cmd_admin_cart_feedback,
     cmd_admin_funnel,
     cmd_admin_grant_carts,
+    cmd_admin_reset_carts,
     cmd_admin_survey_stats,
     consent_accept_callback,
     handle_text,
@@ -1363,6 +1364,72 @@ class TestAdminGrantCarts:
 
         text = msg.answer.call_args[0][0]
         assert "от 1 до 100" in text
+
+
+class TestAdminResetCarts:
+    """Тесты /admin_reset_carts."""
+
+    async def test_reset_carts_success(self):
+        """Администратор сбрасывает только счётчик корзин пользователя."""
+        msg = make_message("/admin_reset_carts 123", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.reset_carts.return_value = {
+            "carts_created": 0,
+            "cart_limit": 5,
+            "survey_completed": True,
+        }
+
+        await cmd_admin_reset_carts(
+            msg,
+            user_store=mock_store,
+        )
+
+        mock_store.reset_carts.assert_called_once_with(123)
+        msg.answer.assert_called_once()
+        text = msg.answer.call_args[0][0]
+        assert "Счётчик корзин сброшен" in text
+        assert "carts_created: 0" in text
+        assert "cart_limit: 5" in text
+
+    async def test_reset_carts_no_args(self):
+        """Без аргумента user_id — подсказка по использованию."""
+        msg = make_message("/admin_reset_carts", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_reset_carts(
+            msg,
+            user_store=mock_store,
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "Использование" in text
+
+    async def test_reset_carts_invalid_user_id(self):
+        """Невалидный user_id — понятная ошибка."""
+        msg = make_message("/admin_reset_carts abc", user_id=1)
+        mock_store = AsyncMock()
+
+        await cmd_admin_reset_carts(
+            msg,
+            user_store=mock_store,
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "должен быть числом" in text
+
+    async def test_reset_carts_user_not_found(self):
+        """Если пользователя нет, возвращается сообщение об этом."""
+        msg = make_message("/admin_reset_carts 999", user_id=1)
+        mock_store = AsyncMock()
+        mock_store.reset_carts.return_value = None
+
+        await cmd_admin_reset_carts(
+            msg,
+            user_store=mock_store,
+        )
+
+        text = msg.answer.call_args[0][0]
+        assert "не найден" in text
 
 
 class TestAdminSurveyStats:

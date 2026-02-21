@@ -652,6 +652,38 @@ class TestFreemiumCartLimits:
         assert args[2] == 5  # amount = 5
 
     @pytest.mark.asyncio
+    async def test_reset_carts_resets_only_counter(self, store):
+        """reset_carts сбрасывает только carts_created, не трогая лимит/опрос."""
+        s, conn = store
+        conn.fetchrow.return_value = {
+            "carts_created": 0,
+            "cart_limit": 7,
+            "survey_completed": True,
+        }
+
+        result = await s.reset_carts(123)
+
+        assert result == {
+            "carts_created": 0,
+            "cart_limit": 7,
+            "survey_completed": True,
+        }
+        sql = conn.fetchrow.call_args[0][0]
+        assert "carts_created = 0" in sql
+        assert "cart_limit = 0" not in sql
+        assert "survey_completed = FALSE" not in sql
+
+    @pytest.mark.asyncio
+    async def test_reset_carts_nonexistent(self, store):
+        """reset_carts возвращает None, если пользователь не найден."""
+        s, conn = store
+        conn.fetchrow.return_value = None
+
+        result = await s.reset_carts(999)
+
+        assert result is None
+
+    @pytest.mark.asyncio
     async def test_grant_feedback_bonus_if_due_granted(self, store):
         """grant_feedback_bonus_if_due выдаёт бонус при отсутствии cooldown."""
         s, conn = store
