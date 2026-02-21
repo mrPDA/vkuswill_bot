@@ -18,7 +18,7 @@ from aiogram.types import (
     Message,
 )
 
-from vkuswill_bot.services.gigachat_service import GigaChatService
+from vkuswill_bot.services.chat_engine import ChatEngineProtocol
 
 if TYPE_CHECKING:
     from vkuswill_bot.services.stats_aggregator import StatsAggregator
@@ -628,7 +628,7 @@ async def cmd_unlink_voice(
 @router.message(Command("reset"))
 async def cmd_reset(
     message: Message,
-    gigachat_service: GigaChatService,
+    gigachat_service: ChatEngineProtocol,
 ) -> None:
     """Обработчик команды /reset — сброс диалога."""
     if message.from_user:
@@ -1128,7 +1128,7 @@ async def handle_admin_unauthorized(message: Message) -> None:
 @router.message(F.text)
 async def handle_text(
     message: Message,
-    gigachat_service: GigaChatService,
+    gigachat_service: ChatEngineProtocol,
     user_store: UserStore | None = None,
 ) -> None:
     """Обработчик текстовых сообщений — основная логика бота."""
