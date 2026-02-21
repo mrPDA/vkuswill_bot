@@ -28,6 +28,9 @@ _LINK_CODE_SEPARATOR_TOKENS = {
     "точка",
     "тире",
     "дефис",
+    "минус",
+    "dash",
+    "hyphen",
 }
 _LINK_CODE_DIGIT_WORDS = {
     "ноль": "0",
@@ -52,6 +55,37 @@ _LINK_CODE_DIGIT_WORDS = {
     "eight": "8",
     "девять": "9",
     "nine": "9",
+}
+_LINK_CODE_HUNDREDS_WORDS = {
+    "сто": 100,
+    "двести": 200,
+    "триста": 300,
+    "четыреста": 400,
+    "пятьсот": 500,
+    "шестьсот": 600,
+    "семьсот": 700,
+    "восемьсот": 800,
+    "девятьсот": 900,
+}
+_LINK_CODE_TENS_WORDS = {
+    "десять": 10,
+    "одиннадцать": 11,
+    "двенадцать": 12,
+    "тринадцать": 13,
+    "четырнадцать": 14,
+    "пятнадцать": 15,
+    "шестнадцать": 16,
+    "семнадцать": 17,
+    "восемнадцать": 18,
+    "девятнадцать": 19,
+    "двадцать": 20,
+    "тридцать": 30,
+    "сорок": 40,
+    "пятьдесят": 50,
+    "шестьдесят": 60,
+    "семьдесят": 70,
+    "восемьдесят": 80,
+    "девяносто": 90,
 }
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _SPACES_RE = re.compile(r"\s+")
@@ -168,13 +202,18 @@ class AliceOrderOrchestrator:
         tail = utterance[prefix.end() :].lower()
         digits: list[str] = []
         started = False
+        compound_starters = set(_LINK_CODE_HUNDREDS_WORDS) | set(_LINK_CODE_TENS_WORDS)
+        tokens = [m.group(0).replace("ё", "е") for m in _LINK_CODE_TOKEN_RE.finditer(tail)]
 
         # Ограничиваемся первыми токенами после слова "код", чтобы не захватывать
         # случайные числа из дальнейшей части фразы.
-        for token_idx, match in enumerate(_LINK_CODE_TOKEN_RE.finditer(tail), start=1):
+        token_idx = 0
+        idx = 0
+        while idx < len(tokens):
+            token_idx += 1
             if token_idx > 16:
                 break
-            token = match.group(0)
+            token = tokens[idx]
 
             if token.isdigit():
                 started = True
@@ -182,15 +221,81 @@ class AliceOrderOrchestrator:
             elif token in _LINK_CODE_DIGIT_WORDS:
                 started = True
                 digits.append(_LINK_CODE_DIGIT_WORDS[token])
+            elif token in compound_starters:
+                parsed, consumed = AliceOrderOrchestrator._parse_compound_number_tokens(
+                    tokens,
+                    start=idx,
+                )
+                if parsed is not None and consumed > 0:
+                    started = True
+                    digits.extend(list(str(parsed)))
+                    idx += consumed - 1
+                elif started:
+                    break
             elif token in _LINK_CODE_SEPARATOR_TOKENS:
                 if started:
+                    idx += 1
                     continue
             elif started:
                 break
 
             if len(digits) >= 6:
                 return "".join(digits[:6])
-        return None
+            idx += 1
+        return "".join(digits[:6]) if len(digits) >= 6 else None
+
+    @staticmethod
+    def _parse_compound_number_tokens(tokens: list[str], *, start: int) -> tuple[int | None, int]:
+        value = 0
+        consumed = 0
+        idx = start
+        has_component = False
+        has_hundreds = False
+        has_tens = False
+        has_units = False
+        last_was_tens = False
+
+        while idx < len(tokens):
+            token = tokens[idx]
+            if token in _LINK_CODE_HUNDREDS_WORDS:
+                if has_component:
+                    # Начинается следующая числовая группа (например 842 182).
+                    break
+                value += _LINK_CODE_HUNDREDS_WORDS[token]
+                has_component = True
+                has_hundreds = True
+                last_was_tens = False
+            elif token in _LINK_CODE_TENS_WORDS:
+                if has_tens or has_units:
+                    break
+                value += _LINK_CODE_TENS_WORDS[token]
+                has_component = True
+                has_tens = True
+                last_was_tens = _LINK_CODE_TENS_WORDS[token] >= 20
+                # 10..19 — завершённая форма числа.
+                if _LINK_CODE_TENS_WORDS[token] < 20:
+                    consumed += 1
+                    break
+            elif token in _LINK_CODE_DIGIT_WORDS and (
+                last_was_tens or (has_hundreds and not has_tens and not has_units)
+            ):
+                if has_units:
+                    break
+                value += int(_LINK_CODE_DIGIT_WORDS[token])
+                has_component = True
+                has_units = True
+                last_was_tens = False
+            else:
+                break
+
+            consumed += 1
+            idx += 1
+
+        if not has_component:
+            return None, 0
+        if value < 0 or value > 999:
+            return None, 0
+        return value, consumed
 
     async def create_order_from_utterance(
         self,
