@@ -37,6 +37,7 @@ from vkuswill_bot.alice_skill.models import VoiceOrderResult
 from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
 from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
 from vkuswill_bot.alice_skill.rate_limit import RedisRateLimiter
+from vkuswill_bot.alice_skill.voice_order_client import HttpVoiceOrderClient
 from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 
@@ -171,6 +172,13 @@ async def _get_runtime() -> _Runtime:
     link_api_verify_ssl = _parse_bool_env("ALICE_LINK_API_VERIFY_SSL", default=True)
     link_api_url = os.getenv("ALICE_LINK_API_URL", "").strip()
     link_api_key = os.getenv("ALICE_LINK_API_KEY", "").strip()
+    order_api_url = (os.getenv("ALICE_ORDER_API_URL", "").strip() or link_api_url).strip()
+    order_api_key = (os.getenv("ALICE_ORDER_API_KEY", "").strip() or link_api_key).strip()
+    order_api_timeout = _parse_float_env("ALICE_ORDER_API_TIMEOUT_SECONDS", default=12.0)
+    order_api_verify_ssl = _parse_bool_env(
+        "ALICE_ORDER_API_VERIFY_SSL",
+        default=link_api_verify_ssl,
+    )
     database_url = os.getenv("ALICE_DATABASE_URL", "") or os.getenv("DATABASE_URL", "")
     effective_require_linked = require_linked_account
     misconfigured_link_api = bool(link_api_url or link_api_key) and not (
@@ -238,6 +246,15 @@ async def _get_runtime() -> _Runtime:
         else:
             account_links = InMemoryAccountLinkStore(_load_links(), codes=_load_codes())
 
+    voice_order_client = None
+    if order_api_url and order_api_key:
+        voice_order_client = HttpVoiceOrderClient(
+            base_url=order_api_url,
+            api_key=order_api_key,
+            timeout_seconds=order_api_timeout,
+            verify_ssl=order_api_verify_ssl,
+        )
+
     fallback_rate_limiter = InMemoryRateLimiter()
     order_rate_limiter = fallback_rate_limiter
     link_code_rate_limiter = fallback_rate_limiter
@@ -275,6 +292,7 @@ async def _get_runtime() -> _Runtime:
 
     orchestrator = AliceOrderOrchestrator(
         mcp_client,
+        voice_order_client=voice_order_client,
         account_links=account_links,
         delivery_adapter=AliceAppDeliveryAdapter(),
         idempotency_store=idempotency_store,

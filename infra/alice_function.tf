@@ -37,6 +37,10 @@ resource "yandex_function" "alice_skill" {
     ALICE_LINK_API_KEY                  = var.voice_link_api_key
     ALICE_LINK_API_TIMEOUT_SECONDS      = tostring(var.alice_link_api_timeout_seconds)
     ALICE_LINK_API_VERIFY_SSL           = tostring(var.alice_link_api_verify_ssl)
+    ALICE_ORDER_API_URL                 = local.alice_link_api_url_effective
+    ALICE_ORDER_API_KEY                 = var.voice_link_api_key
+    ALICE_ORDER_API_TIMEOUT_SECONDS     = "12"
+    ALICE_ORDER_API_VERIFY_SSL          = tostring(var.alice_link_api_verify_ssl)
     ALICE_SKILL_ID                      = var.alice_skill_id
     ALICE_REQUIRE_LINKED_ACCOUNT        = "true"
     ALICE_LINKING_FAIL_CLOSED           = tostring(var.alice_linking_fail_closed)

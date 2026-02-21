@@ -7,7 +7,7 @@ import json
 import logging
 import re
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Protocol
 
 from vkuswill_bot.alice_skill.account_linking import AccountLinkStore
 from vkuswill_bot.alice_skill.delivery import LinkDeliveryAdapter
@@ -70,6 +70,7 @@ class AliceOrderOrchestrator:
         self,
         mcp_client: VkusvillMCPClient,
         *,
+        voice_order_client: VoiceOrderClient | None = None,
         account_links: AccountLinkStore | None = None,
         delivery_adapter: LinkDeliveryAdapter | None = None,
         idempotency_store: IdempotencyStore | None = None,
@@ -85,6 +86,7 @@ class AliceOrderOrchestrator:
         link_code_rate_window_seconds: int = 600,
     ) -> None:
         self._mcp_client = mcp_client
+        self._voice_order_client = voice_order_client
         self._account_links = account_links
         self._delivery = delivery_adapter
         self._idempotency_store = idempotency_store or InMemoryIdempotencyStore()
@@ -314,6 +316,21 @@ class AliceOrderOrchestrator:
             )
 
         try:
+            if linked_user_id is not None and self._voice_order_client is not None:
+                api_result = await self._create_order_via_voice_api(
+                    linked_user_id=linked_user_id,
+                    voice_user_id=voice_user_id,
+                    utterance=utterance,
+                    products=products,
+                )
+                if api_result is not None:
+                    await self._idempotency_store.mark_done(
+                        idem_key,
+                        result=api_result,
+                        ttl_seconds=self._idempotency_ttl_seconds,
+                    )
+                    return api_result
+
             cart_products = await self._resolve_cart_products(products)
             if not cart_products:
                 await self._idempotency_store.clear(idem_key)
@@ -367,6 +384,92 @@ class AliceOrderOrchestrator:
                 voice_text="Не удалось обработать заказ. Попробуйте ещё раз.",
                 error_code="unexpected_error",
             )
+
+    async def _create_order_via_voice_api(
+        self,
+        *,
+        linked_user_id: int,
+        voice_user_id: str,
+        utterance: str,
+        products: list[str],
+    ) -> VoiceOrderResult | None:
+        try:
+            payload = await self._voice_order_client.create_order(  # type: ignore[union-attr]
+                user_id=linked_user_id,
+                voice_user_id=voice_user_id,
+                utterance=self._build_llm_utterance(products, utterance),
+            )
+        except Exception:
+            logger.warning(
+                "Voice order API unavailable, fallback to direct MCP orchestration",
+                exc_info=True,
+            )
+            return None
+
+        order_data = self._extract_voice_order_api_payload(
+            payload,
+            fallback_items_count=len(products),
+        )
+
+        if order_data["link"]:
+            delivery = None
+            if self._delivery is not None:
+                delivery = await self._delivery.deliver_cart_link(
+                    user_ref=voice_user_id,
+                    cart_link=order_data["link"],
+                    total_rub=order_data["total_rub"],
+                    items_count=order_data["items_count"],
+                )
+            return VoiceOrderResult(
+                ok=True,
+                voice_text=self._build_success_text(
+                    order_data["total_rub"],
+                    order_data["items_count"],
+                ),
+                cart_link=order_data["link"],
+                total_rub=order_data["total_rub"],
+                items_count=order_data["items_count"],
+                delivery=delivery,
+            )
+
+        api_text = order_data["assistant_text"]
+        if not api_text:
+            api_text = "Не удалось создать корзину. Попробуйте уточнить состав заказа."
+        return VoiceOrderResult(
+            ok=False,
+            voice_text=api_text,
+            error_code=order_data["error_code"] or "cart_create_failed",
+        )
+
+    @staticmethod
+    def _build_llm_utterance(products: list[str], utterance: str) -> str:
+        if products:
+            return "Собери корзину во ВкусВилл: " + ", ".join(products)
+        return utterance.strip()
+
+    @staticmethod
+    def _extract_voice_order_api_payload(
+        payload: dict[str, Any],
+        *,
+        fallback_items_count: int,
+    ) -> dict[str, Any]:
+        link_raw = payload.get("cart_link")
+        link = link_raw if isinstance(link_raw, str) and link_raw.strip() else None
+        total_rub = AliceOrderOrchestrator._coerce_float(payload.get("total_rub"))
+        items_count = AliceOrderOrchestrator._coerce_non_negative_int(payload.get("items_count"))
+        if (items_count is None or items_count <= 0) and fallback_items_count > 0:
+            items_count = fallback_items_count
+        assistant_text_raw = payload.get("assistant_text")
+        assistant_text = assistant_text_raw.strip() if isinstance(assistant_text_raw, str) else ""
+        error_code_raw = payload.get("error_code", payload.get("error"))
+        error_code = error_code_raw.strip() if isinstance(error_code_raw, str) else None
+        return {
+            "link": link,
+            "total_rub": total_rub,
+            "items_count": max(items_count, 0),
+            "assistant_text": assistant_text,
+            "error_code": error_code,
+        }
 
     async def _resolve_cart_products(self, products: list[str]) -> list[dict[str, Any]]:
         cart_products: list[dict[str, Any]] = []
@@ -517,3 +620,14 @@ class AliceOrderOrchestrator:
         if items_count > 0:
             return f"Готово. Собрала корзину: {items_count} позиций, ссылку отправила в приложение."
         return "Готово. Корзину собрала, ссылку отправила в приложение."
+
+
+class VoiceOrderClient(Protocol):
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, Any]:
+        """Создать корзину через internal API стандартного LLM-цикла."""

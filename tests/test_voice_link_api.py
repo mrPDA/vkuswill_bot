@@ -8,7 +8,7 @@ from typing import Any
 import pytest
 from aiohttp import web
 
-from vkuswill_bot.services.voice_link_api import _consume_handler, _resolve_handler
+from vkuswill_bot.services.voice_link_api import _consume_handler, _order_handler, _resolve_handler
 
 
 class _DummyStore:
@@ -87,3 +87,62 @@ async def test_resolve_handler_success() -> None:
     assert resp.status == 200
     body = _read_json(resp)
     assert body == {"ok": True, "user_id": 42}
+
+
+class _DummyGigaChat:
+    def __init__(self) -> None:
+        self._snapshot_calls = 0
+        self._before_snapshot: dict[str, Any] | None = {
+            "link": "https://shop.example/cart/old",
+            "created_at": "2026-02-21T00:00:00+00:00",
+            "products": [{"xml_id": 1, "q": 1}],
+            "total": 100.0,
+        }
+        self._after_snapshot: dict[str, Any] | None = {
+            "link": "https://shop.example/cart/new",
+            "created_at": "2026-02-21T00:01:00+00:00",
+            "products": [{"xml_id": 2, "q": 1}, {"xml_id": 3, "q": 1}],
+            "total": 300.0,
+        }
+
+    async def get_last_cart_snapshot(self, user_id: int) -> dict[str, Any] | None:
+        assert user_id == 42
+        self._snapshot_calls += 1
+        return self._before_snapshot if self._snapshot_calls == 1 else self._after_snapshot
+
+    async def process_message(self, user_id: int, text: str) -> str:
+        assert user_id == 42
+        assert text == "Собери корзину: молоко и яйца"
+        return "Готово"
+
+
+@pytest.mark.asyncio
+async def test_order_handler_success() -> None:
+    req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": _DummyGigaChat()},
+        payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
+    )
+    resp = await _order_handler(req)  # type: ignore[arg-type]
+    assert resp.status == 200
+    body = _read_json(resp)
+    assert body["ok"] is True
+    assert body["cart_link"] == "https://shop.example/cart/new"
+    assert body["items_count"] == 2
+    assert body["total_rub"] == 300.0
+
+
+@pytest.mark.asyncio
+async def test_order_handler_cart_not_created() -> None:
+    svc = _DummyGigaChat()
+    svc._after_snapshot = svc._before_snapshot
+    req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
+        payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
+    )
+    resp = await _order_handler(req)  # type: ignore[arg-type]
+    assert resp.status == 200
+    body = _read_json(resp)
+    assert body["ok"] is False
+    assert body["error"] == "cart_not_created"

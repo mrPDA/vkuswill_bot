@@ -19,6 +19,7 @@ from vkuswill_bot.alice_skill.idempotency import RedisIdempotencyStore
 from vkuswill_bot.alice_skill.models import DeliveryResult, VoiceOrderResult
 from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
 from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
+from vkuswill_bot.alice_skill.voice_order_client import HttpVoiceOrderClient
 
 
 class FakeMCPClient:
@@ -164,6 +165,56 @@ class CountingLinkStore(InMemoryAccountLinkStore):
     ) -> dict[str, object]:
         self.consume_calls += 1
         return await super().consume_link_code(voice_user_id, code)
+
+
+class _DummyVoiceOrderClient:
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, object]:
+        assert user_id == 777
+        assert voice_user_id == "alice-voice-777"
+        assert "молоко" in utterance
+        return {
+            "ok": True,
+            "assistant_text": "Готово",
+            "cart_link": "https://shop.example/cart/voice-777",
+            "total_rub": 510.0,
+            "items_count": 2,
+        }
+
+
+class _FailingVoiceOrderClient:
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, object]:
+        del user_id, voice_user_id, utterance
+        raise RuntimeError("voice-order unavailable")
+
+
+class _ZeroCountVoiceOrderClient:
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, object]:
+        del user_id, voice_user_id, utterance
+        return {
+            "ok": True,
+            "assistant_text": "Готово",
+            "cart_link": "https://shop.example/cart/zero",
+            "total_rub": 510.0,
+            "items_count": 0,
+        }
 
 
 @pytest.mark.asyncio
@@ -421,6 +472,77 @@ async def test_orchestrator_link_code_then_order():
     )
     assert order_result.ok is True
     assert order_result.cart_link == "https://shop.example/cart/abc"
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_uses_voice_order_api_for_linked_user():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-777": 777}, codes={})
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=_DummyVoiceOrderClient(),  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-777",
+        utterance="закажи молоко и яйца",
+    )
+
+    assert result.ok is True
+    assert result.cart_link == "https://shop.example/cart/voice-777"
+    assert result.total_rub == 510.0
+    assert result.items_count == 2
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_fallbacks_to_mcp_when_voice_order_api_unavailable():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-778": 778}, codes={})
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=_FailingVoiceOrderClient(),  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-778",
+        utterance="закажи молоко",
+    )
+
+    assert result.ok is True
+    assert result.cart_link == "https://shop.example/cart/abc"
+    assert ("vkusvill_products_search", {"q": "молоко", "limit": 5}) in mcp.calls
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_voice_order_zero_items_uses_fallback_count():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-779": 779}, codes={})
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=_ZeroCountVoiceOrderClient(),  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-779",
+        utterance="закажи молоко и яйца",
+    )
+
+    assert result.ok is True
+    assert result.items_count == 2
+    assert "0 позиций" not in result.voice_text
 
 
 @pytest.mark.parametrize(
@@ -917,3 +1039,42 @@ async def test_http_account_link_store_consume_unavailable():
     result = await store.consume_link_code("alice-u-2", "123456")
     assert result["ok"] is False
     assert result["reason"] == "linking_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_http_voice_order_client_success():
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path.endswith("/order")
+        assert request.headers["X-Voice-Link-Api-Key"] == "key-1"
+        body = json.loads(request.content.decode("utf-8"))
+        assert body == {
+            "user_id": 42,
+            "voice_user_id": "alice-u-1",
+            "utterance": "Собери корзину: молоко",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "assistant_text": "Готово",
+                "cart_link": "https://shop.example/cart/42",
+                "total_rub": 320.0,
+                "items_count": 1,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport, base_url="http://test.local")
+    order_client = HttpVoiceOrderClient(
+        base_url="http://test.local/voice-link",
+        api_key="key-1",
+        client=client,
+    )
+
+    payload = await order_client.create_order(
+        user_id=42,
+        voice_user_id="alice-u-1",
+        utterance="Собери корзину: молоко",
+    )
+    assert payload["ok"] is True
+    assert payload["cart_link"] == "https://shop.example/cart/42"
