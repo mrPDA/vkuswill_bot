@@ -974,9 +974,7 @@ async def cart_feedback_positive(
     if feedback_bonus_granted:
         answer_text += f" Начислено +{feedback_bonus_amount} корзины."
     else:
-        answer_text += (
-            f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
-        )
+        answer_text += f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
     await callback.answer(answer_text)
 
 
@@ -1092,9 +1090,7 @@ async def cart_feedback_reason(
     if feedback_bonus_granted:
         answer_text += f" Начислено +{feedback_bonus_amount} корзины."
     else:
-        answer_text += (
-            f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
-        )
+        answer_text += f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
     await callback.answer(answer_text)
 
 
