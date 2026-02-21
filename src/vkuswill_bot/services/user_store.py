@@ -410,7 +410,8 @@ class UserStore:
     async def reset_carts(self, user_id: int) -> dict[str, Any] | None:
         """Сбросить счётчик корзин пользователя до 0.
 
-        Также сбрасывает survey_completed и cart_limit до дефолта.
+        Используется админ-командой ``/admin_reset_carts`` для ручного
+        восстановления возможности создавать корзины без потери выданного лимита.
 
         Returns:
             Обновлённые данные пользователя или None, если не найден.
@@ -419,8 +420,6 @@ class UserStore:
         sql = """
             UPDATE users
             SET carts_created = 0,
-                cart_limit = 0,
-                survey_completed = FALSE,
                 updated_at = NOW()
             WHERE user_id = $1
             RETURNING carts_created, cart_limit, survey_completed
