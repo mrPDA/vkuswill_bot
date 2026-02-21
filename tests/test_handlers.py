@@ -135,6 +135,24 @@ class TestCommands:
         assert "Выгодно" in response_text
         assert "Любимое" in response_text
         assert "Лайт" in response_text
+        assert "Условия корзин" in response_text
+        assert "/survey" in response_text
+        assert "/invite" in response_text
+
+    async def test_cmd_start_shows_freemium_notice(self):
+        """/start содержит объяснение freemium-модели."""
+        msg = make_message("/start", user_id=42)
+
+        await cmd_start(
+            msg,
+            db_user={"message_count": 1, "consent_given_at": "2026-01-01"},
+        )
+
+        msg.answer.assert_called_once()
+        response_text = msg.answer.call_args[0][0]
+        assert "Условия корзин" in response_text
+        assert "/survey" in response_text
+        assert "/invite" in response_text
 
     async def test_cmd_reset(self):
         """Команда /reset вызывает reset_conversation."""
@@ -698,9 +716,8 @@ class TestCmdStartDeepLink:
         mock_store = AsyncMock()
         mock_store.process_referral.return_value = {
             "success": True,
-            "reason": "ok",
-            "bonus": 3,
-            "new_limit": 8,
+            "reason": "linked",
+            "referrer_id": 12345,
         }
 
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
@@ -713,11 +730,11 @@ class TestCmdStartDeepLink:
         assert metadata["referrer_id"] == 12345
 
         # Реферал обработан
-        mock_store.process_referral.assert_called_once_with(42, 12345, 3)
+        mock_store.process_referral.assert_called_once_with(42, 12345)
 
-        # Бонус залогирован
+        # Факт привязки залогирован
         referral_calls = [
-            c for c in mock_store.log_event.call_args_list if c[0][1] == "referral_bonus_granted"
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "referral_linked"
         ]
         assert len(referral_calls) == 1
 
@@ -758,9 +775,8 @@ class TestCmdStartDeepLink:
         mock_store.find_user_by_referral_code.return_value = 999
         mock_store.process_referral.return_value = {
             "success": True,
-            "reason": "ok",
-            "bonus": 3,
-            "new_limit": 8,
+            "reason": "linked",
+            "referrer_id": 999,
         }
 
         await cmd_start(msg, user_store=mock_store, db_user={"message_count": 1})
@@ -1603,6 +1619,24 @@ class TestCartFeedbackPositive:
 
         callback.answer.assert_called_once()
 
+    async def test_grants_feedback_bonus_when_due(self):
+        """При первом feedback начисляется бонус и логируется событие."""
+        callback = _make_cart_callback("cart_fb_pos")
+        mock_store = AsyncMock()
+        mock_store.grant_feedback_bonus_if_due.return_value = {
+            "granted": True,
+            "new_limit": 7,
+        }
+
+        await cart_feedback_positive(callback, user_store=mock_store)
+
+        mock_store.grant_feedback_bonus_if_due.assert_called_once()
+        bonus_calls = [
+            c for c in mock_store.log_event.call_args_list if c[0][1] == "feedback_bonus_granted"
+        ]
+        assert len(bonus_calls) == 1
+        assert "Начислено +2" in callback.answer.call_args[0][0]
+
 
 class TestCartFeedbackNegative:
     """Тесты негативного фидбека — уточняющие причины."""
@@ -1692,6 +1726,20 @@ class TestCartFeedbackReason:
         await cart_feedback_reason(callback, user_store=None)
 
         callback.answer.assert_called_once()
+
+    async def test_bonus_cooldown_message(self):
+        """Если бонус не положен из-за cooldown — сообщение об ограничении."""
+        callback = _make_cart_callback("cart_fb_r_price")
+        mock_store = AsyncMock()
+        mock_store.grant_feedback_bonus_if_due.return_value = {
+            "granted": False,
+            "reason": "cooldown",
+        }
+
+        await cart_feedback_reason(callback, user_store=mock_store)
+
+        mock_store.grant_feedback_bonus_if_due.assert_called_once()
+        assert "1 раз в 30 дней" in callback.answer.call_args[0][0]
 
 
 class TestExtractCartLinkWithFeedback:

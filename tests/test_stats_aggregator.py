@@ -216,6 +216,10 @@ class TestGetSummary:
             "total_errors": 5,
             "total_limits": 10,
             "total_surveys": 3,
+            "total_trial_carts": 8,
+            "total_referral_links": 6,
+            "total_referral_bonuses": 4,
+            "total_feedback_bonuses": 5,
             "period_start": datetime(2026, 2, 6, tzinfo=UTC).date(),
             "period_end": datetime(2026, 2, 12, tzinfo=UTC).date(),
         }
@@ -227,6 +231,7 @@ class TestGetSummary:
         assert result["avg_dau"] == 14.3
         assert result["total_carts"] == 30
         assert result["total_gmv"] == 45000
+        assert result["total_referral_bonuses"] == 4
 
     @pytest.mark.asyncio
     async def test_passes_days_parameter(self, pool_and_conn):

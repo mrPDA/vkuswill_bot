@@ -197,11 +197,17 @@ class TestDefaultValues:
 
     # --- Freemium лимиты ---
 
-    def test_free_cart_limit_default(self):
-        """free_cart_limit по умолчанию — 5."""
+    def test_free_trial_days_default(self):
+        """free_trial_days по умолчанию — 10."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.free_cart_limit == 5
+        assert cfg.free_trial_days == 10
+
+    def test_free_cart_limit_default(self):
+        """free_cart_limit по умолчанию — 0 (после trial)."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.free_cart_limit == 0
 
     def test_bonus_cart_limit_default(self):
         """bonus_cart_limit по умолчанию — 5."""
@@ -215,13 +221,28 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.referral_cart_bonus == 3
 
-    def test_freemium_limits_reasonable(self):
-        """Freemium лимиты в разумных пределах [1, 100]."""
+    def test_feedback_cart_bonus_default(self):
+        """feedback_cart_bonus по умолчанию — 2."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert 1 <= cfg.free_cart_limit <= 100
+        assert cfg.feedback_cart_bonus == 2
+
+    def test_feedback_bonus_cooldown_default(self):
+        """feedback_bonus_cooldown_days по умолчанию — 30."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.feedback_bonus_cooldown_days == 30
+
+    def test_freemium_limits_reasonable(self):
+        """Freemium лимиты в разумных пределах."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert 1 <= cfg.free_trial_days <= 365
+        assert 0 <= cfg.free_cart_limit <= 100
         assert 1 <= cfg.bonus_cart_limit <= 100
         assert 1 <= cfg.referral_cart_bonus <= 100
+        assert 1 <= cfg.feedback_cart_bonus <= 100
+        assert 1 <= cfg.feedback_bonus_cooldown_days <= 365
 
     def test_webhook_cert_path_default_empty(self):
         """webhook_cert_path по умолчанию — пустая строка."""
@@ -442,15 +463,21 @@ class TestSecretProtection:
         """Freemium лимиты настраиваются через переменные окружения."""
         custom_env = {
             **MINIMAL_ENV,
+            "FREE_TRIAL_DAYS": "14",
             "FREE_CART_LIMIT": "10",
             "BONUS_CART_LIMIT": "8",
             "REFERRAL_CART_BONUS": "5",
+            "FEEDBACK_CART_BONUS": "4",
+            "FEEDBACK_BONUS_COOLDOWN_DAYS": "21",
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.free_trial_days == 14
         assert cfg.free_cart_limit == 10
         assert cfg.bonus_cart_limit == 8
         assert cfg.referral_cart_bonus == 5
+        assert cfg.feedback_cart_bonus == 4
+        assert cfg.feedback_bonus_cooldown_days == 21
 
     def test_webhook_cert_path_customizable(self):
         """webhook_cert_path настраивается через env."""

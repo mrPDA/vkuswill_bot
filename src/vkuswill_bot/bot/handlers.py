@@ -67,6 +67,22 @@ _CART_LINK_RE = re.compile(
 )
 
 
+def _freemium_user_note() -> str:
+    """Коротко описать условия freemium для пользовательских сообщений."""
+    from vkuswill_bot.config import config as app_config
+
+    return (
+        "<b>Условия корзин:</b>\n"
+        f"• Первые {app_config.free_trial_days} дней — без ограничений\n"
+        f"• /survey — +{app_config.bonus_cart_limit} корзин\n"
+        f"• /invite — +{app_config.referral_cart_bonus} корзины за друга "
+        "после его первой успешной корзины\n"
+        "• Оценка готовой корзины кнопками — "
+        f"+{app_config.feedback_cart_bonus} корзины "
+        f"(1 раз в {app_config.feedback_bonus_cooldown_days} дней)"
+    )
+
+
 def _sanitize_telegram_html(text: str) -> str:
     """Санитизация HTML по whitelist-принципу.
 
@@ -275,6 +291,7 @@ async def cmd_start(
             "Например:\n"
             "- <i>Собери корзину для завтрака на двоих</i>\n"
             "- <i>Хочу купить молоко, хлеб и сыр</i>\n\n"
+            f"{_freemium_user_note()}\n\n"
             "\u2139\ufe0f Для ответов я использую ИИ-модель GigaChat (Сбер). "
             "Ваши сообщения обрабатываются для генерации ответов "
             "и улучшения качества сервиса. Подробнее: /privacy\n\n"
@@ -296,6 +313,7 @@ async def cmd_start(
             "- <i>Собери корзину для завтрака на двоих</i>\n"
             "- <i>Хочу купить молоко, хлеб и сыр</i>\n"
             "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
+            f"{_freemium_user_note()}\n\n"
             "<b>Команды:</b>\n"
             "/reset — начать новый диалог\n"
             "/link_voice — привязать Алису\n"
@@ -330,6 +348,7 @@ async def consent_accept_callback(
         "- <i>Собери корзину для завтрака на двоих</i>\n"
         "- <i>Хочу купить молоко, хлеб и сыр</i>\n"
         "- <i>Подбери продукты для ужина, бюджет 1000 руб</i>\n\n"
+        f"{_freemium_user_note()}\n\n"
         "<b>Команды:</b>\n"
         "/reset — начать новый диалог\n"
         "/link_voice — привязать Алису\n"
@@ -380,16 +399,11 @@ async def _process_referral_start(
 ) -> None:
     """Обработать реферальную привязку при /start ref_*.
 
-    Начисляет бонус рефереру и отправляет ему уведомление.
+    Бонус не начисляется сразу: начисление происходит
+    после первой успешной корзины приглашённого пользователя.
     """
-    from vkuswill_bot.config import config as app_config
-
     try:
-        result = await user_store.process_referral(
-            new_user_id,
-            referrer_id,
-            app_config.referral_cart_bonus,
-        )
+        result = await user_store.process_referral(new_user_id, referrer_id)
     except Exception as e:
         logger.error("Ошибка обработки реферала: %s", e)
         return
@@ -403,26 +417,26 @@ async def _process_referral_start(
         )
         return
 
-    # Логируем начисление бонуса
+    # Логируем успешную привязку
     with contextlib.suppress(Exception):
         await user_store.log_event(
-            referrer_id,
-            "referral_bonus_granted",
+            new_user_id,
+            "referral_linked",
             {
-                "referred_user_id": new_user_id,
-                "bonus": result["bonus"],
-                "new_limit": result["new_limit"],
+                "referrer_id": referrer_id,
             },
         )
 
-    # Уведомляем реферера
+    # Уведомляем реферера о привязке, бонус будет позже
     if message.bot is not None:
+        from vkuswill_bot.config import config as app_config
+
         with contextlib.suppress(Exception):
             await message.bot.send_message(
                 referrer_id,
                 f"🎉 Ваш друг присоединился к боту!\n\n"
-                f"+{result['bonus']} корзин. "
-                f"Новый лимит: {result['new_limit']}.",
+                f"Бонус +{app_config.referral_cart_bonus} корзины "
+                "будет начислен после его первой успешной корзины.",
             )
 
 
@@ -437,6 +451,7 @@ async def cmd_help(message: Message) -> None:
         "   <b>Любимое</b> — высший рейтинг\n"
         "   <b>Лайт</b> — минимум калорий\n"
         "3. Перейди по ссылке на сайт ВкусВилл для оформления заказа\n\n"
+        f"{_freemium_user_note()}\n\n"
         "<b>Команды:</b>\n"
         "/reset — сбросить историю диалога\n"
         "/link_voice — привязать Алису\n"
@@ -517,7 +532,7 @@ async def cmd_invite(
 
     text = (
         "<b>👫 Пригласи друга — получи корзины!</b>\n\n"
-        f"За каждого друга, который начнёт пользоваться ботом, "
+        f"За каждого друга, который соберёт свою первую успешную корзину, "
         f"вы получите <b>+{bonus} корзины</b>.\n\n"
         f"🔗 Ваша ссылка для приглашения:\n"
         f"<code>{referral_link}</code>\n\n"
@@ -916,8 +931,15 @@ async def cart_feedback_positive(
         callback.message.reply_markup,  # type: ignore[union-attr]
     )
     user_id = callback.from_user.id
+    feedback_bonus_granted = False
+    feedback_bonus_amount = 0
+    feedback_cooldown_days = 30
 
     if user_store is not None:
+        from vkuswill_bot.config import config as app_config
+
+        feedback_bonus_amount = app_config.feedback_cart_bonus
+        feedback_cooldown_days = app_config.feedback_bonus_cooldown_days
         with contextlib.suppress(Exception):
             await user_store.log_event(
                 user_id,
@@ -927,13 +949,35 @@ async def cart_feedback_positive(
                     "cart_link": cart_url or "",
                 },
             )
+            bonus_result = await user_store.grant_feedback_bonus_if_due(
+                user_id,
+                amount=feedback_bonus_amount,
+                cooldown_days=feedback_cooldown_days,
+            )
+            if isinstance(bonus_result, dict) and bonus_result.get("granted"):
+                feedback_bonus_granted = True
+                await user_store.log_event(
+                    user_id,
+                    "feedback_bonus_granted",
+                    {
+                        "amount": feedback_bonus_amount,
+                        "new_limit": bonus_result.get("new_limit", 0),
+                    },
+                )
 
     # Убираем кнопки фидбека, оставляем только корзину + благодарность
     if cart_url:
         await callback.message.edit_reply_markup(  # type: ignore[union-attr]
             reply_markup=_cart_only_keyboard(cart_url),
         )
-    await callback.answer("Спасибо за отзыв! \U0001f44d")
+    answer_text = "Спасибо за отзыв! \U0001f44d"
+    if feedback_bonus_granted:
+        answer_text += f" Начислено +{feedback_bonus_amount} корзины."
+    else:
+        answer_text += (
+            f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
+        )
+    await callback.answer(answer_text)
 
 
 @router.callback_query(F.data == "cart_fb_neg")
@@ -1004,8 +1048,15 @@ async def cart_feedback_reason(
         callback.message.reply_markup,  # type: ignore[union-attr]
     )
     user_id = callback.from_user.id
+    feedback_bonus_granted = False
+    feedback_bonus_amount = 0
+    feedback_cooldown_days = 30
 
     if user_store is not None:
+        from vkuswill_bot.config import config as app_config
+
+        feedback_bonus_amount = app_config.feedback_cart_bonus
+        feedback_cooldown_days = app_config.feedback_bonus_cooldown_days
         with contextlib.suppress(Exception):
             await user_store.log_event(
                 user_id,
@@ -1016,15 +1067,35 @@ async def cart_feedback_reason(
                     "cart_link": cart_url or "",
                 },
             )
+            bonus_result = await user_store.grant_feedback_bonus_if_due(
+                user_id,
+                amount=feedback_bonus_amount,
+                cooldown_days=feedback_cooldown_days,
+            )
+            if isinstance(bonus_result, dict) and bonus_result.get("granted"):
+                feedback_bonus_granted = True
+                await user_store.log_event(
+                    user_id,
+                    "feedback_bonus_granted",
+                    {
+                        "amount": feedback_bonus_amount,
+                        "new_limit": bonus_result.get("new_limit", 0),
+                    },
+                )
 
     # Оставляем только кнопку корзины
     if cart_url:
         await callback.message.edit_reply_markup(  # type: ignore[union-attr]
             reply_markup=_cart_only_keyboard(cart_url),
         )
-    await callback.answer(
-        "Спасибо! Учтём при улучшении бота \U0001f4dd",
-    )
+    answer_text = "Спасибо! Учтём при улучшении бота \U0001f4dd"
+    if feedback_bonus_granted:
+        answer_text += f" Начислено +{feedback_bonus_amount} корзины."
+    else:
+        answer_text += (
+            f" Бонус за отзыв доступен 1 раз в {feedback_cooldown_days} дней."
+        )
+    await callback.answer(answer_text)
 
 
 class _IsAdminCommandFilter(BaseFilter):
@@ -1421,6 +1492,10 @@ async def cmd_admin_analytics(
     total_errors = int(s.get("total_errors", 0))
     total_limits = int(s.get("total_limits", 0))
     total_surveys = int(s.get("total_surveys", 0))
+    total_trial_carts = int(s.get("total_trial_carts", 0))
+    total_ref_links = int(s.get("total_referral_links", 0))
+    total_ref_bonuses = int(s.get("total_referral_bonuses", 0))
+    total_feedback_bonuses = int(s.get("total_feedback_bonuses", 0))
     period_start = s.get("period_start", "—")
     period_end = s.get("period_end", "—")
 
@@ -1440,7 +1515,11 @@ async def cmd_admin_analytics(
         f"Поисков: <b>{total_searches}</b>\n"
         f"Ошибок: <b>{total_errors}</b>\n"
         f"Лимитов корзин: <b>{total_limits}</b>\n"
-        f"Опросов: <b>{total_surveys}</b>"
+        f"Опросов: <b>{total_surveys}</b>\n"
+        f"Trial-корзин: <b>{total_trial_carts}</b>\n"
+        f"Реферальных привязок: <b>{total_ref_links}</b>\n"
+        f"Реферальных бонусов: <b>{total_ref_bonuses}</b>\n"
+        f"Бонусов за feedback: <b>{total_feedback_bonuses}</b>"
     )
     await message.answer(text)
 

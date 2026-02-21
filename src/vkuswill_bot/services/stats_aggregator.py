@@ -32,7 +32,9 @@ _AGGREGATE_DAY_SQL = """
 INSERT INTO daily_stats (
     date, dau, new_users, sessions, carts_created,
     total_gmv, avg_cart_value, searches, errors,
-    cart_limits_hit, surveys_completed, updated_at
+    cart_limits_hit, surveys_completed,
+    trial_carts, referral_links, referral_bonuses, feedback_bonuses,
+    updated_at
 )
 SELECT
     $1::date AS date,
@@ -60,6 +62,18 @@ SELECT
     COUNT(CASE WHEN event_type = 'cart_limit_reached' THEN 1 END),
     -- Опросы
     COUNT(CASE WHEN event_type = 'survey_completed' THEN 1 END),
+    -- Корзины в trial-периоде
+    COUNT(
+        CASE WHEN event_type = 'cart_created'
+            AND metadata->>'trial_active' = 'true'
+        THEN 1 END
+    ),
+    -- Привязки по рефералке
+    COUNT(CASE WHEN event_type = 'referral_linked' THEN 1 END),
+    -- Начисления бонусов рефереру
+    COUNT(CASE WHEN event_type = 'referral_bonus_granted' THEN 1 END),
+    -- Начисления бонусов за обратную связь
+    COUNT(CASE WHEN event_type = 'feedback_bonus_granted' THEN 1 END),
     NOW()
 FROM user_events
 WHERE created_at >= $1::date
@@ -75,6 +89,10 @@ ON CONFLICT (date) DO UPDATE SET
     errors            = EXCLUDED.errors,
     cart_limits_hit   = EXCLUDED.cart_limits_hit,
     surveys_completed = EXCLUDED.surveys_completed,
+    trial_carts       = EXCLUDED.trial_carts,
+    referral_links    = EXCLUDED.referral_links,
+    referral_bonuses  = EXCLUDED.referral_bonuses,
+    feedback_bonuses  = EXCLUDED.feedback_bonuses,
     updated_at        = NOW();
 """
 
@@ -199,6 +217,10 @@ class StatsAggregator:
                 COALESCE(SUM(errors), 0)            AS total_errors,
                 COALESCE(SUM(cart_limits_hit), 0)   AS total_limits,
                 COALESCE(SUM(surveys_completed), 0) AS total_surveys,
+                COALESCE(SUM(trial_carts), 0)       AS total_trial_carts,
+                COALESCE(SUM(referral_links), 0)    AS total_referral_links,
+                COALESCE(SUM(referral_bonuses), 0)  AS total_referral_bonuses,
+                COALESCE(SUM(feedback_bonuses), 0)  AS total_feedback_bonuses,
                 MIN(date)                           AS period_start,
                 MAX(date)                           AS period_end
             FROM daily_stats

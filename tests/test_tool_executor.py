@@ -1490,6 +1490,10 @@ class TestFreemiumCartLimit:
             "cart_limit": 5,
             "survey_completed": False,
         }
+        store.grant_referral_bonus_for_first_cart.return_value = {
+            "granted": False,
+            "reason": "not_referred",
+        }
         store.log_event = AsyncMock()
         return store
 
@@ -1660,6 +1664,10 @@ class TestFreemiumCartCreated:
             "cart_limit": 5,
             "survey_completed": False,
         }
+        store.grant_referral_bonus_for_first_cart.return_value = {
+            "granted": False,
+            "reason": "not_referred",
+        }
         store.log_event = AsyncMock()
         return store
 
@@ -1706,7 +1714,7 @@ class TestFreemiumCartCreated:
         assert freemium["cart_limit"] == 5
         assert freemium["remaining"] == 2
         assert "Корзина 3 из 5" in freemium["hint"]
-        assert "Осталось 2" in freemium["hint"]
+        assert "Осталось 2 корзины" in freemium["hint"]
 
     async def test_adds_limit_exhausted_hint_survey(
         self,
@@ -1788,6 +1796,63 @@ class TestFreemiumCartCreated:
         assert metadata["cart_number"] == 1
         assert metadata["items_count"] == 2
         assert metadata["total_sum"] == 1500
+
+    async def test_logs_referral_bonus_after_first_cart(
+        self,
+        executor_with_user_store,
+        mock_user_store,
+    ):
+        """После первой корзины приглашённого друга логируется bonus рефереру."""
+        result_text = json.dumps({"data": {"products": []}})
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 1,
+            "cart_limit": 0,
+            "survey_completed": False,
+        }
+        mock_user_store.grant_referral_bonus_for_first_cart.return_value = {
+            "granted": True,
+            "referrer_id": 777,
+            "bonus": 3,
+            "new_limit": 9,
+        }
+
+        await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42,
+            args={"products": [{"xml_id": 1}]},
+            result=result_text,
+        )
+
+        calls = mock_user_store.log_event.call_args_list
+        bonus_calls = [c for c in calls if c[0][1] == "referral_bonus_granted"]
+        assert len(bonus_calls) == 1
+        assert bonus_calls[0][0][0] == 777
+
+    async def test_trial_hint_when_trial_active(
+        self,
+        executor_with_user_store,
+        mock_user_store,
+    ):
+        """В trial возвращается hint о безлимитных корзинах."""
+        result_text = json.dumps({"data": {"products": []}})
+        mock_user_store.increment_carts.return_value = {
+            "carts_created": 0,
+            "cart_limit": 0,
+            "survey_completed": False,
+            "trial_active": True,
+            "trial_days_left": 6,
+        }
+
+        result = await executor_with_user_store._handle_cart_created_freemium(
+            user_id=42,
+            args={},
+            result=result_text,
+        )
+
+        parsed = json.loads(result)
+        freemium = parsed["data"]["freemium"]
+        assert freemium["trial_active"] is True
+        assert freemium["remaining"] is None
+        assert "Пробный период активен" in freemium["hint"]
 
     async def test_returns_original_on_error(
         self,
