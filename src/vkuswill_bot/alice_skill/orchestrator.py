@@ -95,10 +95,21 @@ _STATUS_CHECK_PHRASES = (
     "статус заказа",
     "где заказ",
     "что с заказом",
+    "заказ уже собран",
+    "заказ уже полностью сформирован",
+    "заказ собран",
+    "собран ли заказ",
+    "собрался ли заказ",
+    "проверить корзину",
+    "что с корзиной",
     "готова корзина",
+    "готова ли корзина",
     "готов ли заказ",
     "проверь корзину",
 )
+
+_STATUS_ENTITY_TOKENS = ("заказ", "корзин")
+_STATUS_VERB_TOKENS = ("проверь", "провер", "статус", "готов", "собран", "собрал", "где")
 
 
 def _format_rub(value: float) -> str:
@@ -211,7 +222,12 @@ class AliceOrderOrchestrator:
         normalized = utterance.strip().lower()
         normalized = _NON_WORD_RE.sub(" ", normalized)
         normalized = _SPACES_RE.sub(" ", normalized)
-        return any(phrase in normalized for phrase in _STATUS_CHECK_PHRASES)
+        if any(phrase in normalized for phrase in _STATUS_CHECK_PHRASES):
+            return True
+        # Гибкий fallback: "заказ/корзина" + "статусный" глагол/маркер.
+        has_entity = any(token in normalized for token in _STATUS_ENTITY_TOKENS)
+        has_status_verb = any(token in normalized for token in _STATUS_VERB_TOKENS)
+        return has_entity and has_status_verb
 
     @staticmethod
     def extract_link_code(utterance: str) -> str | None:

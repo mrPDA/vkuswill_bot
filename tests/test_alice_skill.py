@@ -683,6 +683,53 @@ async def test_orchestrator_async_voice_order_status_returns_cart():
     assert mcp.calls == []
 
 
+@pytest.mark.asyncio
+async def test_orchestrator_status_phrase_order_already_collected_uses_status_api():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-781": 781}, codes={})
+    voice_client = _AsyncVoiceOrderClient(
+        status_payload={
+            "ok": True,
+            "status": "processing",
+        },
+    )
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=voice_client,  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+        voice_order_async_mode=True,
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-781",
+        utterance="заказ уже собран?",
+    )
+
+    assert result.ok is True
+    assert result.error_code == "order_processing"
+    assert voice_client.status_calls == 1
+    assert voice_client.start_calls == 0
+    assert mcp.calls == []
+
+
+@pytest.mark.parametrize(
+    ("utterance", "expected"),
+    [
+        ("заказ уже собран?", True),
+        ("собран ли заказ", True),
+        ("что с корзиной", True),
+        ("готова ли корзина", True),
+        ("проверь заказ", True),
+        ("закажи молоко и яйца", False),
+    ],
+)
+def test_is_order_status_request_extended_phrases(utterance: str, expected: bool):
+    assert AliceOrderOrchestrator.is_order_status_request(utterance) is expected
+
+
 @pytest.mark.parametrize(
     ("utterance", "expected"),
     [
