@@ -89,6 +89,16 @@ _LINK_CODE_TENS_WORDS = {
 }
 _NON_WORD_RE = re.compile(r"[^\w\s]+", re.UNICODE)
 _SPACES_RE = re.compile(r"\s+")
+_STATUS_CHECK_PHRASES = (
+    "проверь заказ",
+    "проверить заказ",
+    "статус заказа",
+    "где заказ",
+    "что с заказом",
+    "готова корзина",
+    "готов ли заказ",
+    "проверь корзину",
+)
 
 
 def _format_rub(value: float) -> str:
@@ -105,6 +115,8 @@ class AliceOrderOrchestrator:
         mcp_client: VkusvillMCPClient,
         *,
         voice_order_client: VoiceOrderClient | None = None,
+        voice_order_async_mode: bool = True,
+        voice_api_fallback_to_mcp: bool = True,
         account_links: AccountLinkStore | None = None,
         delivery_adapter: LinkDeliveryAdapter | None = None,
         idempotency_store: IdempotencyStore | None = None,
@@ -121,6 +133,8 @@ class AliceOrderOrchestrator:
     ) -> None:
         self._mcp_client = mcp_client
         self._voice_order_client = voice_order_client
+        self._voice_order_async_mode = voice_order_async_mode
+        self._voice_api_fallback_to_mcp = voice_api_fallback_to_mcp
         self._account_links = account_links
         self._delivery = delivery_adapter
         self._idempotency_store = idempotency_store or InMemoryIdempotencyStore()
@@ -191,6 +205,13 @@ class AliceOrderOrchestrator:
     @staticmethod
     def _current_minute_bucket() -> int:
         return int(datetime.now(UTC).timestamp() // 60)
+
+    @staticmethod
+    def is_order_status_request(utterance: str) -> bool:
+        normalized = utterance.strip().lower()
+        normalized = _NON_WORD_RE.sub(" ", normalized)
+        normalized = _SPACES_RE.sub(" ", normalized)
+        return any(phrase in normalized for phrase in _STATUS_CHECK_PHRASES)
 
     @staticmethod
     def extract_link_code(utterance: str) -> str | None:
@@ -359,6 +380,37 @@ class AliceOrderOrchestrator:
                 error_code=reason,
             )
 
+        linked_user_id: int | None = None
+        if self._account_links is not None:
+            linked_user_id = await self._account_links.resolve_internal_user_id(voice_user_id)
+
+        if self._require_linked_account and linked_user_id is None:
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    "Чтобы оформить заказ, сначала привяжите аккаунт ВкусВилл. "
+                    "Откройте Telegram-бот и выполните команду /link_voice."
+                ),
+                requires_linking=True,
+                error_code="account_not_linked",
+            )
+
+        if self.is_order_status_request(utterance):
+            status_result = await self._check_order_status_via_voice_api(
+                linked_user_id=linked_user_id,
+                voice_user_id=voice_user_id,
+            )
+            if status_result is not None:
+                return status_result
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    "Я не вижу активной сборки корзины. "
+                    "Скажите, что добавить: например, закажи молоко и яйца."
+                ),
+                error_code="order_status_not_available",
+            )
+
         products = self.extract_product_queries(utterance)
         if not products:
             return VoiceOrderResult(
@@ -388,21 +440,6 @@ class AliceOrderOrchestrator:
                     error_code="order_rate_limited",
                 )
 
-        linked_user_id: int | None = None
-        if self._account_links is not None:
-            linked_user_id = await self._account_links.resolve_internal_user_id(voice_user_id)
-
-        if self._require_linked_account and linked_user_id is None:
-            return VoiceOrderResult(
-                ok=False,
-                voice_text=(
-                    "Чтобы оформить заказ, сначала привяжите аккаунт ВкусВилл. "
-                    "Откройте Telegram-бот и выполните команду /link_voice."
-                ),
-                requires_linking=True,
-                error_code="account_not_linked",
-            )
-
         idem_key = self._build_idempotency_key(
             voice_user_id,
             utterance,
@@ -422,12 +459,20 @@ class AliceOrderOrchestrator:
 
         try:
             if linked_user_id is not None and self._voice_order_client is not None:
-                api_result = await self._create_order_via_voice_api(
-                    linked_user_id=linked_user_id,
-                    voice_user_id=voice_user_id,
-                    utterance=utterance,
-                    products=products,
-                )
+                if self._voice_order_async_mode and self._supports_async_voice_order_api():
+                    api_result = await self._start_order_via_voice_api(
+                        linked_user_id=linked_user_id,
+                        voice_user_id=voice_user_id,
+                        utterance=utterance,
+                        products=products,
+                    )
+                else:
+                    api_result = await self._create_order_via_voice_api(
+                        linked_user_id=linked_user_id,
+                        voice_user_id=voice_user_id,
+                        utterance=utterance,
+                        products=products,
+                    )
                 if api_result is not None:
                     await self._idempotency_store.mark_done(
                         idem_key,
@@ -490,6 +535,186 @@ class AliceOrderOrchestrator:
                 error_code="unexpected_error",
             )
 
+    def _supports_async_voice_order_api(self) -> bool:
+        client = self._voice_order_client
+        if client is None:
+            return False
+        return callable(getattr(client, "start_order", None)) and callable(
+            getattr(client, "get_order_status", None),
+        )
+
+    async def _check_order_status_via_voice_api(
+        self,
+        *,
+        linked_user_id: int | None,
+        voice_user_id: str,
+    ) -> VoiceOrderResult | None:
+        if (
+            linked_user_id is None
+            or self._voice_order_client is None
+            or not self._supports_async_voice_order_api()
+        ):
+            return None
+
+        try:
+            payload = await self._voice_order_client.get_order_status(  # type: ignore[union-attr]
+                user_id=linked_user_id,
+                voice_user_id=voice_user_id,
+            )
+        except Exception:
+            logger.warning("Voice order status API unavailable", exc_info=True)
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    "Не удалось получить статус заказа. "
+                    "Повторите проверку через 20-30 секунд."
+                ),
+                error_code="voice_order_status_unavailable",
+            )
+
+        status = str(payload.get("status", "")).strip().lower()
+        if status in {"processing", "queued", "started"}:
+            return VoiceOrderResult(
+                ok=True,
+                voice_text=(
+                    "Корзину еще собираю. "
+                    "Скажите: проверь заказ через 20-30 секунд."
+                ),
+                error_code="order_processing",
+            )
+        if status == "not_found":
+            return VoiceOrderResult(
+                ok=False,
+                voice_text=(
+                    "Сейчас нет активной сборки корзины. "
+                    "Продиктуйте новый заказ одной фразой."
+                ),
+                error_code="order_not_found",
+            )
+
+        if status == "done" or payload.get("cart_link"):
+            order_data = self._extract_voice_order_api_payload(
+                payload,
+                fallback_items_count=0,
+            )
+            if order_data["link"]:
+                delivery = None
+                if self._delivery is not None:
+                    delivery = await self._delivery.deliver_cart_link(
+                        user_ref=voice_user_id,
+                        cart_link=order_data["link"],
+                        total_rub=order_data["total_rub"],
+                        items_count=order_data["items_count"],
+                    )
+                return VoiceOrderResult(
+                    ok=True,
+                    voice_text=self._build_success_text(
+                        order_data["total_rub"],
+                        order_data["items_count"],
+                    ),
+                    cart_link=order_data["link"],
+                    total_rub=order_data["total_rub"],
+                    items_count=order_data["items_count"],
+                    delivery=delivery,
+                )
+
+        api_text = str(payload.get("assistant_text", "")).strip()
+        if not api_text:
+            api_text = "Пока не удалось завершить сборку корзины. Повторите запрос позже."
+        api_error = str(payload.get("error", payload.get("error_code", "voice_order_failed")))
+        return VoiceOrderResult(
+            ok=False,
+            voice_text=api_text,
+            error_code=api_error,
+        )
+
+    async def _start_order_via_voice_api(
+        self,
+        *,
+        linked_user_id: int,
+        voice_user_id: str,
+        utterance: str,
+        products: list[str],
+    ) -> VoiceOrderResult | None:
+        start_order = getattr(self._voice_order_client, "start_order", None)
+        if not callable(start_order):
+            return await self._create_order_via_voice_api(
+                linked_user_id=linked_user_id,
+                voice_user_id=voice_user_id,
+                utterance=utterance,
+                products=products,
+            )
+
+        try:
+            payload = await start_order(
+                user_id=linked_user_id,
+                voice_user_id=voice_user_id,
+                utterance=self._build_llm_utterance(products, utterance),
+            )
+        except Exception:
+            logger.warning(
+                "Voice order start API unavailable, fallback_to_mcp=%s",
+                self._voice_api_fallback_to_mcp,
+                exc_info=True,
+            )
+            if not self._voice_api_fallback_to_mcp:
+                return VoiceOrderResult(
+                    ok=False,
+                    voice_text=(
+                        "Сервис заказа сейчас перегружен. "
+                        "Повторите запрос одной фразой через несколько секунд."
+                    ),
+                    error_code="voice_order_api_unavailable",
+                )
+            return None
+
+        status = str(payload.get("status", "")).strip().lower()
+        if status in {"processing", "queued", "accepted", "started"}:
+            return VoiceOrderResult(
+                ok=True,
+                voice_text=(
+                    "Приняла заказ и начала сборку корзины. "
+                    "Скажите: проверь заказ через 20-30 секунд."
+                ),
+                error_code="order_processing",
+            )
+
+        if status == "done" or payload.get("cart_link"):
+            order_data = self._extract_voice_order_api_payload(
+                payload,
+                fallback_items_count=len(products),
+            )
+            if order_data["link"]:
+                delivery = None
+                if self._delivery is not None:
+                    delivery = await self._delivery.deliver_cart_link(
+                        user_ref=voice_user_id,
+                        cart_link=order_data["link"],
+                        total_rub=order_data["total_rub"],
+                        items_count=order_data["items_count"],
+                    )
+                return VoiceOrderResult(
+                    ok=True,
+                    voice_text=self._build_success_text(
+                        order_data["total_rub"],
+                        order_data["items_count"],
+                    ),
+                    cart_link=order_data["link"],
+                    total_rub=order_data["total_rub"],
+                    items_count=order_data["items_count"],
+                    delivery=delivery,
+                )
+
+        api_text = str(payload.get("assistant_text", "")).strip()
+        if not api_text:
+            api_text = "Не удалось поставить заказ в очередь. Попробуйте ещё раз."
+        api_error = str(payload.get("error", payload.get("error_code", "voice_order_failed")))
+        return VoiceOrderResult(
+            ok=False,
+            voice_text=api_text,
+            error_code=api_error,
+        )
+
     async def _create_order_via_voice_api(
         self,
         *,
@@ -506,9 +731,19 @@ class AliceOrderOrchestrator:
             )
         except Exception:
             logger.warning(
-                "Voice order API unavailable, fallback to direct MCP orchestration",
+                "Voice order API unavailable, fallback_to_mcp=%s",
+                self._voice_api_fallback_to_mcp,
                 exc_info=True,
             )
+            if not self._voice_api_fallback_to_mcp:
+                return VoiceOrderResult(
+                    ok=False,
+                    voice_text=(
+                        "Сервис заказа сейчас перегружен. "
+                        "Повторите запрос одной фразой через несколько секунд."
+                    ),
+                    error_code="voice_order_api_unavailable",
+                )
             return None
 
         order_data = self._extract_voice_order_api_payload(
@@ -736,3 +971,21 @@ class VoiceOrderClient(Protocol):
         utterance: str,
     ) -> dict[str, Any]:
         """Создать корзину через internal API стандартного LLM-цикла."""
+
+    async def start_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, Any]:
+        """Поставить задачу сборки корзины в очередь и вернуть job status."""
+
+    async def get_order_status(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Получить статус фоновой сборки корзины."""

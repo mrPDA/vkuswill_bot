@@ -16,7 +16,7 @@ resource "yandex_function" "alice_skill" {
   entrypoint  = "vkuswill_bot.alice_skill.handler.handler"
   memory      = "256"
 
-  execution_timeout = "30"
+  execution_timeout = tostring(var.alice_function_execution_timeout_seconds)
   user_hash         = filesha256(var.alice_function_zip_path)
 
   content {
@@ -31,37 +31,42 @@ resource "yandex_function" "alice_skill" {
   }
 
   environment = {
-    ALICE_MCP_SERVER_URL                = var.mcp_server_url
-    ALICE_MCP_API_KEY                   = var.mcp_server_api_key
-    ALICE_LINK_API_URL                  = local.alice_link_api_url_effective
-    ALICE_LINK_API_KEY                  = var.voice_link_api_key
-    ALICE_LINK_API_TIMEOUT_SECONDS      = tostring(var.alice_link_api_timeout_seconds)
-    ALICE_LINK_API_VERIFY_SSL           = tostring(var.alice_link_api_verify_ssl)
-    ALICE_ORDER_API_URL                 = local.alice_link_api_url_effective
-    ALICE_ORDER_API_KEY                 = var.voice_link_api_key
-    ALICE_ORDER_API_TIMEOUT_SECONDS     = "25"
-    ALICE_ORDER_API_VERIFY_SSL          = tostring(var.alice_link_api_verify_ssl)
-    ALICE_SKILL_ID                      = var.alice_skill_id
-    ALICE_REQUIRE_LINKED_ACCOUNT        = "true"
-    ALICE_LINKING_FAIL_CLOSED           = tostring(var.alice_linking_fail_closed)
-    ALICE_DEGRADE_TO_GUEST_ON_DB_ERROR  = tostring(var.alice_degrade_to_guest_on_db_error)
-    ALICE_DB_CONNECT_TIMEOUT_SECONDS    = tostring(var.alice_db_connect_timeout_seconds)
-    ALICE_IDEMPOTENCY_TTL_SECONDS       = tostring(var.alice_idempotency_ttl_seconds)
-    ALICE_IDEMPOTENCY_KEY_PREFIX        = var.alice_idempotency_key_prefix
-    ALICE_RATE_LIMIT_KEY_PREFIX         = var.alice_rate_limit_key_prefix
-    ALICE_ORDER_RATE_LIMIT              = tostring(var.alice_order_rate_limit)
-    ALICE_ORDER_RATE_WINDOW_SECONDS     = tostring(var.alice_order_rate_window_seconds)
-    ALICE_LINK_CODE_RATE_LIMIT          = tostring(var.alice_link_code_rate_limit)
-    ALICE_LINK_CODE_RATE_WINDOW_SECONDS = tostring(var.alice_link_code_rate_window_seconds)
-    ALICE_LANGFUSE_ENABLED              = tostring(var.alice_langfuse_enabled)
-    ALICE_LANGFUSE_PUBLIC_KEY           = var.langfuse_public_key
-    ALICE_LANGFUSE_SECRET_KEY           = var.langfuse_secret_key
-    ALICE_LANGFUSE_HOST                 = var.alice_langfuse_host != "" ? var.alice_langfuse_host : "http://${yandex_compute_instance.bot.network_interface[0].ip_address}:3000"
-    ALICE_LANGFUSE_ANONYMIZE_MESSAGES   = tostring(var.alice_langfuse_anonymize_messages)
-    ALICE_REDIS_URL                     = var.alice_function_network_id == "" ? "" : "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
-    VOICE_LINK_CODE_TTL_MINUTES         = tostring(var.voice_link_code_ttl_minutes)
-    ALICE_DATABASE_URL                  = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
-    DATABASE_URL                        = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
+    ALICE_MCP_SERVER_URL                 = var.mcp_server_url
+    ALICE_MCP_API_KEY                    = var.mcp_server_api_key
+    ALICE_LINK_API_URL                   = local.alice_link_api_url_effective
+    ALICE_LINK_API_KEY                   = var.voice_link_api_key
+    ALICE_LINK_API_TIMEOUT_SECONDS       = tostring(var.alice_link_api_timeout_seconds)
+    ALICE_LINK_API_VERIFY_SSL            = tostring(var.alice_link_api_verify_ssl)
+    ALICE_ORDER_API_URL                  = local.alice_link_api_url_effective
+    ALICE_ORDER_API_KEY                  = var.voice_link_api_key
+    ALICE_ORDER_API_TIMEOUT_SECONDS      = tostring(var.alice_order_api_timeout_seconds)
+    ALICE_ORDER_API_VERIFY_SSL           = tostring(var.alice_link_api_verify_ssl)
+    ALICE_ORDER_ASYNC_MODE               = tostring(var.alice_order_async_mode)
+    ALICE_VOICE_API_FALLBACK_TO_MCP      = tostring(var.alice_voice_api_fallback_to_mcp)
+    ALICE_ORCHESTRATION_TIMEOUT_SECONDS  = tostring(var.alice_orchestration_timeout_seconds)
+    ALICE_HANDLER_TIMEOUT_SECONDS        = tostring(var.alice_handler_timeout_seconds)
+    ALICE_LANGFUSE_FLUSH_TIMEOUT_SECONDS = tostring(var.alice_langfuse_flush_timeout_seconds)
+    ALICE_SKILL_ID                       = var.alice_skill_id
+    ALICE_REQUIRE_LINKED_ACCOUNT         = "true"
+    ALICE_LINKING_FAIL_CLOSED            = tostring(var.alice_linking_fail_closed)
+    ALICE_DEGRADE_TO_GUEST_ON_DB_ERROR   = tostring(var.alice_degrade_to_guest_on_db_error)
+    ALICE_DB_CONNECT_TIMEOUT_SECONDS     = tostring(var.alice_db_connect_timeout_seconds)
+    ALICE_IDEMPOTENCY_TTL_SECONDS        = tostring(var.alice_idempotency_ttl_seconds)
+    ALICE_IDEMPOTENCY_KEY_PREFIX         = var.alice_idempotency_key_prefix
+    ALICE_RATE_LIMIT_KEY_PREFIX          = var.alice_rate_limit_key_prefix
+    ALICE_ORDER_RATE_LIMIT               = tostring(var.alice_order_rate_limit)
+    ALICE_ORDER_RATE_WINDOW_SECONDS      = tostring(var.alice_order_rate_window_seconds)
+    ALICE_LINK_CODE_RATE_LIMIT           = tostring(var.alice_link_code_rate_limit)
+    ALICE_LINK_CODE_RATE_WINDOW_SECONDS  = tostring(var.alice_link_code_rate_window_seconds)
+    ALICE_LANGFUSE_ENABLED               = tostring(var.alice_langfuse_enabled)
+    ALICE_LANGFUSE_PUBLIC_KEY            = var.langfuse_public_key
+    ALICE_LANGFUSE_SECRET_KEY            = var.langfuse_secret_key
+    ALICE_LANGFUSE_HOST                  = var.alice_langfuse_host != "" ? var.alice_langfuse_host : "http://${yandex_compute_instance.bot.network_interface[0].ip_address}:3000"
+    ALICE_LANGFUSE_ANONYMIZE_MESSAGES    = tostring(var.alice_langfuse_anonymize_messages)
+    ALICE_REDIS_URL                      = var.alice_function_network_id == "" ? "" : "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
+    VOICE_LINK_CODE_TTL_MINUTES          = tostring(var.voice_link_code_ttl_minutes)
+    ALICE_DATABASE_URL                   = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
+    DATABASE_URL                         = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
   }
 
   labels = merge(var.labels, { component = "alice-skill" })
@@ -85,6 +90,26 @@ resource "yandex_function" "alice_skill" {
     precondition {
       condition     = trimspace(var.mcp_server_api_key) != ""
       error_message = "mcp_server_api_key must be set for Alice MCP access."
+    }
+
+    precondition {
+      condition     = var.alice_orchestration_timeout_seconds < var.alice_handler_timeout_seconds
+      error_message = "alice_orchestration_timeout_seconds must be less than alice_handler_timeout_seconds."
+    }
+
+    precondition {
+      condition     = var.alice_order_api_timeout_seconds < var.alice_orchestration_timeout_seconds
+      error_message = "alice_order_api_timeout_seconds must be less than alice_orchestration_timeout_seconds."
+    }
+
+    precondition {
+      condition     = var.alice_handler_timeout_seconds < var.alice_function_execution_timeout_seconds
+      error_message = "alice_handler_timeout_seconds must be less than alice_function_execution_timeout_seconds."
+    }
+
+    precondition {
+      condition     = var.alice_handler_timeout_seconds <= 4.4
+      error_message = "alice_handler_timeout_seconds must be <= 4.4 to avoid Alice platform request timeout (~4.5s)."
     }
   }
 }

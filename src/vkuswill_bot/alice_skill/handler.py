@@ -179,6 +179,11 @@ async def _get_runtime() -> _Runtime:
         "ALICE_ORDER_API_VERIFY_SSL",
         default=link_api_verify_ssl,
     )
+    voice_api_fallback_to_mcp = _parse_bool_env(
+        "ALICE_VOICE_API_FALLBACK_TO_MCP",
+        default=False,
+    )
+    voice_order_async_mode = _parse_bool_env("ALICE_ORDER_ASYNC_MODE", default=True)
     database_url = os.getenv("ALICE_DATABASE_URL", "") or os.getenv("DATABASE_URL", "")
     effective_require_linked = require_linked_account
     misconfigured_link_api = bool(link_api_url or link_api_key) and not (
@@ -293,6 +298,8 @@ async def _get_runtime() -> _Runtime:
     orchestrator = AliceOrderOrchestrator(
         mcp_client,
         voice_order_client=voice_order_client,
+        voice_order_async_mode=voice_order_async_mode,
+        voice_api_fallback_to_mcp=voice_api_fallback_to_mcp,
         account_links=account_links,
         delivery_adapter=AliceAppDeliveryAdapter(),
         idempotency_store=idempotency_store,
@@ -390,6 +397,20 @@ def _forbidden_alice_response(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _timeout_alice_response(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "version": event.get("version", "1.0"),
+        "session": event.get("session", {}),
+        "response": {
+            "text": (
+                "Сервис отвечает дольше обычного. "
+                "Повторите запрос одной фразой или попробуйте через минуту."
+            ),
+            "end_session": False,
+        },
+    }
+
+
 def _is_http_proxy_event(event: dict[str, Any]) -> bool:
     return "httpMethod" in event or "requestContext" in event
 
@@ -451,6 +472,22 @@ def _wrap_http_response(payload: dict[str, Any], status_code: int = 200) -> dict
     }
 
 
+async def _flush_langfuse(runtime: _Runtime) -> None:
+    flush_timeout = max(
+        0.0,
+        _parse_float_env("ALICE_LANGFUSE_FLUSH_TIMEOUT_SECONDS", default=0.1),
+    )
+    if flush_timeout <= 0:
+        return
+    try:
+        await asyncio.wait_for(
+            asyncio.to_thread(runtime.langfuse.flush),
+            timeout=flush_timeout,
+        )
+    except Exception:
+        logger.debug("Alice skill: skipped langfuse flush", exc_info=True)
+
+
 async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
     runtime = await _get_runtime()
     utterance = _extract_utterance(event)
@@ -481,7 +518,7 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             output="Привет! Скажите, что добавить в корзину.",
             metadata={"result": "empty_utterance"},
         )
-        runtime.langfuse.flush()
+        await _flush_langfuse(runtime)
         return {
             "version": event.get("version", "1.0"),
             "session": event.get("session", {}),
@@ -493,11 +530,37 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             },
         }
 
+    orchestration_timeout = max(
+        0.5,
+        _parse_float_env("ALICE_ORCHESTRATION_TIMEOUT_SECONDS", default=3.8),
+    )
     try:
-        result = await runtime.orchestrator.create_order_from_utterance(
-            voice_user_id=voice_user_id,
-            utterance=utterance,
+        result = await asyncio.wait_for(
+            runtime.orchestrator.create_order_from_utterance(
+                voice_user_id=voice_user_id,
+                utterance=utterance,
+            ),
+            timeout=orchestration_timeout,
         )
+    except TimeoutError:
+        orchestration_span.end(
+            output={"ok": False},
+            metadata={
+                "status": "timeout",
+                "timeout_seconds": orchestration_timeout,
+            },
+            level="WARNING",
+            status_message="alice_orchestrator_timeout",
+        )
+        trace.update(
+            output="request_timeout",
+            metadata={
+                "status": "timeout",
+                "timeout_seconds": orchestration_timeout,
+            },
+        )
+        await _flush_langfuse(runtime)
+        return _timeout_alice_response(event)
     except Exception as exc:
         orchestration_span.end(
             output={"ok": False},
@@ -509,7 +572,7 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             output="internal_error",
             metadata={"status": "error", "exception": str(exc)},
         )
-        runtime.langfuse.flush()
+        await _flush_langfuse(runtime)
         raise
 
     orchestration_span.end(
@@ -535,7 +598,7 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             "error_code": result.error_code,
         },
     )
-    runtime.langfuse.flush()
+    await _flush_langfuse(runtime)
     return _to_alice_response(event, result)
 
 
@@ -567,8 +630,17 @@ def handler(event: dict[str, Any], context: Any) -> dict[str, Any]:
     token = None
     if sniffio is not None and hasattr(sniffio, "current_async_library_cvar"):
         token = sniffio.current_async_library_cvar.set("asyncio")
+    handler_timeout = max(0.5, _parse_float_env("ALICE_HANDLER_TIMEOUT_SECONDS", default=4.2))
     try:
-        response = _EVENT_LOOP.run_until_complete(_handle_async(alice_event))
+        response = _EVENT_LOOP.run_until_complete(
+            asyncio.wait_for(
+                _handle_async(alice_event),
+                timeout=handler_timeout,
+            ),
+        )
+    except TimeoutError:
+        logger.error("Alice skill: handler timeout (%.2fs)", handler_timeout)
+        response = _timeout_alice_response(alice_event)
     finally:
         if token is not None and sniffio is not None:
             sniffio.current_async_library_cvar.reset(token)

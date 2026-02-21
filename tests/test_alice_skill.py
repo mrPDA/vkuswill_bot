@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 
@@ -215,6 +216,55 @@ class _ZeroCountVoiceOrderClient:
             "total_rub": 510.0,
             "items_count": 0,
         }
+
+
+class _AsyncVoiceOrderClient:
+    def __init__(self, status_payload: dict[str, object] | None = None) -> None:
+        self.start_calls = 0
+        self.status_calls = 0
+        self.status_payload = status_payload or {
+            "ok": True,
+            "status": "done",
+            "cart_link": "https://shop.example/cart/async",
+            "total_rub": 620.0,
+            "items_count": 3,
+        }
+
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, object]:
+        del user_id, voice_user_id, utterance
+        raise AssertionError("Legacy /order path should not be used in async mode")
+
+    async def start_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, object]:
+        self.start_calls += 1
+        assert user_id == 781
+        assert voice_user_id == "alice-voice-781"
+        assert "молоко" in utterance
+        return {"ok": True, "status": "processing", "job_id": "job-781"}
+
+    async def get_order_status(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        job_id: str | None = None,
+    ) -> dict[str, object]:
+        self.status_calls += 1
+        assert user_id == 781
+        assert voice_user_id == "alice-voice-781"
+        assert job_id is None
+        return self.status_payload
 
 
 @pytest.mark.asyncio
@@ -523,6 +573,31 @@ async def test_orchestrator_fallbacks_to_mcp_when_voice_order_api_unavailable():
 
 
 @pytest.mark.asyncio
+async def test_orchestrator_returns_fast_error_when_voice_api_unavailable_and_no_fallback():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-780": 780}, codes={})
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=_FailingVoiceOrderClient(),  # type: ignore[arg-type]
+        voice_api_fallback_to_mcp=False,
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-780",
+        utterance="закажи молоко",
+    )
+
+    assert result.ok is False
+    assert result.error_code == "voice_order_api_unavailable"
+    assert "перегружен" in result.voice_text.lower()
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
 async def test_orchestrator_voice_order_zero_items_uses_fallback_count():
     mcp = FakeMCPClient()
     links = InMemoryAccountLinkStore(links={"alice-voice-779": 779}, codes={})
@@ -543,6 +618,69 @@ async def test_orchestrator_voice_order_zero_items_uses_fallback_count():
     assert result.ok is True
     assert result.items_count == 2
     assert "0 позиций" not in result.voice_text
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_async_voice_order_start_returns_processing_prompt():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-781": 781}, codes={})
+    voice_client = _AsyncVoiceOrderClient()
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=voice_client,  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+        voice_order_async_mode=True,
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-781",
+        utterance="закажи молоко и яйца",
+    )
+
+    assert result.ok is True
+    assert result.error_code == "order_processing"
+    assert "проверь заказ" in result.voice_text.lower()
+    assert voice_client.start_calls == 1
+    assert mcp.calls == []
+
+
+@pytest.mark.asyncio
+async def test_orchestrator_async_voice_order_status_returns_cart():
+    mcp = FakeMCPClient()
+    links = InMemoryAccountLinkStore(links={"alice-voice-781": 781}, codes={})
+    voice_client = _AsyncVoiceOrderClient(
+        status_payload={
+            "ok": True,
+            "status": "done",
+            "cart_link": "https://shop.example/cart/async-status",
+            "total_rub": 777.0,
+            "items_count": 4,
+        },
+    )
+    orchestrator = AliceOrderOrchestrator(
+        mcp_client=mcp,  # type: ignore[arg-type]
+        voice_order_client=voice_client,  # type: ignore[arg-type]
+        account_links=links,
+        delivery_adapter=AliceAppDeliveryAdapter(),
+        require_linked_account=True,
+        idempotency_store=InMemoryIdempotencyStore(),
+        voice_order_async_mode=True,
+    )
+
+    result = await orchestrator.create_order_from_utterance(
+        voice_user_id="alice-voice-781",
+        utterance="проверь заказ",
+    )
+
+    assert result.ok is True
+    assert result.cart_link == "https://shop.example/cart/async-status"
+    assert result.total_rub == 777.0
+    assert result.items_count == 4
+    assert voice_client.status_calls == 1
+    assert mcp.calls == []
 
 
 @pytest.mark.parametrize(
@@ -758,6 +896,77 @@ def test_cloud_function_writes_langfuse_trace(monkeypatch):
     assert langfuse_spy.trace_calls[0]["session_id"] == "alice-session-1"
     assert langfuse_spy.trace_spy.span_spy.end_calls[0]["output"]["ok"] is True
     assert langfuse_spy.trace_spy.update_calls[0]["metadata"]["ok"] is True
+
+
+def test_cloud_function_returns_graceful_timeout(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    monkeypatch.setenv("ALICE_ORCHESTRATION_TIMEOUT_SECONDS", "0.5")
+    monkeypatch.setenv("ALICE_HANDLER_TIMEOUT_SECONDS", "1")
+    monkeypatch.setenv("ALICE_LANGFUSE_FLUSH_TIMEOUT_SECONDS", "0.2")
+
+    class SlowOrchestrator:
+        async def create_order_from_utterance(
+            self,
+            voice_user_id: str,
+            utterance: str,
+        ) -> VoiceOrderResult:
+            assert voice_user_id == "alice-user-timeout"
+            assert utterance == "закажи молоко"
+            await asyncio.sleep(0.7)
+            return VoiceOrderResult(ok=True, voice_text="Late success")
+
+    class SpanSpy:
+        def __init__(self) -> None:
+            self.end_calls: list[dict[str, object]] = []
+
+        def end(self, **kwargs):
+            self.end_calls.append(kwargs)
+
+    class TraceSpy:
+        def __init__(self) -> None:
+            self.span_spy = SpanSpy()
+            self.update_calls: list[dict[str, object]] = []
+
+        def span(self, **kwargs):
+            del kwargs
+            return self.span_spy
+
+        def update(self, **kwargs):
+            self.update_calls.append(kwargs)
+
+    class LangfuseSpy:
+        def __init__(self) -> None:
+            self.trace_spy = TraceSpy()
+            self.flush_calls = 0
+
+        def trace(self, **kwargs):
+            del kwargs
+            return self.trace_spy
+
+        def flush(self) -> None:
+            self.flush_calls += 1
+
+    langfuse_spy = LangfuseSpy()
+    module._RUNTIME = module._Runtime(
+        orchestrator=SlowOrchestrator(),
+        langfuse=langfuse_spy,  # type: ignore[arg-type]
+    )
+
+    event = {
+        "version": "1.0",
+        "session": {
+            "session_id": "alice-session-timeout",
+            "user": {"user_id": "alice-user-timeout"},
+            "skill_id": "alice.skill.id",
+        },
+        "request": {"command": "закажи молоко"},
+    }
+    response = module.handler(event, None)
+
+    assert "дольше обычного" in response["response"]["text"].lower()
+    assert langfuse_spy.flush_calls == 1
+    assert langfuse_spy.trace_spy.span_spy.end_calls[0]["metadata"]["status"] == "timeout"
+    assert langfuse_spy.trace_spy.update_calls[0]["metadata"]["status"] == "timeout"
 
 
 def test_cloud_function_http_proxy_response(monkeypatch):
@@ -1006,6 +1215,26 @@ async def test_runtime_uses_redis_idempotency_store(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_runtime_reads_async_order_flags(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+    module._RUNTIME = None
+
+    class DummyMCPClient:
+        def __init__(self, *args, **kwargs) -> None:
+            pass
+
+    monkeypatch.setattr(module, "VkusvillMCPClient", DummyMCPClient)
+    monkeypatch.setenv("ALICE_ORDER_ASYNC_MODE", "false")
+    monkeypatch.setenv("ALICE_VOICE_API_FALLBACK_TO_MCP", "true")
+
+    runtime = await module._get_runtime()
+
+    assert runtime.orchestrator._voice_order_async_mode is False
+    assert runtime.orchestrator._voice_api_fallback_to_mcp is True
+    module._RUNTIME = None
+
+
+@pytest.mark.asyncio
 async def test_http_account_link_store_resolve_success():
     def handler(request: httpx.Request) -> httpx.Response:
         assert request.url.path.endswith("/resolve")
@@ -1082,3 +1311,55 @@ async def test_http_voice_order_client_success():
     )
     assert payload["ok"] is True
     assert payload["cart_link"] == "https://shop.example/cart/42"
+
+
+@pytest.mark.asyncio
+async def test_http_voice_order_client_start_and_status():
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = json.loads(request.content.decode("utf-8"))
+        if request.url.path.endswith("/order/start"):
+            assert body == {
+                "user_id": 42,
+                "voice_user_id": "alice-u-1",
+                "utterance": "Собери корзину: молоко",
+            }
+            return httpx.Response(200, json={"ok": True, "status": "processing", "job_id": "job-1"})
+        assert request.url.path.endswith("/order/status")
+        assert body == {
+            "user_id": 42,
+            "voice_user_id": "alice-u-1",
+            "job_id": "job-1",
+        }
+        return httpx.Response(
+            200,
+            json={
+                "ok": True,
+                "status": "done",
+                "cart_link": "https://shop.example/cart/42",
+                "total_rub": 320.0,
+                "items_count": 1,
+            },
+        )
+
+    transport = httpx.MockTransport(handler)
+    client = httpx.Client(transport=transport, base_url="http://test.local")
+    order_client = HttpVoiceOrderClient(
+        base_url="http://test.local/voice-link",
+        api_key="key-1",
+        client=client,
+    )
+
+    start_payload = await order_client.start_order(
+        user_id=42,
+        voice_user_id="alice-u-1",
+        utterance="Собери корзину: молоко",
+    )
+    assert start_payload["status"] == "processing"
+
+    status_payload = await order_client.get_order_status(
+        user_id=42,
+        voice_user_id="alice-u-1",
+        job_id="job-1",
+    )
+    assert status_payload["status"] == "done"
+    assert status_payload["cart_link"] == "https://shop.example/cart/42"

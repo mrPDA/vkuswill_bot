@@ -32,25 +32,14 @@ class HttpVoiceOrderClient:
             verify=verify_ssl,
         )
 
-    async def create_order(
-        self,
-        *,
-        user_id: int,
-        voice_user_id: str,
-        utterance: str,
-    ) -> dict[str, Any]:
-        payload = {
-            "user_id": user_id,
-            "voice_user_id": voice_user_id,
-            "utterance": utterance,
-        }
+    async def _post(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         headers = {
             "Content-Type": "application/json",
             "X-Voice-Link-Api-Key": self._api_key,
         }
         response = await asyncio.to_thread(
             self._client.post,
-            f"{self._base_url}/order",
+            f"{self._base_url}{path}",
             json=payload,
             headers=headers,
         )
@@ -59,3 +48,50 @@ class HttpVoiceOrderClient:
         if not isinstance(parsed, dict):
             raise ValueError("Voice order API returned non-object JSON")
         return parsed
+
+    async def create_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/order",
+            {
+                "user_id": user_id,
+                "voice_user_id": voice_user_id,
+                "utterance": utterance,
+            },
+        )
+
+    async def start_order(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        utterance: str,
+    ) -> dict[str, Any]:
+        return await self._post(
+            "/order/start",
+            {
+                "user_id": user_id,
+                "voice_user_id": voice_user_id,
+                "utterance": utterance,
+            },
+        )
+
+    async def get_order_status(
+        self,
+        *,
+        user_id: int,
+        voice_user_id: str,
+        job_id: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "user_id": user_id,
+            "voice_user_id": voice_user_id,
+        }
+        if job_id:
+            payload["job_id"] = job_id
+        return await self._post("/order/status", payload)
