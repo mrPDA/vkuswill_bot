@@ -267,6 +267,24 @@ variable "alice_link_api_verify_ssl" {
   default     = true
 }
 
+variable "alice_langfuse_enabled" {
+  description = "Enable Langfuse tracing for Alice serverless function"
+  type        = bool
+  default     = true
+}
+
+variable "alice_langfuse_host" {
+  description = "Langfuse host for Alice function (empty = internal VM URL)"
+  type        = string
+  default     = ""
+}
+
+variable "alice_langfuse_anonymize_messages" {
+  description = "Mask Alice utterances before sending to Langfuse"
+  type        = bool
+  default     = true
+}
+
 variable "alice_degrade_to_guest_on_db_error" {
   description = "Allow guest ordering when DB for linking is temporarily unavailable"
   type        = bool

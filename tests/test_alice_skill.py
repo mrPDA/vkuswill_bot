@@ -556,6 +556,84 @@ def test_cloud_function_handler_response_with_button(monkeypatch):
     assert response["response"]["buttons"][0]["url"] == "https://shop.example/cart/xyz"
 
 
+def test_cloud_function_writes_langfuse_trace(monkeypatch):
+    module = importlib.import_module("vkuswill_bot.alice_skill.handler")
+
+    class DummyOrchestrator:
+        async def create_order_from_utterance(
+            self,
+            voice_user_id: str,
+            utterance: str,
+        ) -> VoiceOrderResult:
+            assert voice_user_id == "alice-user-lf"
+            assert utterance == "закажи молоко"
+            return VoiceOrderResult(
+                ok=True,
+                voice_text="Готово",
+                cart_link="https://shop.example/cart/lf",
+                total_rub=250.0,
+                items_count=1,
+            )
+
+    class SpanSpy:
+        def __init__(self) -> None:
+            self.end_calls: list[dict[str, object]] = []
+
+        def end(self, **kwargs):
+            self.end_calls.append(kwargs)
+
+    class TraceSpy:
+        def __init__(self) -> None:
+            self.span_spy = SpanSpy()
+            self.update_calls: list[dict[str, object]] = []
+
+        def span(self, **kwargs):
+            del kwargs
+            return self.span_spy
+
+        def update(self, **kwargs):
+            self.update_calls.append(kwargs)
+
+    class LangfuseSpy:
+        def __init__(self) -> None:
+            self.trace_calls: list[dict[str, object]] = []
+            self.flush_calls = 0
+            self.trace_spy = TraceSpy()
+
+        def trace(self, **kwargs):
+            self.trace_calls.append(kwargs)
+            return self.trace_spy
+
+        def flush(self) -> None:
+            self.flush_calls += 1
+
+    langfuse_spy = LangfuseSpy()
+    module._RUNTIME = module._Runtime(
+        orchestrator=DummyOrchestrator(),
+        langfuse=langfuse_spy,  # type: ignore[arg-type]
+    )
+
+    event = {
+        "version": "1.0",
+        "session": {
+            "session_id": "alice-session-1",
+            "user": {"user_id": "alice-user-lf"},
+            "skill_id": "alice.skill.id",
+        },
+        "request": {"command": "закажи молоко"},
+    }
+    response = module.handler(event, None)
+
+    assert response["response"]["text"] == "Готово"
+    assert langfuse_spy.flush_calls == 1
+    assert len(langfuse_spy.trace_calls) == 1
+    assert langfuse_spy.trace_calls[0]["name"] == "alice-order"
+    assert langfuse_spy.trace_calls[0]["user_id"] == "alice-user-lf"
+    assert langfuse_spy.trace_calls[0]["session_id"] == "alice-session-1"
+    assert langfuse_spy.trace_spy.span_spy.end_calls[0]["output"]["ok"] is True
+    assert langfuse_spy.trace_spy.update_calls[0]["metadata"]["ok"] is True
+
+
 def test_cloud_function_http_proxy_response(monkeypatch):
     module = importlib.import_module("vkuswill_bot.alice_skill.handler")
 

@@ -49,6 +49,11 @@ resource "yandex_function" "alice_skill" {
     ALICE_ORDER_RATE_WINDOW_SECONDS     = tostring(var.alice_order_rate_window_seconds)
     ALICE_LINK_CODE_RATE_LIMIT          = tostring(var.alice_link_code_rate_limit)
     ALICE_LINK_CODE_RATE_WINDOW_SECONDS = tostring(var.alice_link_code_rate_window_seconds)
+    ALICE_LANGFUSE_ENABLED              = tostring(var.alice_langfuse_enabled)
+    ALICE_LANGFUSE_PUBLIC_KEY           = var.langfuse_public_key
+    ALICE_LANGFUSE_SECRET_KEY           = var.langfuse_secret_key
+    ALICE_LANGFUSE_HOST                 = var.alice_langfuse_host != "" ? var.alice_langfuse_host : "http://${yandex_compute_instance.bot.network_interface[0].ip_address}:3000"
+    ALICE_LANGFUSE_ANONYMIZE_MESSAGES   = tostring(var.alice_langfuse_anonymize_messages)
     ALICE_REDIS_URL                     = var.alice_function_network_id == "" ? "" : "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
     VOICE_LINK_CODE_TTL_MINUTES         = tostring(var.voice_link_code_ttl_minutes)
     ALICE_DATABASE_URL                  = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
