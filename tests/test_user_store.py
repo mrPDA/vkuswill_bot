@@ -510,6 +510,7 @@ class TestFreemiumCartLimits:
             "carts_created": 2,
             "cart_limit": 5,
             "survey_completed": False,
+            "created_at": datetime.now(UTC) - timedelta(days=20),
         }
 
         result = await s.check_cart_limit(123)
@@ -527,6 +528,7 @@ class TestFreemiumCartLimits:
             "carts_created": 5,
             "cart_limit": 5,
             "survey_completed": False,
+            "created_at": datetime.now(UTC) - timedelta(days=20),
         }
 
         result = await s.check_cart_limit(123)
@@ -542,6 +544,7 @@ class TestFreemiumCartLimits:
             "carts_created": 10,
             "cart_limit": 10,
             "survey_completed": True,
+            "created_at": datetime.now(UTC) - timedelta(days=20),
         }
 
         result = await s.check_cart_limit(123)
@@ -560,6 +563,7 @@ class TestFreemiumCartLimits:
         assert result["allowed"] is True
         assert result["carts_created"] == 0
         assert result["survey_completed"] is False
+        assert result["trial_active"] is True
 
     @pytest.mark.asyncio
     async def test_check_cart_limit_custom_default(self, store):
@@ -572,6 +576,22 @@ class TestFreemiumCartLimits:
         assert result["cart_limit"] == 10
 
     @pytest.mark.asyncio
+    async def test_check_cart_limit_trial_bypasses_limit(self, store):
+        """Во время trial лимит не блокирует создание корзины."""
+        s, conn = store
+        conn.fetchrow.return_value = {
+            "carts_created": 100,
+            "cart_limit": 0,
+            "survey_completed": False,
+            "created_at": datetime.now(UTC) - timedelta(days=2),
+        }
+
+        result = await s.check_cart_limit(123, trial_days=10)
+
+        assert result["allowed"] is True
+        assert result["trial_active"] is True
+
+    @pytest.mark.asyncio
     async def test_increment_carts(self, store):
         """increment_carts увеличивает счётчик на 1."""
         s, conn = store
@@ -579,13 +599,14 @@ class TestFreemiumCartLimits:
             "carts_created": 3,
             "cart_limit": 5,
             "survey_completed": False,
+            "created_at": datetime.now(UTC) - timedelta(days=20),
         }
 
         result = await s.increment_carts(123)
 
         assert result["carts_created"] == 3
         sql = conn.fetchrow.call_args[0][0]
-        assert "carts_created = carts_created + 1" in sql
+        assert "carts_created = CASE" in sql
 
     @pytest.mark.asyncio
     async def test_increment_carts_nonexistent(self, store):
@@ -629,6 +650,38 @@ class TestFreemiumCartLimits:
 
         args = conn.fetchrow.call_args[0]
         assert args[2] == 5  # amount = 5
+
+    @pytest.mark.asyncio
+    async def test_grant_feedback_bonus_if_due_granted(self, store):
+        """grant_feedback_bonus_if_due выдаёт бонус при отсутствии cooldown."""
+        s, conn = store
+        conn.fetchrow.side_effect = [
+            {
+                "cart_limit": 7,
+                "feedback_bonus_granted_at": datetime.now(UTC),
+            },
+        ]
+
+        result = await s.grant_feedback_bonus_if_due(123, amount=2, cooldown_days=30)
+
+        assert result["granted"] is True
+        assert result["new_limit"] == 7
+        sql = conn.fetchrow.call_args[0][0]
+        assert "feedback_bonus_granted_at = NOW()" in sql
+
+    @pytest.mark.asyncio
+    async def test_grant_feedback_bonus_if_due_cooldown(self, store):
+        """grant_feedback_bonus_if_due возвращает cooldown, если рано выдавать."""
+        s, conn = store
+        conn.fetchrow.side_effect = [
+            None,
+            {"feedback_bonus_granted_at": datetime.now(UTC)},
+        ]
+
+        result = await s.grant_feedback_bonus_if_due(123, amount=2, cooldown_days=30)
+
+        assert result["granted"] is False
+        assert result["reason"] == "cooldown"
 
 
 # ---------------------------------------------------------------------------
@@ -705,6 +758,79 @@ class TestFreemiumSurvey:
         assert result["features"] == []
         assert result["feedback_count"] == 0
         assert result["recent_feedback"] == []
+
+
+# ---------------------------------------------------------------------------
+# Тесты: реферальная система
+# ---------------------------------------------------------------------------
+
+
+class TestReferrals:
+    """Тесты referral flow: привязка и deferred бонус."""
+
+    @pytest.mark.asyncio
+    async def test_process_referral_links_user(self, store):
+        """process_referral привязывает пользователя без мгновенного бонуса."""
+        s, conn = store
+        conn.fetchrow.side_effect = [
+            {"referred_by": None},
+            {"user_id": 123},
+        ]
+        conn.fetchval.return_value = 1
+
+        result = await s.process_referral(new_user_id=123, referrer_id=555)
+
+        assert result["success"] is True
+        assert result["reason"] == "linked"
+        assert result["referrer_id"] == 555
+
+    @pytest.mark.asyncio
+    async def test_process_referral_rejects_already_referred(self, store):
+        """process_referral отклоняет повторную привязку."""
+        s, conn = store
+        conn.fetchrow.return_value = {"referred_by": 777}
+
+        result = await s.process_referral(new_user_id=123, referrer_id=555)
+
+        assert result["success"] is False
+        assert result["reason"] == "already_referred"
+
+    @pytest.mark.asyncio
+    async def test_grant_referral_bonus_for_first_cart(self, store):
+        """Бонус рефереру выдаётся после первой успешной корзины друга."""
+        s, conn = store
+        tx = AsyncMock()
+        tx.__aenter__ = AsyncMock(return_value=None)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+        conn.fetchrow.side_effect = [
+            {"referred_by": 555, "referral_bonus_granted_at": None},
+            {"cart_limit": 8},
+        ]
+
+        result = await s.grant_referral_bonus_for_first_cart(123, bonus=3)
+
+        assert result["granted"] is True
+        assert result["referrer_id"] == 555
+        assert result["new_limit"] == 8
+
+    @pytest.mark.asyncio
+    async def test_grant_referral_bonus_already_granted(self, store):
+        """Повторное начисление бонуса не выполняется."""
+        s, conn = store
+        tx = AsyncMock()
+        tx.__aenter__ = AsyncMock(return_value=None)
+        tx.__aexit__ = AsyncMock(return_value=False)
+        conn.transaction = MagicMock(return_value=tx)
+        conn.fetchrow.return_value = {
+            "referred_by": 555,
+            "referral_bonus_granted_at": datetime.now(UTC),
+        }
+
+        result = await s.grant_referral_bonus_for_first_cart(123, bonus=3)
+
+        assert result["granted"] is False
+        assert result["reason"] == "already_granted"
 
 
 # ---------------------------------------------------------------------------
@@ -849,6 +975,8 @@ class TestConstants:
         assert len(sql_files) >= 1, "Нет SQL-миграций в migrations/"
         assert any("001" in f.name for f in sql_files)
         assert any("008" in f.name for f in sql_files)
+        assert any("009" in f.name for f in sql_files)
+        assert any("010" in f.name for f in sql_files)
 
 
 # ---------------------------------------------------------------------------

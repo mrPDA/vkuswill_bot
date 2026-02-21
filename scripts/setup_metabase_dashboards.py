@@ -36,9 +36,9 @@ def api(method: str, path: str, data: dict | None = None) -> dict | list:
     if SESSION_TOKEN:
         headers["X-Metabase-Session"] = SESSION_TOKEN
 
-    req = Request(url, data=body, headers=headers, method=method)
+    req = Request(url, data=body, headers=headers, method=method)  # noqa: S310
     try:
-        with urlopen(req, timeout=30) as resp:
+        with urlopen(req, timeout=30) as resp:  # noqa: S310
             raw = resp.read().decode()
             return json.loads(raw) if raw else {}
     except HTTPError as e:
@@ -207,6 +207,17 @@ ORDER BY date
         "pos": (9, 8, 9, 5),
     },
     {
+        "name": "Freemium-механики — тренд 30 дней",
+        "display": "line",
+        "sql": """
+SELECT date, trial_carts, referral_links, referral_bonuses, feedback_bonuses
+FROM daily_stats
+WHERE date >= CURRENT_DATE - 30
+ORDER BY date
+""",
+        "pos": (0, 13, 9, 5),
+    },
+    {
         "name": "Все метрики (таблица)",
         "display": "table",
         "sql": """
@@ -220,12 +231,16 @@ SELECT date AS "Дата",
        searches AS "Поиски",
        errors AS "Ошибки",
        cart_limits_hit AS "Лимиты",
-       surveys_completed AS "Опросы"
+       surveys_completed AS "Опросы",
+       trial_carts AS "Trial корзины",
+       referral_links AS "Реф. привязки",
+       referral_bonuses AS "Реф. бонусы",
+       feedback_bonuses AS "Feedback бонусы"
 FROM daily_stats
 ORDER BY date DESC
 LIMIT 30
 """,
-        "pos": (0, 13, 18, 6),
+        "pos": (0, 18, 18, 6),
     },
 ]
 
@@ -568,10 +583,26 @@ def setup_dashboards(url: str, email: str, password: str, only: str | None = Non
 
     # Все дашборды
     all_dashboards = {
-        "overview": ("Обзор за день", "Ключевые метрики бота: DAU, корзины, GMV, тренды", CARDS_OVERVIEW),
-        "funnel": ("Воронка конверсий", "Конверсия по этапам: старт → сессия → поиск → корзина", CARDS_FUNNEL),
-        "traffic": ("Источники трафика", "Откуда приходят пользователи и как конвертируются", CARDS_TRAFFIC),
-        "survey": ("Опрос (PMF)", "PMF score, полезные фичи, текстовые отзывы пользователей", CARDS_SURVEY),
+        "overview": (
+            "Обзор за день",
+            "Ключевые метрики бота: DAU, корзины, GMV, тренды",
+            CARDS_OVERVIEW,
+        ),
+        "funnel": (
+            "Воронка конверсий",
+            "Конверсия по этапам: старт → сессия → поиск → корзина",
+            CARDS_FUNNEL,
+        ),
+        "traffic": (
+            "Источники трафика",
+            "Откуда приходят пользователи и как конвертируются",
+            CARDS_TRAFFIC,
+        ),
+        "survey": (
+            "Опрос (PMF)",
+            "PMF score, полезные фичи, текстовые отзывы пользователей",
+            CARDS_SURVEY,
+        ),
     }
 
     # Фильтр: если указан --only, создаём только выбранный дашборд

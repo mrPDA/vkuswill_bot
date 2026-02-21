@@ -134,9 +134,12 @@ class Config(BaseSettings):
     langfuse_anonymize_messages: bool = True  # полностью скрывать текст сообщений (152-ФЗ)
 
     # Freemium лимиты
-    free_cart_limit: int = 5  # Tier 1: бесплатные корзины
-    bonus_cart_limit: int = 5  # Tier 2: бонус за survey
-    referral_cart_bonus: int = 3  # Tier 3: бонус за приглашение друга
+    free_trial_days: int = 10  # пробный период с безлимитными корзинами
+    free_cart_limit: int = 0  # базовый лимит после trial (без бонусов)
+    bonus_cart_limit: int = 5  # Вариант A: бонус за survey
+    referral_cart_bonus: int = 3  # Вариант B: бонус за приглашение друга
+    feedback_cart_bonus: int = 2  # Вариант C: бонус за feedback по корзине
+    feedback_bonus_cooldown_days: int = 30  # частота бонуса за feedback
     voice_link_code_ttl_minutes: int = 10  # TTL одноразового кода привязки Алисы
     voice_link_api_key: str = ""  # API key для /voice-link/* endpoint'ов (вариант 1)
 

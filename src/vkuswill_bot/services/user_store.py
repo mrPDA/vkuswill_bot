@@ -308,51 +308,104 @@ class UserStore:
     async def check_cart_limit(
         self,
         user_id: int,
-        default_limit: int = 5,
+        default_limit: int = 0,
+        trial_days: int = 10,
     ) -> dict[str, Any]:
         """Проверить, может ли пользователь создать корзину.
 
         Args:
             default_limit: лимит по умолчанию, если пользователь не найден.
+            trial_days: длительность trial-периода с безлимитными корзинами.
 
         Returns:
             ``{"allowed": bool, "carts_created": int, "cart_limit": int,
-            "survey_completed": bool}``
+            "survey_completed": bool, "trial_active": bool}``
         """
         await self.ensure_schema()
-        sql = "SELECT carts_created, cart_limit, survey_completed FROM users WHERE user_id = $1"
+        sql = """
+            SELECT carts_created, cart_limit, survey_completed, created_at
+            FROM users
+            WHERE user_id = $1
+        """
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(sql, user_id)
+        now = datetime.now(UTC)
+        safe_trial_days = max(0, trial_days)
         if not row:
+            trial_ends_at = now + timedelta(days=safe_trial_days)
             return {
                 "allowed": True,
                 "carts_created": 0,
                 "cart_limit": default_limit,
                 "survey_completed": False,
+                "trial_active": safe_trial_days > 0,
+                "trial_ends_at": trial_ends_at,
+                "trial_days_left": safe_trial_days,
             }
+
+        created_at = row["created_at"]
+        trial_ends_at = created_at + timedelta(days=safe_trial_days)
+        trial_active = safe_trial_days > 0 and now < trial_ends_at
+        trial_days_left = 0
+        if trial_active:
+            seconds_left = max(0, int((trial_ends_at - now).total_seconds()))
+            trial_days_left = max(1, (seconds_left + 86399) // 86400)
+
         return {
-            "allowed": row["carts_created"] < row["cart_limit"],
+            "allowed": True if trial_active else row["carts_created"] < row["cart_limit"],
             "carts_created": row["carts_created"],
             "cart_limit": row["cart_limit"],
             "survey_completed": bool(row["survey_completed"]),
+            "trial_active": trial_active,
+            "trial_ends_at": trial_ends_at,
+            "trial_days_left": trial_days_left,
         }
 
-    async def increment_carts(self, user_id: int) -> dict[str, Any]:
+    async def increment_carts(
+        self,
+        user_id: int,
+        trial_days: int = 10,
+    ) -> dict[str, Any]:
         """Увеличить счётчик корзин на 1.
 
         Returns:
-            ``{"carts_created": int, "cart_limit": int, "survey_completed": bool}``
+            ``{"carts_created": int, "cart_limit": int, "survey_completed": bool,
+            "trial_active": bool}``
         """
         await self.ensure_schema()
+        safe_trial_days = max(0, trial_days)
         sql = """
             UPDATE users
-            SET carts_created = carts_created + 1, updated_at = NOW()
+            SET carts_created = CASE
+                    WHEN created_at >= NOW() - ($2 * INTERVAL '1 day')
+                    THEN carts_created
+                    ELSE carts_created + 1
+                END,
+                updated_at = NOW()
             WHERE user_id = $1
-            RETURNING carts_created, cart_limit, survey_completed
+            RETURNING carts_created, cart_limit, survey_completed, created_at
         """
         async with self._pool.acquire() as conn:
-            row = await conn.fetchrow(sql, user_id)
-        return dict(row) if row else {}
+            row = await conn.fetchrow(sql, user_id, safe_trial_days)
+        if not row:
+            return {}
+
+        now = datetime.now(UTC)
+        trial_ends_at = row["created_at"] + timedelta(days=safe_trial_days)
+        trial_active = safe_trial_days > 0 and now < trial_ends_at
+        trial_days_left = 0
+        if trial_active:
+            seconds_left = max(0, int((trial_ends_at - now).total_seconds()))
+            trial_days_left = max(1, (seconds_left + 86399) // 86400)
+
+        return {
+            "carts_created": row["carts_created"],
+            "cart_limit": row["cart_limit"],
+            "survey_completed": bool(row["survey_completed"]),
+            "trial_active": trial_active,
+            "trial_ends_at": trial_ends_at,
+            "trial_days_left": trial_days_left,
+        }
 
     async def reset_carts(self, user_id: int) -> dict[str, Any] | None:
         """Сбросить счётчик корзин пользователя до 0.
@@ -366,7 +419,7 @@ class UserStore:
         sql = """
             UPDATE users
             SET carts_created = 0,
-                cart_limit = 5,
+                cart_limit = 0,
                 survey_completed = FALSE,
                 updated_at = NOW()
             WHERE user_id = $1
@@ -392,6 +445,72 @@ class UserStore:
         async with self._pool.acquire() as conn:
             row = await conn.fetchrow(sql, user_id, amount)
         return row["cart_limit"] if row else 0
+
+    async def grant_feedback_bonus_if_due(
+        self,
+        user_id: int,
+        amount: int = 2,
+        cooldown_days: int = 30,
+    ) -> dict[str, Any]:
+        """Выдать бонус за feedback, если истёк cooldown."""
+        await self.ensure_schema()
+        safe_cooldown_days = max(1, cooldown_days)
+        safe_amount = max(0, amount)
+
+        sql = """
+            UPDATE users
+            SET cart_limit = cart_limit + $2,
+                feedback_bonus_granted_at = NOW(),
+                updated_at = NOW()
+            WHERE user_id = $1
+              AND (
+                feedback_bonus_granted_at IS NULL
+                OR feedback_bonus_granted_at <= NOW() - ($3 * INTERVAL '1 day')
+              )
+            RETURNING cart_limit, feedback_bonus_granted_at
+        """
+        async with self._pool.acquire() as conn:
+            row = await conn.fetchrow(
+                sql,
+                user_id,
+                safe_amount,
+                safe_cooldown_days,
+            )
+            if row:
+                return {
+                    "granted": True,
+                    "reason": "ok",
+                    "bonus": safe_amount,
+                    "new_limit": row["cart_limit"],
+                    "granted_at": row["feedback_bonus_granted_at"],
+                }
+
+            user_row = await conn.fetchrow(
+                "SELECT feedback_bonus_granted_at FROM users WHERE user_id = $1",
+                user_id,
+            )
+
+        if user_row is None:
+            return {
+                "granted": False,
+                "reason": "user_not_found",
+                "bonus": safe_amount,
+                "new_limit": 0,
+            }
+
+        last_granted_at = user_row["feedback_bonus_granted_at"]
+        next_bonus_at = None
+        if last_granted_at is not None:
+            next_bonus_at = last_granted_at + timedelta(days=safe_cooldown_days)
+
+        return {
+            "granted": False,
+            "reason": "cooldown",
+            "bonus": safe_amount,
+            "new_limit": 0,
+            "last_granted_at": last_granted_at,
+            "next_bonus_at": next_bonus_at,
+        }
 
     async def mark_survey_completed(self, user_id: int) -> None:
         """Пометить, что пользователь заполнил survey."""
@@ -588,17 +707,17 @@ class UserStore:
         self,
         new_user_id: int,
         referrer_id: int,
-        bonus: int = 3,
+        _bonus: int | None = None,
     ) -> dict[str, Any]:
-        """Обработать реферал: привязать нового пользователя и начислить бонус.
+        """Обработать реферал: привязать нового пользователя к рефереру.
 
         Проверки:
         - Нельзя пригласить самого себя.
         - Нельзя привязаться повторно (``referred_by`` уже установлен).
-        - Реферер должен существовать.
+        - Реферер и новый пользователь должны существовать.
 
         Returns:
-            ``{"success": bool, "reason": str, "bonus": int, "new_limit": int}``
+            ``{"success": bool, "reason": str, "referrer_id": int}``
         """
         await self.ensure_schema()
 
@@ -614,28 +733,91 @@ class UserStore:
             if row and row["referred_by"] is not None:
                 return {"success": False, "reason": "already_referred"}
 
-            # Привязываем реферера
-            await conn.execute(
-                "UPDATE users SET referred_by = $2, updated_at = NOW() WHERE user_id = $1",
+            # Проверяем, что реферер существует
+            referrer_exists = await conn.fetchval(
+                "SELECT 1 FROM users WHERE user_id = $1",
+                referrer_id,
+            )
+            if not referrer_exists:
+                return {"success": False, "reason": "referrer_not_found"}
+
+            # Привязываем реферера к пользователю
+            linked = await conn.fetchrow(
+                "UPDATE users SET referred_by = $2, updated_at = NOW() "
+                "WHERE user_id = $1 RETURNING user_id",
                 new_user_id,
                 referrer_id,
             )
+            if linked is None:
+                return {"success": False, "reason": "new_user_not_found"}
 
-            # Начисляем бонус рефереру
-            row = await conn.fetchrow(
-                "UPDATE users SET cart_limit = cart_limit + $2, updated_at = NOW() "
-                "WHERE user_id = $1 RETURNING cart_limit",
-                referrer_id,
-                bonus,
+        return {"success": True, "reason": "linked", "referrer_id": referrer_id}
+
+    async def grant_referral_bonus_for_first_cart(
+        self,
+        referred_user_id: int,
+        bonus: int = 3,
+    ) -> dict[str, Any]:
+        """Начислить бонус рефереру после первой успешной корзины друга.
+
+        Бонус выдаётся один раз на приглашённого пользователя.
+        """
+        await self.ensure_schema()
+        safe_bonus = max(0, bonus)
+
+        async with self._pool.acquire() as conn, conn.transaction():
+            referral_row = await conn.fetchrow(
+                """
+                SELECT referred_by, referral_bonus_granted_at
+                FROM users
+                WHERE user_id = $1
+                FOR UPDATE
+                """,
+                referred_user_id,
             )
-            new_limit = row["cart_limit"] if row else 0
+            if referral_row is None:
+                return {"granted": False, "reason": "user_not_found"}
 
-        return {
-            "success": True,
-            "reason": "ok",
-            "bonus": bonus,
-            "new_limit": new_limit,
-        }
+            referrer_id = referral_row["referred_by"]
+            if referrer_id is None:
+                return {"granted": False, "reason": "not_referred"}
+
+            if referral_row["referral_bonus_granted_at"] is not None:
+                return {
+                    "granted": False,
+                    "reason": "already_granted",
+                    "referrer_id": referrer_id,
+                }
+
+            referrer_row = await conn.fetchrow(
+                """
+                UPDATE users
+                SET cart_limit = cart_limit + $2, updated_at = NOW()
+                WHERE user_id = $1
+                RETURNING cart_limit
+                """,
+                referrer_id,
+                safe_bonus,
+            )
+            if referrer_row is None:
+                return {"granted": False, "reason": "referrer_not_found"}
+
+            await conn.execute(
+                """
+                UPDATE users
+                SET referral_bonus_granted_at = NOW(), updated_at = NOW()
+                WHERE user_id = $1
+                """,
+                referred_user_id,
+            )
+
+            return {
+                "granted": True,
+                "reason": "ok",
+                "referrer_id": referrer_id,
+                "bonus": safe_bonus,
+                "new_limit": referrer_row["cart_limit"],
+            }
 
     async def count_referrals(self, user_id: int) -> int:
         """Количество пользователей, приглашённых данным пользователем."""

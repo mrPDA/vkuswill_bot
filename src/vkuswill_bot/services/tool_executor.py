@@ -314,10 +314,14 @@ class ToolExecutor:
         # --- Freemium: проверка лимита корзин ---
         if tool_name == "vkusvill_cart_link_create" and self._user_store is not None:
             try:
-                limit_info = await self._user_store.check_cart_limit(user_id)
-                if not limit_info["allowed"]:
-                    from vkuswill_bot.config import config as app_config
+                from vkuswill_bot.config import config as app_config
 
+                limit_info = await self._user_store.check_cart_limit(
+                    user_id,
+                    default_limit=app_config.free_cart_limit,
+                    trial_days=app_config.free_trial_days,
+                )
+                if not limit_info["allowed"]:
                     survey_done = limit_info.get("survey_completed", False)
 
                     # Логируем событие cart_limit_reached
@@ -329,34 +333,29 @@ class ToolExecutor:
                                 "carts_used": limit_info["carts_created"],
                                 "cart_limit": limit_info["cart_limit"],
                                 "survey_completed": survey_done,
-                                "tier": (
-                                    2
-                                    if limit_info["cart_limit"] > app_config.free_cart_limit
-                                    else 1
-                                ),
+                                "trial_active": bool(limit_info.get("trial_active")),
                             },
                         )
                     except Exception:
                         logger.debug("Ошибка логирования cart_limit_reached")
 
-                    # Дифференцированное сообщение: tier 1 vs tier 2
-                    if survey_done:
-                        limit_message = (
-                            f"Пользователь использовал все "
-                            f"{limit_info['cart_limit']} корзин. "
-                            "Опрос уже пройден. "
-                            "Предложи пользователю пригласить друга "
-                            "командой /invite — за каждого друга "
-                            f"+{app_config.referral_cart_bonus} корзины."
+                    survey_text = (
+                        "Опрос уже пройден. "
+                        if survey_done
+                        else (
+                            f"/survey — +{app_config.bonus_cart_limit} корзин сразу. "
                         )
-                    else:
-                        limit_message = (
-                            f"Вы использовали все "
-                            f"{limit_info['cart_limit']} бесплатных корзин. "
-                            "Заполните короткий опрос /survey — "
-                            f"и получите ещё {app_config.bonus_cart_limit} "
-                            "корзин в подарок!"
-                        )
+                    )
+                    limit_message = (
+                        "Лимит корзин после пробного периода исчерпан. "
+                        f"{survey_text}"
+                        "/invite — +"
+                        f"{app_config.referral_cart_bonus} корзины за каждого друга "
+                        "после его первой успешной корзины. "
+                        "Оставьте оценку готовой корзины в кнопках под ответом бота — "
+                        f"+{app_config.feedback_cart_bonus} корзины "
+                        f"(не чаще 1 раза в {app_config.feedback_bonus_cooldown_days} дней)."
+                    )
 
                     return json.dumps(
                         {
@@ -365,6 +364,7 @@ class ToolExecutor:
                             "carts_created": limit_info["carts_created"],
                             "cart_limit": limit_info["cart_limit"],
                             "survey_completed": survey_done,
+                            "trial_active": bool(limit_info.get("trial_active")),
                         },
                         ensure_ascii=False,
                     )
@@ -540,11 +540,32 @@ class ToolExecutor:
 
             from vkuswill_bot.config import config as _cfg
 
-            cart_info = await self._user_store.increment_carts(user_id)
+            cart_info = await self._user_store.increment_carts(
+                user_id,
+                trial_days=_cfg.free_trial_days,
+            )
             carts = cart_info.get("carts_created", 0)
             limit = cart_info.get("cart_limit", _cfg.free_cart_limit)
-            remaining = limit - carts
+            trial_active = bool(cart_info.get("trial_active"))
+            trial_days_left = int(cart_info.get("trial_days_left", 0))
+            trial_ends_at = cart_info.get("trial_ends_at")
+            remaining = max(0, limit - carts) if not trial_active else None
             survey_done = cart_info.get("survey_completed", False)
+
+            referral_bonus = await self._user_store.grant_referral_bonus_for_first_cart(
+                user_id,
+                _cfg.referral_cart_bonus,
+            )
+            if isinstance(referral_bonus, dict) and referral_bonus.get("granted"):
+                await self._user_store.log_event(
+                    int(referral_bonus["referrer_id"]),
+                    "referral_bonus_granted",
+                    {
+                        "referred_user_id": user_id,
+                        "bonus": int(referral_bonus["bonus"]),
+                        "new_limit": int(referral_bonus["new_limit"]),
+                    },
+                )
 
             await self._user_store.log_event(
                 user_id,
@@ -552,6 +573,7 @@ class ToolExecutor:
                 {
                     "cart_number": carts,
                     "cart_limit": limit,
+                    "trial_active": trial_active,
                     "items_count": len(args.get("products", [])),
                     "total_sum": total_sum,
                 },
@@ -559,31 +581,46 @@ class ToolExecutor:
 
             # Встраиваем хинт ВНУТРЬ JSON-структуры (поле data.freemium),
             # чтобы результат оставался валидным JSON для GigaChat API.
-            hint_text = f"Корзина {carts} из {limit}."
-            if remaining == 0:
-                if survey_done:
+            if trial_active:
+                hint_text = (
+                    "Пробный период активен: корзины пока без ограничений."
+                    f" До конца trial примерно {trial_days_left} дн."
+                )
+            else:
+                hint_text = f"Корзина {carts} из {limit}."
+                if remaining == 0:
+                    survey_hint = (
+                        ""
+                        if survey_done
+                        else (
+                            " Предложи пользователю команду /survey"
+                            f" для получения +{_cfg.bonus_cart_limit} корзин."
+                        )
+                    )
                     hint_text += (
                         " Лимит корзин исчерпан."
-                        " Предложи пользователю команду /invite"
-                        " для приглашения друга и получения"
-                        " дополнительных корзин."
+                        f"{survey_hint}"
+                        " Предложи /invite для бонуса за приглашение друзей"
+                        f" (+{_cfg.referral_cart_bonus} за друга после первой корзины)."
+                        " Также предложи оценить качество корзины кнопками в сообщении"
+                        f" (+{_cfg.feedback_cart_bonus}, раз в"
+                        f" {_cfg.feedback_bonus_cooldown_days} дней)."
                     )
-                else:
-                    hint_text += (
-                        " Лимит корзин исчерпан."
-                        " Предложи пользователю команду /survey"
-                        " для получения дополнительных корзин."
-                    )
-            elif remaining <= 2:
-                hint_text += f" Осталось {remaining} бесплатных корзин."
+                elif remaining <= 2:
+                    hint_text += f" Осталось {remaining} корзины."
 
             if parsed is not None and isinstance(parsed.get("data"), dict):
-                parsed["data"]["freemium"] = {
+                freemium_data: dict[str, Any] = {
                     "cart_number": carts,
                     "cart_limit": limit,
                     "remaining": remaining,
+                    "trial_active": trial_active,
+                    "trial_days_left": trial_days_left if trial_active else 0,
                     "hint": hint_text,
                 }
+                if trial_active and trial_ends_at is not None:
+                    freemium_data["trial_ends_at"] = trial_ends_at.isoformat()
+                parsed["data"]["freemium"] = freemium_data
                 return json.dumps(parsed, ensure_ascii=False, indent=4)
 
             return result
