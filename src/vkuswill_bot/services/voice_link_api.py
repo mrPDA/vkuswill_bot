@@ -13,14 +13,15 @@ from typing import TYPE_CHECKING, Any
 from aiohttp import web
 
 if TYPE_CHECKING:
-    from vkuswill_bot.services.gigachat_service import GigaChatService
+    from vkuswill_bot.services.chat_engine import ChatEngineProtocol
     from vkuswill_bot.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
 
 _APP_KEY = "voice_link_api_key"
 _APP_STORE = "voice_link_user_store"
-_APP_CHAT_SERVICE = "voice_link_gigachat_service"
+# Сохраняем историческое имя ключа для обратной совместимости.
+_APP_CHAT_ENGINE = "voice_link_gigachat_service"
 _APP_ORDER_JOBS = "voice_link_order_jobs"
 _APP_ORDER_LATEST = "voice_link_order_latest"
 _APP_ORDER_TASKS = "voice_link_order_tasks"
@@ -52,12 +53,12 @@ def register_voice_link_routes(
     app: web.Application,
     *,
     user_store: UserStore | None,
-    gigachat_service: GigaChatService | None = None,
+    chat_engine: ChatEngineProtocol | None = None,
     api_key: str,
 ) -> None:
     """Зарегистрировать маршруты voice-link API."""
     app[_APP_STORE] = user_store
-    app[_APP_CHAT_SERVICE] = gigachat_service
+    app[_APP_CHAT_ENGINE] = chat_engine
     app[_APP_KEY] = api_key
     _ensure_job_storage(app)
     app.router.add_post("/voice-link/consume", _consume_handler)
@@ -200,8 +201,8 @@ async def _run_order_job(app: MutableMapping[str, Any], job_id: str) -> None:
     if job is None:
         return
 
-    gigachat_service: GigaChatService | None = app.get(_APP_CHAT_SERVICE)
-    if gigachat_service is None:
+    chat_engine: ChatEngineProtocol | None = app.get(_APP_CHAT_ENGINE)
+    if chat_engine is None:
         job.status = "failed"
         job.error = "unavailable"
         job.assistant_text = "Сервис сборки корзины временно недоступен."
@@ -211,7 +212,7 @@ async def _run_order_job(app: MutableMapping[str, Any], job_id: str) -> None:
 
     try:
         order_result = await _execute_order_request(
-            gigachat_service=gigachat_service,
+            chat_engine=chat_engine,
             user_id=job.user_id,
             utterance=job.utterance,
             voice_user_id=job.voice_user_id,
@@ -339,15 +340,15 @@ async def _resolve_handler(request: web.Request) -> web.Response:
 
 async def _execute_order_request(
     *,
-    gigachat_service: GigaChatService,
+    chat_engine: ChatEngineProtocol,
     user_id: int,
     utterance: str,
     voice_user_id: str,
 ) -> dict[str, Any]:
-    before_snapshot = await gigachat_service.get_last_cart_snapshot(user_id)
+    before_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
     before_signature = _snapshot_signature(before_snapshot)
     try:
-        assistant_text = await gigachat_service.process_message(user_id=user_id, text=utterance)
+        assistant_text = await chat_engine.process_message(user_id=user_id, text=utterance)
     except Exception:
         logger.exception(
             "voice-order failed: user_id=%s voice_user_id=%s",
@@ -363,7 +364,7 @@ async def _execute_order_request(
             "items_count": 0,
         }
 
-    after_snapshot = await gigachat_service.get_last_cart_snapshot(user_id)
+    after_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
     after_signature = _snapshot_signature(after_snapshot)
     cart_link = (
         after_snapshot.get("link")
@@ -395,8 +396,8 @@ async def _order_handler(request: web.Request) -> web.Response:
     if not _is_authorized(request):
         return _json_error(401, "unauthorized", "Invalid API key")
 
-    gigachat_service: GigaChatService | None = request.app.get(_APP_CHAT_SERVICE)
-    if gigachat_service is None:
+    chat_engine: ChatEngineProtocol | None = request.app.get(_APP_CHAT_ENGINE)
+    if chat_engine is None:
         return _json_error(503, "unavailable", "Voice order processing unavailable")
 
     payload = await _parse_json(request)
@@ -412,7 +413,7 @@ async def _order_handler(request: web.Request) -> web.Response:
         return _json_error(400, "invalid_input", "utterance is too long")
 
     result = await _execute_order_request(
-        gigachat_service=gigachat_service,
+        chat_engine=chat_engine,
         user_id=user_id,
         utterance=utterance,
         voice_user_id=voice_user_id,
@@ -426,8 +427,8 @@ async def _order_start_handler(request: web.Request) -> web.Response:
     if not _is_authorized(request):
         return _json_error(401, "unauthorized", "Invalid API key")
 
-    gigachat_service: GigaChatService | None = request.app.get(_APP_CHAT_SERVICE)
-    if gigachat_service is None:
+    chat_engine: ChatEngineProtocol | None = request.app.get(_APP_CHAT_ENGINE)
+    if chat_engine is None:
         return _json_error(503, "unavailable", "Voice order processing unavailable")
 
     payload = await _parse_json(request)
@@ -442,7 +443,7 @@ async def _order_start_handler(request: web.Request) -> web.Response:
     if len(utterance) > 512:
         return _json_error(400, "invalid_input", "utterance is too long")
 
-    del gigachat_service  # actual service is resolved in background task
+    del chat_engine  # actual service is resolved in background task
     _ensure_job_storage(request.app)
     _prune_order_jobs(request.app)
     jobs: dict[str, _OrderJob] = request.app[_APP_ORDER_JOBS]
