@@ -136,6 +136,12 @@ class ToolExecutor:
         """Доступен ли локальный recipe_search."""
         return self._recipe_search_service is not None
 
+    async def get_last_cart_snapshot(self, user_id: int) -> dict[str, Any] | None:
+        """Получить последний снимок корзины пользователя."""
+        if self._cart_snapshot_store is None:
+            return None
+        return await self._cart_snapshot_store.get(user_id)
+
     # ---- Парсинг аргументов ----
 
     @staticmethod

@@ -427,6 +427,7 @@ async def main() -> None:
             pg_pool=pg_pool,
             mcp_client=mcp_client,
             user_store=user_store,
+            gigachat_service=gigachat_service,
             cleanup=_cleanup,
         )
     else:
@@ -488,6 +489,7 @@ async def _run_webhook(
     pg_pool: asyncpg.Pool | None,
     mcp_client: VkusvillMCPClient,
     user_store: UserStore | None,
+    gigachat_service: GigaChatService,
     cleanup: object,
 ) -> None:
     """Запуск бота в режиме webhook через aiohttp."""
@@ -508,6 +510,7 @@ async def _run_webhook(
     register_voice_link_routes(
         app,
         user_store=user_store,
+        gigachat_service=gigachat_service,
         api_key=config.voice_link_api_key,
     )
 

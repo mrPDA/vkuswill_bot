@@ -266,6 +266,10 @@ class GigaChatService:
         except Exception as e:
             logger.debug("Ошибка при закрытии GigaChat клиента: %s", e)
 
+    async def get_last_cart_snapshot(self, user_id: int) -> dict[str, Any] | None:
+        """Получить последний снимок корзины пользователя."""
+        return await self._tool_executor.get_last_cart_snapshot(user_id)
+
     async def process_message(
         self,
         user_id: int,
