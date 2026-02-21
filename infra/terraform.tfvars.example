@@ -49,6 +49,9 @@ alice_link_api_timeout_seconds  = 5
 alice_link_api_verify_ssl       = true
 alice_idempotency_ttl_seconds   = 90
 alice_db_connect_timeout_seconds = 3
+alice_langfuse_enabled          = true
+alice_langfuse_host             = "" # empty -> auto http://<VM_INTERNAL_IP>:3000
+alice_langfuse_anonymize_messages = true
 alice_degrade_to_guest_on_db_error = false
 voice_link_code_ttl_minutes     = 10
 
@@ -57,3 +60,5 @@ voice_link_code_ttl_minutes     = 10
 langfuse_pg_password      = "CHANGE_ME_strong_password_here"
 langfuse_nextauth_secret  = "CHANGE_ME_openssl_rand_base64_32"
 langfuse_salt             = "CHANGE_ME_openssl_rand_base64_32"
+langfuse_public_key       = "pk-lf-CHANGE_ME"
+langfuse_secret_key       = "sk-lf-CHANGE_ME"

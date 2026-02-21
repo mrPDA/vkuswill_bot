@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from dataclasses import dataclass
+from dataclasses import field
 from typing import Any
 
 try:
@@ -36,6 +37,7 @@ from vkuswill_bot.alice_skill.models import VoiceOrderResult
 from vkuswill_bot.alice_skill.orchestrator import AliceOrderOrchestrator
 from vkuswill_bot.alice_skill.rate_limit import InMemoryRateLimiter
 from vkuswill_bot.alice_skill.rate_limit import RedisRateLimiter
+from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 
 try:
@@ -56,6 +58,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class _Runtime:
     orchestrator: AliceOrderOrchestrator
+    langfuse: LangfuseService = field(default_factory=lambda: LangfuseService(enabled=False))
 
 
 def _parse_bool_env(name: str, default: bool) -> bool:
@@ -142,6 +145,26 @@ async def _get_runtime() -> _Runtime:
     )
     max_utterance_chars = _parse_int_env("ALICE_MAX_UTTERANCE_CHARS", default=512)
     max_products_per_order = _parse_int_env("ALICE_MAX_PRODUCTS_PER_ORDER", default=20)
+    langfuse_enabled = _parse_bool_env(
+        "ALICE_LANGFUSE_ENABLED",
+        default=_parse_bool_env("LANGFUSE_ENABLED", default=False),
+    )
+    langfuse_public_key = os.getenv("ALICE_LANGFUSE_PUBLIC_KEY") or os.getenv(
+        "LANGFUSE_PUBLIC_KEY",
+        "",
+    )
+    langfuse_secret_key = os.getenv("ALICE_LANGFUSE_SECRET_KEY") or os.getenv(
+        "LANGFUSE_SECRET_KEY",
+        "",
+    )
+    langfuse_host = os.getenv("ALICE_LANGFUSE_HOST") or os.getenv(
+        "LANGFUSE_HOST",
+        "https://cloud.langfuse.com",
+    )
+    langfuse_anonymize_messages = _parse_bool_env(
+        "ALICE_LANGFUSE_ANONYMIZE_MESSAGES",
+        default=_parse_bool_env("LANGFUSE_ANONYMIZE_MESSAGES", default=True),
+    )
     redis_url = (os.getenv("ALICE_REDIS_URL", "") or os.getenv("REDIS_URL", "")).strip()
     db_connect_timeout = _parse_float_env("ALICE_DB_CONNECT_TIMEOUT_SECONDS", default=3.0)
     link_api_timeout = _parse_float_env("ALICE_LINK_API_TIMEOUT_SECONDS", default=5.0)
@@ -266,7 +289,16 @@ async def _get_runtime() -> _Runtime:
         link_code_rate_limit=link_code_rate_limit,
         link_code_rate_window_seconds=link_code_rate_window_seconds,
     )
-    _RUNTIME = _Runtime(orchestrator=orchestrator)
+    _RUNTIME = _Runtime(
+        orchestrator=orchestrator,
+        langfuse=LangfuseService(
+            enabled=langfuse_enabled,
+            public_key=langfuse_public_key,
+            secret_key=langfuse_secret_key,
+            host=langfuse_host,
+            anonymize_messages=langfuse_anonymize_messages,
+        ),
+    )
     return _RUNTIME
 
 
@@ -287,6 +319,26 @@ def _extract_voice_user_id(event: dict[str, Any]) -> str:
         return "anonymous"
     user_id = user.get("user_id")
     return str(user_id) if user_id is not None else "anonymous"
+
+
+def _extract_session_id(event: dict[str, Any]) -> str | None:
+    session = event.get("session", {})
+    if not isinstance(session, dict):
+        return None
+    raw = session.get("session_id")
+    if raw is None:
+        return None
+    return str(raw)
+
+
+def _extract_skill_id(event: dict[str, Any]) -> str | None:
+    session = event.get("session", {})
+    if not isinstance(session, dict):
+        return None
+    raw = session.get("skill_id")
+    if raw is None:
+        return None
+    return str(raw)
 
 
 def _to_alice_response(event: dict[str, Any], result: VoiceOrderResult) -> dict[str, Any]:
@@ -385,8 +437,33 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
     runtime = await _get_runtime()
     utterance = _extract_utterance(event)
     voice_user_id = _extract_voice_user_id(event)
+    trace = runtime.langfuse.trace(
+        name="alice-order",
+        user_id=voice_user_id,
+        session_id=_extract_session_id(event),
+        input=utterance,
+        metadata={
+            "channel": "alice",
+            "skill_id": _extract_skill_id(event),
+            "utterance_len": len(utterance),
+        },
+        tags=["alice", "voice-order"],
+    )
+    orchestration_span = trace.span(
+        name="alice-orchestrator",
+        input={"utterance_len": len(utterance)},
+    )
 
     if not utterance.strip():
+        orchestration_span.end(
+            output={"ok": False, "reason": "empty_utterance"},
+            metadata={"error_code": "empty_utterance"},
+        )
+        trace.update(
+            output="Привет! Скажите, что добавить в корзину.",
+            metadata={"result": "empty_utterance"},
+        )
+        runtime.langfuse.flush()
         return {
             "version": event.get("version", "1.0"),
             "session": event.get("session", {}),
@@ -398,10 +475,49 @@ async def _handle_async(event: dict[str, Any]) -> dict[str, Any]:
             },
         }
 
-    result = await runtime.orchestrator.create_order_from_utterance(
-        voice_user_id=voice_user_id,
-        utterance=utterance,
+    try:
+        result = await runtime.orchestrator.create_order_from_utterance(
+            voice_user_id=voice_user_id,
+            utterance=utterance,
+        )
+    except Exception as exc:
+        orchestration_span.end(
+            output={"ok": False},
+            metadata={"status": "error", "exception": str(exc)},
+            level="ERROR",
+            status_message="alice_orchestrator_failed",
+        )
+        trace.update(
+            output="internal_error",
+            metadata={"status": "error", "exception": str(exc)},
+        )
+        runtime.langfuse.flush()
+        raise
+
+    orchestration_span.end(
+        output={
+            "ok": result.ok,
+            "items_count": result.items_count,
+            "total_rub": result.total_rub,
+            "cart_link_present": bool(result.cart_link),
+            "error_code": result.error_code,
+        },
+        metadata={
+            "delivery_status": result.delivery.status if result.delivery else None,
+            "requires_linking": result.requires_linking,
+        },
     )
+    trace.update(
+        output=result.voice_text,
+        metadata={
+            "ok": result.ok,
+            "items_count": result.items_count,
+            "total_rub": result.total_rub,
+            "cart_link_present": bool(result.cart_link),
+            "error_code": result.error_code,
+        },
+    )
+    runtime.langfuse.flush()
     return _to_alice_response(event, result)
 
 
