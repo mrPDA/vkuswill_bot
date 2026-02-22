@@ -73,6 +73,25 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Validate required staging secrets
+        env:
+          _VM_HOST_STG: ${{ secrets.VM_HOST_STG }}
+          _VM_SSH_KEY_STG: ${{ secrets.VM_SSH_KEY_STG }}
+          _LOCKBOX_SECRET_ID_STG: ${{ secrets.LOCKBOX_SECRET_ID_STG }}
+          _YC_CR_REGISTRY_ID: ${{ secrets.YC_CR_REGISTRY_ID }}
+          _YC_CR_KEY_SECRET: ${{ secrets.YC_CR_KEY_SECRET }}
+        run: |
+          MISSING=0
+          for name in _VM_HOST_STG _VM_SSH_KEY_STG _LOCKBOX_SECRET_ID_STG _YC_CR_REGISTRY_ID _YC_CR_KEY_SECRET; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Required secret is empty: ${name#_}"
+              MISSING=1
+            fi
+          done
+          if [ "$MISSING" -ne 0 ]; then
+            exit 1
+          fi
+
       - name: Validate staging deploy guard
         run: |
           bash scripts/check_staging_deploy_guard.sh
