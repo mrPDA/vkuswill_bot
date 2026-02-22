@@ -22,10 +22,13 @@ IMAGE=""
 TAG=""
 LOCKBOX_SECRET_ID=""
 GIGACHAT_MODEL_OVERRIDE=""
-CONTAINER_NAME="vkuswill-bot"
-MCP_CONTAINER_NAME="vkuswill-mcp-server"
-HEALTH_PORT=8080
-MCP_DEFAULT_PORT=8081
+DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/vkuswill-bot}"
+CONTAINER_NAME="${CONTAINER_NAME:-vkuswill-bot}"
+MCP_CONTAINER_NAME="${MCP_CONTAINER_NAME:-vkuswill-mcp-server}"
+LANGFUSE_CONTAINER_NAME="${LANGFUSE_CONTAINER_NAME:-vkuswill-langfuse}"
+METABASE_CONTAINER_NAME="${METABASE_CONTAINER_NAME:-vkuswill-metabase}"
+HEALTH_PORT="${HEALTH_PORT:-8080}"
+MCP_DEFAULT_PORT="${MCP_DEFAULT_PORT:-8081}"
 HEALTH_RETRIES=10
 HEALTH_DELAY=5
 
@@ -47,6 +50,11 @@ fi
 log() { echo -e "${GREEN}[deploy]${NC} $*"; }
 warn() { echo -e "${YELLOW}[deploy]${NC} $*"; }
 err() { echo -e "${RED}[deploy]${NC} $*"; }
+
+ENV_FILE="${DEPLOY_ROOT}/.env"
+PROMPT_FILE="${DEPLOY_ROOT}/system_prompt.txt"
+DATA_DIR="${DEPLOY_ROOT}/data"
+SSL_DIR="${DEPLOY_ROOT}/ssl"
 
 # ─── 0. Установка yc CLI (если отсутствует) ────────────────────
 ensure_yc_cli() {
@@ -113,7 +121,6 @@ load_lockbox_secrets() {
 
   log "Загрузка секретов из Lockbox: ${LOCKBOX_SECRET_ID}..."
 
-  local ENV_FILE="/opt/vkuswill-bot/.env"
   local LOCKBOX_JSON
 
   # Получаем все payload entries
@@ -131,7 +138,6 @@ load_lockbox_secrets() {
 
   # Lockbox — основной источник секретов, перезаписывает .env
   # SYSTEM_PROMPT сохраняется в отдельный файл (Docker --env-file не поддерживает многострочные значения)
-  PROMPT_FILE="/opt/vkuswill-bot/system_prompt.txt"
   echo "$LOCKBOX_JSON" | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -260,8 +266,6 @@ ensure_voice_link_nginx_route
 
 # ─── 6b. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
-  local LANGFUSE_NAME="vkuswill-langfuse"
-  local ENV_FILE="/opt/vkuswill-bot/.env"
 
   # Проверяем, включён ли Langfuse
   if [[ ! -f "$ENV_FILE" ]] || ! grep -q '^LANGFUSE_ENABLED=true' "$ENV_FILE"; then
@@ -303,13 +307,13 @@ else:
   docker pull langfuse/langfuse:2 2>/dev/null || true
 
   # Остановить предыдущий контейнер
-  if docker ps -q -f "name=${LANGFUSE_NAME}" | grep -q .; then
-    docker stop "$LANGFUSE_NAME" --time 10 2>/dev/null || true
-    docker rm "$LANGFUSE_NAME" 2>/dev/null || true
+  if docker ps -q -f "name=${LANGFUSE_CONTAINER_NAME}" | grep -q .; then
+    docker stop "$LANGFUSE_CONTAINER_NAME" --time 10 2>/dev/null || true
+    docker rm "$LANGFUSE_CONTAINER_NAME" 2>/dev/null || true
   fi
 
   docker run -d \
-    --name "$LANGFUSE_NAME" \
+    --name "$LANGFUSE_CONTAINER_NAME" \
     --restart unless-stopped \
     --network host \
     -e "DATABASE_URL=${LF_DB_URL}" \
@@ -327,11 +331,11 @@ else:
 
   # Подождать и проверить, что контейнер жив
   sleep 5
-  if docker ps -q -f "name=${LANGFUSE_NAME}" | grep -q .; then
+  if docker ps -q -f "name=${LANGFUSE_CONTAINER_NAME}" | grep -q .; then
     log "Langfuse запущен на порту 3000"
   else
     warn "Langfuse контейнер упал! Логи:"
-    docker logs "$LANGFUSE_NAME" --tail 30 2>&1 || true
+    docker logs "$LANGFUSE_CONTAINER_NAME" --tail 30 2>&1 || true
   fi
 }
 
@@ -339,8 +343,6 @@ deploy_langfuse
 
 # ─── 6c. Запуск Metabase (BI-дашборды, если настроен) ────────
 deploy_metabase() {
-  local METABASE_NAME="vkuswill-metabase"
-  local ENV_FILE="/opt/vkuswill-bot/.env"
 
   # Проверяем, включён ли Metabase
   if [[ ! -f "$ENV_FILE" ]] || ! grep -q '^METABASE_ENABLED=true' "$ENV_FILE"; then
@@ -374,15 +376,15 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
   docker pull metabase/metabase:v0.58.x 2>/dev/null || true
 
   # Остановить предыдущий контейнер
-  if docker ps -q -f "name=${METABASE_NAME}" | grep -q .; then
-    docker stop "$METABASE_NAME" --time 10 2>/dev/null || true
-    docker rm "$METABASE_NAME" 2>/dev/null || true
-  elif docker ps -aq -f "name=${METABASE_NAME}" | grep -q .; then
-    docker rm "$METABASE_NAME" 2>/dev/null || true
+  if docker ps -q -f "name=${METABASE_CONTAINER_NAME}" | grep -q .; then
+    docker stop "$METABASE_CONTAINER_NAME" --time 10 2>/dev/null || true
+    docker rm "$METABASE_CONTAINER_NAME" 2>/dev/null || true
+  elif docker ps -aq -f "name=${METABASE_CONTAINER_NAME}" | grep -q .; then
+    docker rm "$METABASE_CONTAINER_NAME" 2>/dev/null || true
   fi
 
   docker run -d \
-    --name "$METABASE_NAME" \
+    --name "$METABASE_CONTAINER_NAME" \
     --restart unless-stopped \
     --network host \
     -e "MB_DB_TYPE=postgres" \
@@ -403,11 +405,11 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
 
   # Подождать и проверить, что контейнер жив
   sleep 5
-  if docker ps -q -f "name=${METABASE_NAME}" | grep -q .; then
+  if docker ps -q -f "name=${METABASE_CONTAINER_NAME}" | grep -q .; then
     log "Metabase запущен на порту 3001"
   else
     warn "Metabase контейнер упал! Логи:"
-    docker logs "$METABASE_NAME" --tail 30 2>&1 || true
+    docker logs "$METABASE_CONTAINER_NAME" --tail 30 2>&1 || true
   fi
 }
 
@@ -416,7 +418,6 @@ deploy_metabase
 # ─── 7. Запуск нового контейнера ────────────────────────────
 log "Запуск контейнера ${CONTAINER_NAME} (${TAG})..."
 
-ENV_FILE="/opt/vkuswill-bot/.env"
 ENV_FLAG=""
 if [[ -f "$ENV_FILE" ]]; then
   ENV_FLAG="--env-file ${ENV_FILE}"
@@ -450,7 +451,6 @@ fi
 log "MCP_SERVER_ENABLED=${MCP_ENABLED}, MCP_SERVER_PORT=${MCP_PORT}"
 
 # Директория для persistent-данных (SQLite preferences)
-DATA_DIR="/opt/vkuswill-bot/data"
 mkdir -p "$DATA_DIR"
 # botuser в контейнере имеет UID/GID 10001 (Dockerfile)
 # Даём права только владельцу и группе — НЕ world-writable
@@ -462,7 +462,6 @@ log "DATA_DIR=${DATA_DIR} — права: $(ls -ld "$DATA_DIR")"
 log "Файлы в DATA_DIR: $(ls -la "$DATA_DIR/" 2>/dev/null || echo '(пусто)')"
 
 # SSL-сертификат для самоподписанного webhook
-SSL_DIR="/opt/vkuswill-bot/ssl"
 SSL_MOUNT=""
 SSL_ENV=""
 if [[ -f "${SSL_DIR}/cert.pem" ]]; then
@@ -482,7 +481,6 @@ fi
 
 # SYSTEM_PROMPT хранится в отдельном файле (Docker --env-file не поддерживает многострочные значения)
 # Экспортируем в окружение, а docker run наследует через `-e SYSTEM_PROMPT` (без =value)
-PROMPT_FILE="/opt/vkuswill-bot/system_prompt.txt"
 PROMPT_ENV=""
 if [[ -f "$PROMPT_FILE" ]] && [[ -s "$PROMPT_FILE" ]]; then
   export SYSTEM_PROMPT
