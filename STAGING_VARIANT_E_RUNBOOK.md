@@ -100,3 +100,41 @@ echo "$BOT_TOKEN" | sed 's/./*/g'
 До этого момента production остается:
 1. `CHAT_ENGINE=legacy`
 2. production skill и production token без изменений.
+
+## 8. Checklist секретов для CD Staging
+
+Перед первым запуском workflow `/Users/denispukinov/Downloads/vkuswill_bot/.github/workflows/cd-staging.yml`
+завести и проверить следующие secrets.
+
+Обязательные secrets:
+1. `YC_CR_REGISTRY_ID` — ID Container Registry.
+2. `YC_CR_KEY_SECRET` — JSON key для `docker login cr.yandex`.
+3. `VM_HOST_STG` — staging VM host/IP.
+4. `VM_SSH_KEY_STG` — приватный SSH-ключ для staging VM.
+5. `LOCKBOX_SECRET_ID_STG` — staging Lockbox secret id.
+
+Проверка в workflow:
+1. `CD Staging` имеет шаг `Validate required staging secrets`.
+2. Пустой любой обязательный secret блокирует деплой до SSH шага.
+
+## 9. Checklist ключей в Lockbox (staging)
+
+Минимально для старта staging:
+1. `BOT_TOKEN` — staging Telegram bot token.
+2. `CHAT_ENGINE` — `shopping_agent`.
+3. `LLM_BASE_URL`
+4. `LLM_API_KEY`
+5. `LLM_MODEL`
+6. `MCP_SERVER_ENABLED` — `false` или `true` по целевому сценарию.
+7. `MCP_SERVER_PORT` — `18081` (рекомендуемо для staging).
+8. `WEBHOOK_HOST` — staging host.
+9. `WEBHOOK_PORT` — `18080`.
+10. `VOICE_LINK_API_KEY` — staging значение.
+11. `DATABASE_URL` — staging DB.
+12. `REDIS_URL` — staging Redis.
+
+Рекомендуемые ключи для observability:
+1. `LANGFUSE_ENABLED=true`
+2. `LANGFUSE_HOST` (staging host/project)
+3. `LANGFUSE_PUBLIC_KEY`
+4. `LANGFUSE_SECRET_KEY`
