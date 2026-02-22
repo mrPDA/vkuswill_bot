@@ -66,6 +66,9 @@ jobs:
       - name: Install dependencies
         run: uv sync --all-extras
 
+      - name: Staging deploy guard
+        run: bash scripts/check_staging_deploy_guard.sh
+
       - name: Ruff check
         run: uv run ruff check src/ tests/
 
