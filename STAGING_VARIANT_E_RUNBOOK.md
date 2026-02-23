@@ -128,10 +128,11 @@ echo "$BOT_TOKEN" | sed 's/./*/g'
 6. `MCP_SERVER_ENABLED` — `false` или `true` по целевому сценарию.
 7. `MCP_SERVER_PORT` — `18081` (рекомендуемо для staging).
 8. `WEBHOOK_HOST` — staging host.
-9. `WEBHOOK_PORT` — `18080`.
-10. `VOICE_LINK_API_KEY` — staging значение.
-11. `DATABASE_URL` — staging DB.
-12. `REDIS_URL` — staging Redis.
+9. `WEBHOOK_PATH` — `/webhook-stg` (изолирует staging от production на одном хосте).
+10. `WEBHOOK_PORT` — `18080`.
+11. `VOICE_LINK_API_KEY` — staging значение.
+12. `DATABASE_URL` — staging DB.
+13. `REDIS_URL` — staging Redis.
 
 Рекомендуемые ключи для observability:
 1. `LANGFUSE_ENABLED=true`
