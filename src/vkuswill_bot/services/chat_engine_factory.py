@@ -108,6 +108,7 @@ def create_chat_engine(
             gigachat_scope=cfg.gigachat_scope,
             gigachat_ca_bundle=cfg.gigachat_ca_bundle,
             gigachat_model=cfg.gigachat_model,
+            preferences_store=preferences_store,
         )
 
     raise ValueError(f"Unsupported chat_engine: {engine_name}")

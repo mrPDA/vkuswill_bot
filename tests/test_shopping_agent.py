@@ -50,6 +50,16 @@ class _FakeMCPClient:
         return self.tool_result
 
 
+class _FakePreferencesStore:
+    def __init__(self, payload: dict[str, Any]) -> None:
+        self.payload = payload
+        self.calls: list[int] = []
+
+    async def get_formatted(self, user_id: int) -> str:
+        self.calls.append(user_id)
+        return json.dumps(self.payload, ensure_ascii=False)
+
+
 class _FallbackMCPClient(_FakeMCPClient):
     def __init__(self) -> None:
         super().__init__(tool_result='{"ok": true}')
@@ -289,6 +299,7 @@ def _agent(
     llm_script: list[Any],
     mcp_client: _FakeMCPClient | None = None,
     max_tool_calls: int = 5,
+    preferences_store: _FakePreferencesStore | None = None,
 ) -> tuple[ShoppingAgent, _FakeMCPClient]:
     mcp = mcp_client or _FakeMCPClient()
     agent = ShoppingAgent(
@@ -300,6 +311,7 @@ def _agent(
         dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
         max_tool_calls=max_tool_calls,
         max_history=20,
+        preferences_store=preferences_store,  # type: ignore[arg-type]
         llm_client=_FakeLLMClient(llm_script),
     )
     return agent, mcp
@@ -677,6 +689,32 @@ async def test_invalid_tool_args_fallback_to_empty_dict() -> None:
     result = await agent.process_message(user_id=42, text="найди молоко")
     assert result == "ok"
     assert mcp_client.calls == [("vkusvill_products_search", {})]
+
+
+@pytest.mark.asyncio
+async def test_applies_saved_preferences_to_search_without_extra_tool_steps() -> None:
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={
+            "ok": True,
+            "preferences": [{"category": "молоко", "preference": "безлактозное 3,2%"}],
+        }
+    )
+    tool_call = _FakeToolCall("tc-1", "vkusvill_products_search", '{"q":"молоко"}')
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="ok")),
+    ]
+    agent, mcp_client = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    result = await agent.process_message(user_id=42, text="найди молоко")
+    assert result == "ok"
+    assert prefs_store.calls == [42]
+    assert mcp_client.calls == [("vkusvill_products_search", {"q": "молоко безлактозное 3,2%"})]
 
 
 @pytest.mark.asyncio
