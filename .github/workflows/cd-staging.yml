@@ -137,22 +137,21 @@ jobs:
         timeout-minutes: 3
         run: |
           sleep 20
-          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST_STG }}" bash -s <<'CHECK'
-          set -euo pipefail
-          HTTP_URL="http://127.0.0.1:18080/health"
-          echo "Health check URL: ${HTTP_URL}"
-          for i in 1 2 3 4 5; do
-            STATUS=$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w "%{http_code}" "${HTTP_URL}" 2>/dev/null || true)
-            if [ "$STATUS" = "200" ]; then
-              echo "Health check OK (attempt $i)"
-              exit 0
-            fi
-            echo "Attempt $i: status=${STATUS}, retrying in 10s..."
-            sleep 10
-          done
-          echo "Health check failed"
-          exit 1
-CHECK
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST_STG }}" \
+            "set -euo pipefail; \
+             HTTP_URL='http://127.0.0.1:18080/health'; \
+             echo \"Health check URL: \${HTTP_URL}\"; \
+             for i in 1 2 3 4 5; do \
+               STATUS=\$(curl -s --connect-timeout 5 --max-time 10 -o /dev/null -w '%{http_code}' \"\${HTTP_URL}\" 2>/dev/null || true); \
+               if [ \"\${STATUS}\" = '200' ]; then \
+                 echo \"Health check OK (attempt \${i})\"; \
+                 exit 0; \
+               fi; \
+               echo \"Attempt \${i}: status=\${STATUS}, retrying in 10s...\"; \
+               sleep 10; \
+             done; \
+             echo 'Health check failed'; \
+             exit 1"
 
       - name: Cleanup SSH
         if: always()
