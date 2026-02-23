@@ -79,6 +79,7 @@ _FORCE_BATCH_SEARCH_HINT = (
 _PANTRY_TAG_SALT = "salt"
 _PANTRY_TAG_SUGAR = "sugar"
 _PANTRY_TAG_PEPPER = "pepper"
+_EGG_PACK_SIZE = 10
 
 
 class ShoppingAgent:
@@ -273,6 +274,7 @@ class ShoppingAgent:
         single_search_steps_streak = 0
         cart_intent = self._is_cart_intent(text)
         explicit_pantry_requests = self._extract_explicit_pantry_requests(text)
+        explicit_egg_pack_request = self._has_explicit_egg_pack_request(text)
         user_preferences = await self._load_user_preferences(user_id)
         total_llm_input_chars = 0
 
@@ -449,6 +451,8 @@ class ShoppingAgent:
                     tool_name,
                     self._parse_tool_args(tool_call.get("arguments")),
                     user_preferences=user_preferences,
+                    product_index=product_index_this_turn,
+                    explicit_egg_pack_request=explicit_egg_pack_request,
                 )
 
                 await _progress(self._tool_progress_text(tool_name))
@@ -1123,6 +1127,14 @@ class ShoppingAgent:
         return "соль" in normalized or "сахар" in normalized
 
     @classmethod
+    def _has_explicit_egg_pack_request(cls, text: str) -> bool:
+        normalized = cls._normalize_text(text)
+        if not any(stem in normalized for stem in ("яйц", "яиц", "яйк")):
+            return False
+        pack_markers = ("упаков", "десят", "дюжин")
+        return any(marker in normalized for marker in pack_markers)
+
+    @classmethod
     def _is_recipe_followup(cls, *, text: str, history: list[dict[str, Any]] | None) -> bool:
         if not history:
             return False
@@ -1341,10 +1353,38 @@ class ShoppingAgent:
         tool_args: dict[str, Any],
         *,
         user_preferences: dict[str, str] | None = None,
+        product_index: dict[int, dict[str, Any]] | None = None,
+        explicit_egg_pack_request: bool = False,
     ) -> dict[str, Any]:
         if tool_name == "vkusvill_cart_link_create":
             # MCP cart-link expects explicit quantities for each item.
-            return CartProcessor.fix_cart_args(tool_args)
+            normalized = CartProcessor.fix_cart_args(tool_args)
+            products = normalized.get("products")
+            if not isinstance(products, list) or explicit_egg_pack_request:
+                return normalized
+            product_lookup = product_index or {}
+            for item in products:
+                if not isinstance(item, dict):
+                    continue
+                xml_id_raw = item.get("xml_id")
+                if isinstance(xml_id_raw, bool):
+                    continue
+                try:
+                    xml_id = int(xml_id_raw)
+                except (TypeError, ValueError):
+                    continue
+                product = product_lookup.get(xml_id)
+                if not isinstance(product, dict):
+                    continue
+                name = str(product.get("name", "")).strip().lower()
+                if not any(stem in name for stem in ("яйц", "яиц", "яйк")):
+                    continue
+                q = ShoppingAgent._safe_float(item.get("q"), default=1.0)
+                if q <= 1:
+                    item["q"] = 1
+                    continue
+                item["q"] = max(1, math.ceil(q / _EGG_PACK_SIZE))
+            return normalized
         if tool_name == "vkusvill_products_search":
             prefs = user_preferences or {}
             if not prefs:
