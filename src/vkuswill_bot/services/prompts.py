@@ -117,6 +117,7 @@ def get_profiled_system_prompt(*, profile: PromptProfile, compact: bool) -> str:
         parts.append(_PROFILE_CONTINUATION_PROMPT)
     return "\n\n".join(parts)
 
+
 RECIPE_EXTRACTION_PROMPT = """
 ***REDACTED***
 """
