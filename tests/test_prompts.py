@@ -284,9 +284,10 @@ class TestRecipeExtractionPrompt:
         assert "шт" in RECIPE_EXTRACTION_PROMPT
 
     def test_excludes_common_items(self):
-        """Промпт исключает соль, молотый перец, воду."""
+        """Промпт исключает соль, сахар, молотый перец, воду."""
         lower = RECIPE_EXTRACTION_PROMPT.lower()
         assert "соль" in lower
+        assert "сахар" in lower
         assert "перец" in lower
         assert "вод" in lower
 

@@ -91,7 +91,7 @@ class RecipeService:
 
     # Bump при ЛЮБОМ изменении RECIPE_EXTRACTION_PROMPT.
     # При несовпадении версии кэш рецепта автоматически сбрасывается.
-    _PROMPT_VERSION = "v3"
+    _PROMPT_VERSION = "v4"
 
     def __init__(
         self,
