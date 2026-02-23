@@ -599,6 +599,7 @@ class ShoppingAgent:
             )
 
         results: list[dict[str, Any]] = []
+        found: list[dict[str, Any]] = []
         not_found: list[str] = []
         search_log: dict[str, list[int]] = {}
 
@@ -648,6 +649,20 @@ class ShoppingAgent:
                 }
                 for item in items[1:4]
             ]
+            found.append(
+                {
+                    "ingredient": ingredient_name,
+                    "search_query": query,
+                    "item": {
+                        "xml_id": best_match.get("xml_id"),
+                        "name": best_match.get("name"),
+                        "price": best_match.get("price"),
+                        "unit": best_match.get("unit", "шт"),
+                    },
+                    "suggested_q": best_match.get("suggested_q"),
+                    "alternatives": alternatives,
+                }
+            )
             results.append(
                 {
                     "ingredient": ingredient_name,
@@ -661,6 +676,11 @@ class ShoppingAgent:
             {
                 "ok": True,
                 "results": results,
+                "data": {
+                    "found": found,
+                    "not_found": not_found,
+                    "search_log": search_log,
+                },
                 "not_found": not_found,
                 "search_log": search_log,
                 "source": "shopping_agent_fallback",
@@ -1153,28 +1173,54 @@ class ShoppingAgent:
     def _compact_recipe_search(self, payload: dict[str, Any]) -> dict[str, Any]:
         result: dict[str, Any] = {"ok": payload.get("ok")}
         data = payload.get("data")
-        if not isinstance(data, dict):
-            return result
-
-        found = data.get("found", [])
         compact_found: list[dict[str, Any]] = []
-        if isinstance(found, list):
-            for row in found[:40]:
-                if not isinstance(row, dict):
-                    continue
-                item = row.get("item")
-                compact_found.append(
-                    {
-                        "ingredient": row.get("ingredient"),
-                        "suggested_q": row.get("suggested_q"),
-                        "xml_id": item.get("xml_id") if isinstance(item, dict) else None,
-                        "name": item.get("name") if isinstance(item, dict) else None,
-                        "price": item.get("price") if isinstance(item, dict) else None,
-                    }
-                )
-        result["found"] = compact_found
+        not_found: list[Any] = []
 
-        not_found = data.get("not_found", [])
+        if isinstance(data, dict):
+            found = data.get("found", [])
+            if isinstance(found, list):
+                for row in found[:40]:
+                    if not isinstance(row, dict):
+                        continue
+                    item = row.get("item")
+                    compact_found.append(
+                        {
+                            "ingredient": row.get("ingredient"),
+                            "suggested_q": row.get("suggested_q"),
+                            "xml_id": item.get("xml_id") if isinstance(item, dict) else None,
+                            "name": item.get("name") if isinstance(item, dict) else None,
+                            "price": item.get("price") if isinstance(item, dict) else None,
+                        }
+                    )
+            raw_not_found = data.get("not_found", [])
+            if isinstance(raw_not_found, list):
+                not_found = raw_not_found
+
+        # Совместимость с fallback-форматом: top-level results/best_match.
+        if not compact_found:
+            results = payload.get("results", [])
+            if isinstance(results, list):
+                for row in results[:40]:
+                    if not isinstance(row, dict):
+                        continue
+                    best_match = row.get("best_match")
+                    if not isinstance(best_match, dict):
+                        continue
+                    compact_found.append(
+                        {
+                            "ingredient": row.get("ingredient"),
+                            "suggested_q": best_match.get("suggested_q"),
+                            "xml_id": best_match.get("xml_id"),
+                            "name": best_match.get("name"),
+                            "price": best_match.get("price"),
+                        }
+                    )
+            if not not_found:
+                raw_not_found = payload.get("not_found", [])
+                if isinstance(raw_not_found, list):
+                    not_found = raw_not_found
+
+        result["found"] = compact_found
         if isinstance(not_found, list):
             result["not_found"] = not_found[:40]
         return result
