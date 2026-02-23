@@ -136,9 +136,9 @@ class LangfuseGeneration:
                 "unit": "TOKENS",
             }
             if cost_details is not None:
-                legacy["inputCost"] = cost_details.get("input", 0)
-                legacy["outputCost"] = cost_details.get("output", 0)
-                legacy["totalCost"] = cost_details.get("total", 0)
+                legacy["input_cost"] = cost_details.get("input", 0)
+                legacy["output_cost"] = cost_details.get("output", 0)
+                legacy["total_cost"] = cost_details.get("total", 0)
             kwargs["usage"] = legacy
 
         self._generation.end(**kwargs)

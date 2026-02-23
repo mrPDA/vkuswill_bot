@@ -291,14 +291,22 @@ class ShoppingAgent:
 
             message = self._extract_message(response)
             usage_details = self._extract_usage_details(response)
+            usage_source = "provider"
             if usage_details is None:
+                usage_details = self._estimate_usage_details(messages=history, message=message)
+                usage_source = "estimated" if usage_details is not None else "missing"
                 logger.warning(
-                    "ShoppingAgent response has no usage details (provider=%s, step=%d)",
+                    "ShoppingAgent response has no usage details (provider=%s, step=%d, source=%s)",
                     llm_provider,
                     step,
+                    usage_source,
                 )
             if gen is not None:
-                gen.end(output=message, usage_details=usage_details)
+                gen.end(
+                    output=message,
+                    usage_details=usage_details,
+                    metadata={"usage_source": usage_source, "provider": llm_provider},
+                )
 
             tool_calls = self._extract_tool_calls(message)
             if not tool_calls:
@@ -1175,6 +1183,35 @@ class ShoppingAgent:
     def _extract_usage_details(response: Any) -> dict[str, int] | None:
         """Извлечь usage-details из ответа LLM (OpenAI-compatible / normalized dict)."""
         return extract_usage_details(response)
+
+    @staticmethod
+    def _estimate_usage_details(
+        *,
+        messages: list[dict[str, Any]],
+        message: dict[str, Any],
+    ) -> dict[str, int]:
+        """Fallback-оценка токенов, если провайдер не вернул usage.
+
+        Используем грубую эвристику ~4 символа на токен для кириллицы/латиницы.
+        Это лучше, чем пустое usage в Langfuse для cost-контроля.
+        """
+        input_chars = 0
+        for item in messages:
+            with contextlib.suppress(Exception):
+                input_chars += len(json.dumps(item, ensure_ascii=False))
+
+        output_chars = 0
+        with contextlib.suppress(Exception):
+            output_chars = len(json.dumps(message, ensure_ascii=False))
+
+        input_tokens = max(1, math.ceil(input_chars / 4)) if input_chars > 0 else 0
+        output_tokens = max(1, math.ceil(output_chars / 4)) if output_chars > 0 else 0
+        total_tokens = input_tokens + output_tokens
+        return {
+            "input": input_tokens,
+            "output": output_tokens,
+            "total": total_tokens,
+        }
 
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "vkusvill_products_search":

@@ -150,9 +150,11 @@ class _FakeLLMAdapter:
         *,
         text: str,
         delay_seconds: float = 0.0,
+        usage: dict[str, int] | None = None,
     ) -> None:
         self.text = text
         self.delay_seconds = delay_seconds
+        self.usage = usage
         self.calls: list[dict[str, Any]] = []
 
     async def create_completion(
@@ -179,7 +181,7 @@ class _FakeLLMAdapter:
             import asyncio
 
             await asyncio.sleep(self.delay_seconds)
-        return {
+        response: dict[str, Any] = {
             "choices": [
                 {
                     "message": {
@@ -189,9 +191,47 @@ class _FakeLLMAdapter:
                 }
             ]
         }
+        if self.usage is not None:
+            response["usage"] = self.usage
+        return response
 
     async def close(self) -> None:
         return None
+
+
+class _LangfuseGenSpy:
+    def __init__(self) -> None:
+        self.end_calls: list[dict[str, Any]] = []
+
+    def end(self, **kwargs: Any) -> None:
+        self.end_calls.append(kwargs)
+
+
+class _LangfuseTraceSpy:
+    def __init__(self) -> None:
+        self.gen = _LangfuseGenSpy()
+        self.updates: list[dict[str, Any]] = []
+
+    def generation(self, **_kwargs: Any) -> _LangfuseGenSpy:
+        return self.gen
+
+    def span(self, **_kwargs: Any) -> Any:
+        class _Span:
+            def end(self, **_kwargs: Any) -> None:
+                return None
+
+        return _Span()
+
+    def update(self, **kwargs: Any) -> None:
+        self.updates.append(kwargs)
+
+
+class _LangfuseServiceSpy:
+    def __init__(self) -> None:
+        self.trace_spy = _LangfuseTraceSpy()
+
+    def trace(self, **_kwargs: Any) -> _LangfuseTraceSpy:
+        return self.trace_spy
 
 
 def _agent(
@@ -730,3 +770,56 @@ def test_extract_usage_details_from_alt_qwen_shape() -> None:
         }
     )
     assert usage == {"input": 88, "output": 12, "total": 100}
+
+
+@pytest.mark.asyncio
+async def test_langfuse_generation_receives_estimated_usage_when_provider_usage_missing() -> None:
+    mcp = _FakeMCPClient()
+    llm_adapter = _FakeLLMAdapter(text="ok", usage=None)
+    langfuse = _LangfuseServiceSpy()
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": llm_adapter},
+        langfuse_service=langfuse,  # type: ignore[arg-type]
+    )
+
+    result = await agent.process_message(user_id=7, text="привет")
+    assert result == "ok"
+    assert langfuse.trace_spy.gen.end_calls
+    end_call = langfuse.trace_spy.gen.end_calls[-1]
+    usage_details = end_call.get("usage_details")
+    assert isinstance(usage_details, dict)
+    assert usage_details["input"] > 0
+    assert usage_details["output"] > 0
+    assert usage_details["total"] == usage_details["input"] + usage_details["output"]
+    assert end_call["metadata"]["usage_source"] == "estimated"
+
+
+@pytest.mark.asyncio
+async def test_langfuse_generation_marks_provider_usage_when_present() -> None:
+    mcp = _FakeMCPClient()
+    llm_adapter = _FakeLLMAdapter(text="ok", usage={"input": 10, "output": 3, "total": 13})
+    langfuse = _LangfuseServiceSpy()
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": llm_adapter},
+        langfuse_service=langfuse,  # type: ignore[arg-type]
+    )
+
+    result = await agent.process_message(user_id=8, text="привет")
+    assert result == "ok"
+    end_call = langfuse.trace_spy.gen.end_calls[-1]
+    assert end_call["usage_details"] == {"input": 10, "output": 3, "total": 13}
+    assert end_call["metadata"]["usage_source"] == "provider"
