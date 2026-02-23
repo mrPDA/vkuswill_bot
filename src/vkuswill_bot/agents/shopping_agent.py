@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.dialog_manager import DialogManager
     from vkuswill_bot.services.langfuse_tracing import LangfuseService
     from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+    from vkuswill_bot.services.preferences_store import PreferencesStore
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
 logger = logging.getLogger(__name__)
@@ -114,6 +115,7 @@ class ShoppingAgent:
         gigachat_scope: str = "GIGACHAT_API_PERS",
         gigachat_ca_bundle: str | None = None,
         gigachat_model: str = "GigaChat-2-Max",
+        preferences_store: PreferencesStore | None = None,
         llm_client: Any | None = None,
         llm_adapters: dict[str, LLMAdapterProtocol] | None = None,
     ) -> None:
@@ -140,6 +142,7 @@ class ShoppingAgent:
         self._max_tool_result_chars = max(300, max_tool_result_chars)
         self._max_history_chars = max(10000, max_history_chars)
         self._max_input_chars_per_turn = max(10000, max_input_chars_per_turn)
+        self._preferences_store = preferences_store
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
         self._langfuse = langfuse_service
         self._tools_cache: list[dict[str, Any]] | None = None
@@ -270,6 +273,7 @@ class ShoppingAgent:
         single_search_steps_streak = 0
         cart_intent = self._is_cart_intent(text)
         explicit_pantry_requests = self._extract_explicit_pantry_requests(text)
+        user_preferences = await self._load_user_preferences(user_id)
         total_llm_input_chars = 0
 
         tools = await self._get_tools()
@@ -444,6 +448,7 @@ class ShoppingAgent:
                 tool_args = self._preprocess_tool_args(
                     tool_name,
                     self._parse_tool_args(tool_call.get("arguments")),
+                    user_preferences=user_preferences,
                 )
 
                 await _progress(self._tool_progress_text(tool_name))
@@ -1331,11 +1336,75 @@ class ShoppingAgent:
         return {}
 
     @staticmethod
-    def _preprocess_tool_args(tool_name: str, tool_args: dict[str, Any]) -> dict[str, Any]:
+    def _preprocess_tool_args(
+        tool_name: str,
+        tool_args: dict[str, Any],
+        *,
+        user_preferences: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
         if tool_name == "vkusvill_cart_link_create":
             # MCP cart-link expects explicit quantities for each item.
             return CartProcessor.fix_cart_args(tool_args)
+        if tool_name == "vkusvill_products_search":
+            prefs = user_preferences or {}
+            if not prefs:
+                return tool_args
+            query_key = None
+            if isinstance(tool_args.get("q"), str):
+                query_key = "q"
+            elif isinstance(tool_args.get("query"), str):
+                query_key = "query"
+            if query_key is None:
+                return tool_args
+            original_query = str(tool_args.get(query_key, "")).strip()
+            if not original_query:
+                return tool_args
+            enhanced_query = ShoppingAgent._apply_preferences_to_query(original_query, prefs)
+            if enhanced_query == original_query:
+                return tool_args
+            return {**tool_args, query_key: enhanced_query}
         return tool_args
+
+    async def _load_user_preferences(self, user_id: int) -> dict[str, str]:
+        if self._preferences_store is None:
+            return {}
+        try:
+            raw = await self._preferences_store.get_formatted(user_id)
+        except Exception as exc:
+            logger.warning("Failed to load user preferences for %s: %s", user_id, exc)
+            return {}
+        return self._parse_preferences(raw)
+
+    @staticmethod
+    def _parse_preferences(result_text: str) -> dict[str, str]:
+        try:
+            data = json.loads(result_text)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+        prefs = data.get("preferences", [])
+        if not isinstance(prefs, list):
+            return {}
+        result: dict[str, str] = {}
+        for item in prefs:
+            if not isinstance(item, dict):
+                continue
+            category = str(item.get("category", "")).strip().lower()
+            preference = str(item.get("preference", "")).strip()
+            if category and preference:
+                result[category] = preference
+        return result
+
+    @staticmethod
+    def _apply_preferences_to_query(query: str, user_prefs: dict[str, str]) -> str:
+        if not user_prefs or not query:
+            return query
+        query_lower = query.strip().lower()
+        preference = user_prefs.get(query_lower)
+        if preference is None:
+            return query
+        if query_lower in preference.lower():
+            return preference
+        return f"{query} {preference}"
 
     @staticmethod
     def _extract_text(message: Any) -> str:

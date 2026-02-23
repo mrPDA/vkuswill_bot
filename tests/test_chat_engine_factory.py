@@ -190,6 +190,7 @@ def test_create_chat_engine_shopping_success() -> None:
         gigachat_scope=cfg.gigachat_scope,
         gigachat_ca_bundle=cfg.gigachat_ca_bundle,
         gigachat_model=cfg.gigachat_model,
+        preferences_store=deps["preferences_store"],
     )
 
 
