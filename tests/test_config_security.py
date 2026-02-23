@@ -73,6 +73,43 @@ class TestRequiredFields:
 class TestDefaultValues:
     """Проверка безопасности значений по умолчанию."""
 
+    def test_chat_engine_default_legacy(self):
+        """chat_engine по умолчанию — legacy."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.chat_engine == "legacy"
+
+    def test_llm_base_url_default_https(self):
+        """llm_base_url по умолчанию использует HTTPS."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_base_url.startswith("https://")
+
+    def test_llm_provider_default_qwen_openai(self):
+        """llm_provider по умолчанию — qwen_openai."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_provider == "qwen_openai"
+
+    def test_llm_routing_strategy_default_single_provider(self):
+        """llm_routing_strategy по умолчанию — single_provider."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_routing_strategy == "single_provider"
+
+    def test_llm_routing_providers_defaults(self):
+        """Провайдеры маршрутизации имеют безопасные дефолты."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_singleton_provider == "gigachat_sdk"
+        assert cfg.llm_burst_provider == "qwen_openai"
+
+    def test_llm_max_concurrent_default(self):
+        """llm_max_concurrent по умолчанию — 10."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_max_concurrent == 10
+
     def test_debug_disabled_by_default(self):
         """Debug отключён по умолчанию."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -156,6 +193,12 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.webhook_host == ""
+
+    def test_webhook_path_default(self):
+        """webhook_path по умолчанию — /webhook."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_path == "/webhook"
 
     def test_gigachat_max_concurrent_default(self):
         """gigachat_max_concurrent по умолчанию — 15."""
@@ -377,6 +420,7 @@ class TestSecretProtection:
         custom_env = {
             "BOT_TOKEN": "custom-token-123",
             "GIGACHAT_CREDENTIALS": "custom-creds-456",
+            "CHAT_ENGINE": "legacy",
             "MCP_SERVER_URL": "https://custom-mcp.example.com/mcp",
         }
         with patch.dict(os.environ, custom_env, clear=True):
@@ -384,7 +428,69 @@ class TestSecretProtection:
 
         assert cfg.bot_token == "custom-token-123"  # noqa: S105
         assert cfg.gigachat_credentials == "custom-creds-456"
+        assert cfg.chat_engine == "legacy"
         assert cfg.mcp_server_url == "https://custom-mcp.example.com/mcp"
+
+    def test_chat_engine_customizable(self):
+        """chat_engine настраивается через env."""
+        custom_env = {**MINIMAL_ENV, "CHAT_ENGINE": "shopping_agent"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.chat_engine == "shopping_agent"
+
+    def test_chat_engine_invalid_rejected(self):
+        """Некорректный chat_engine отклоняется валидатором."""
+        custom_env = {**MINIMAL_ENV, "CHAT_ENGINE": "unknown"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_llm_settings_customizable(self):
+        """LLM-параметры настраиваются через env."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "LLM_PROVIDER": "qwen_openai",
+            "LLM_BASE_URL": "https://llm.api.cloud.yandex.net/v1",
+            "LLM_API_KEY": "yc-llm-test-key",
+            "LLM_MODEL": "gpt://folder/qwen3-235b-a22b-fp8/latest",
+            "LLM_MAX_CONCURRENT": "16",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_provider == "qwen_openai"
+        assert cfg.llm_base_url == "https://llm.api.cloud.yandex.net/v1"
+        assert cfg.llm_api_key == "yc-llm-test-key"
+        assert cfg.llm_model == "gpt://folder/qwen3-235b-a22b-fp8/latest"
+        assert cfg.llm_max_concurrent == 16
+
+    def test_llm_provider_alias_openai_compatible(self):
+        """llm_provider принимает алиас openai_compatible."""
+        custom_env = {**MINIMAL_ENV, "LLM_PROVIDER": "openai_compatible"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_provider == "qwen_openai"
+
+    def test_llm_provider_invalid_rejected(self):
+        """Некорректный llm_provider отклоняется валидатором."""
+        custom_env = {**MINIMAL_ENV, "LLM_PROVIDER": "unknown_provider"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_llm_routing_strategy_invalid_rejected(self):
+        """Некорректный llm_routing_strategy отклоняется валидатором."""
+        custom_env = {**MINIMAL_ENV, "LLM_ROUTING_STRATEGY": "invalid"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_llm_routing_providers_must_differ_for_multi_strategy(self):
+        """Для multi-стратегии singleton и burst провайдеры не должны совпадать."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "LLM_ROUTING_STRATEGY": "single_user_gigachat_multi_user_qwen",
+            "LLM_SINGLETON_PROVIDER": "qwen_openai",
+            "LLM_BURST_PROVIDER": "qwen_openai",
+        }
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
 
     def test_storage_backend_customizable(self):
         """storage_backend настраивается через переменную окружения."""
@@ -422,13 +528,22 @@ class TestSecretProtection:
             **MINIMAL_ENV,
             "USE_WEBHOOK": "true",
             "WEBHOOK_HOST": "https://bot.example.com",
+            "WEBHOOK_PATH": "/webhook-stg/",
             "WEBHOOK_PORT": "443",
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.use_webhook is True
         assert cfg.webhook_host == "https://bot.example.com"
+        assert cfg.webhook_path == "/webhook-stg"
         assert cfg.webhook_port == 443
+
+    def test_webhook_path_without_leading_slash_is_normalized(self):
+        """WEBHOOK_PATH без префикса / нормализуется."""
+        custom_env = {**MINIMAL_ENV, "WEBHOOK_PATH": "webhook-stg"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.webhook_path == "/webhook-stg"
 
     def test_gigachat_max_concurrent_customizable(self):
         """gigachat_max_concurrent настраивается через env."""
@@ -616,7 +731,7 @@ class TestEnvExampleCompleteness:
             assert key in content, f"{key} отсутствует в .env.example"
 
         # Важные опциональные ключи для документации
-        optional_keys = ["MCP_SERVER_URL", "DEBUG"]
+        optional_keys = ["CHAT_ENGINE", "LLM_BASE_URL", "MCP_SERVER_URL", "DEBUG"]
         for key in optional_keys:
             assert key in content, f"{key} отсутствует в .env.example — важно для документации"
 

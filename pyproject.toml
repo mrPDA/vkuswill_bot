@@ -8,6 +8,7 @@ dependencies = [
     "aiogram>=3.15",
     "aiosqlite>=0.20",
     "gigachat>=0.1.36",
+    "openai>=1.0",
     "mcp>=1.9",
     "pydantic-settings>=2.0",
     "redis[hiredis]>=5.0",
