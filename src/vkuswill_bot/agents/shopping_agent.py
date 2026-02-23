@@ -1571,9 +1571,28 @@ class ShoppingAgent:
             return self._render_stable_cart_output(cart_data)
         if self._looks_like_wrong_cart_summary(final_text, items_count=items_count):
             return self._render_stable_cart_output(cart_data)
+        if self._looks_like_wrong_cart_link(final_text, cart_data=cart_data):
+            return self._render_stable_cart_output(cart_data)
         if self._looks_like_missing_cart_prices(final_text, summary=summary_dict):
             return self._render_stable_cart_output(cart_data)
         return final_text
+
+    @staticmethod
+    def _extract_first_url(text: str) -> str:
+        match = re.search(r"https?://[^\s\"<>]+", text)
+        if not match:
+            return ""
+        return match.group(0).strip().rstrip("\\).,;:!?]")
+
+    @classmethod
+    def _looks_like_wrong_cart_link(cls, text: str, *, cart_data: dict[str, Any]) -> bool:
+        expected_link = str(cart_data.get("link", "")).strip()
+        if not expected_link:
+            return False
+        actual_link = cls._extract_first_url(text)
+        if not actual_link:
+            return True
+        return actual_link != expected_link
 
     @staticmethod
     def _looks_like_missing_cart_prices(text: str, *, summary: dict[str, Any]) -> bool:
