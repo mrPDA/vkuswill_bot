@@ -414,6 +414,53 @@ async def test_builds_price_summary_when_cart_response_has_only_link() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forces_cart_tool_call_when_llm_claims_cart_ready_without_tool_result() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/ready-1",
+                "price_summary": {
+                    "total": 259.0,
+                    "total_text": "Итого: 259.00 руб",
+                    "items": ["- Молоко 3,2% x 1 = 99.00 руб", "- Яйца x 1 = 160.00 руб"],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="Собрала корзину. Открыть корзину: https://vkusvill.ru/cart")),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-1",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":1,"q":1},{"xml_id":2,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Готово.")),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=333, text="закажи молоко и яйца")
+    assert "https://vkusvill.ru/cart" not in result
+    assert '<a href="https://shop.example/cart/ready-1">Открыть корзину</a>' in result
+    assert "Итого: 259.00 руб" in result
+    assert mcp_client.calls == [
+        (
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 1}, {"xml_id": 2, "q": 1}]},
+        )
+    ]
+
+
+@pytest.mark.asyncio
 async def test_manual_cart_reply_is_retried_and_stabilized() -> None:
     cart_payload = json.dumps(
         {
