@@ -104,6 +104,11 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.VM_HOST_STG }}" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Prepare staging deploy directory
+        run: |
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST_STG }}" \
+            "sudo mkdir -p '${{ env.DEPLOY_DIR }}' && sudo chown -R '${{ env.DEPLOY_USER }}':'${{ env.DEPLOY_USER }}' '${{ env.DEPLOY_DIR }}'"
+
       - name: Sync deploy assets
         run: |
           scp -i ~/.ssh/deploy_key \
