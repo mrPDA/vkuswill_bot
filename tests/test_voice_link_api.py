@@ -99,6 +99,7 @@ async def test_resolve_handler_success() -> None:
 class _DummyGigaChat:
     def __init__(self) -> None:
         self._snapshot_calls = 0
+        self.reset_calls = 0
         self._before_snapshot: dict[str, Any] | None = {
             "link": "https://shop.example/cart/old",
             "created_at": "2026-02-21T00:00:00+00:00",
@@ -122,12 +123,17 @@ class _DummyGigaChat:
         assert text == "Собери корзину: молоко и яйца"
         return "Готово"
 
+    async def reset_conversation(self, user_id: int) -> None:
+        assert user_id == 42
+        self.reset_calls += 1
+
 
 @pytest.mark.asyncio
 async def test_order_handler_success() -> None:
+    svc = _DummyGigaChat()
     req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},
-        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": _DummyGigaChat()},
+        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
         payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
     )
     resp = await _order_handler(req)  # type: ignore[arg-type]
@@ -137,6 +143,7 @@ async def test_order_handler_success() -> None:
     assert body["cart_link"] == "https://shop.example/cart/new"
     assert body["items_count"] == 2
     assert body["total_rub"] == 300.0
+    assert svc.reset_calls == 1
 
 
 @pytest.mark.asyncio

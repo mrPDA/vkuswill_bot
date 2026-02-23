@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import time
 import uuid
@@ -364,6 +365,12 @@ async def _execute_order_request(
 ) -> dict[str, Any]:
     before_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
     before_signature = _snapshot_signature(before_snapshot)
+    # Voice-заказы независимы от длительного текстового диалога: перед стартом
+    # сбрасываем историю, чтобы не раздувать контекст и стоимость LLM-вызова.
+    reset = getattr(chat_engine, "reset_conversation", None)
+    if callable(reset):
+        with contextlib.suppress(Exception):
+            await reset(user_id)
     try:
         assistant_text = await chat_engine.process_message(user_id=user_id, text=utterance)
     except Exception:

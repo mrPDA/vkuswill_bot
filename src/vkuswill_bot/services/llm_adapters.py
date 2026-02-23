@@ -331,6 +331,7 @@ def normalize_chat_response(response: Any) -> dict[str, Any]:
     message = _extract_message(response)
     content = _normalize_text_content(_extract_content(message))
     tool_calls = _normalize_tool_calls(_extract_tool_calls(message))
+    usage = _extract_usage_details(response)
     return {
         "choices": [
             {
@@ -339,7 +340,8 @@ def normalize_chat_response(response: Any) -> dict[str, Any]:
                     "tool_calls": tool_calls,
                 }
             }
-        ]
+        ],
+        "usage": usage,
     }
 
 
@@ -370,6 +372,33 @@ def _extract_tool_calls(message: Any) -> Any:
     if isinstance(message, dict):
         return message.get("tool_calls")
     return getattr(message, "tool_calls", None)
+
+
+def _extract_usage_details(response: Any) -> dict[str, int] | None:
+    """Extract usage details from provider response into canonical shape."""
+    usage = getattr(response, "usage", None)
+    if usage is None and isinstance(response, dict):
+        usage = response.get("usage")
+    if usage is None:
+        return None
+
+    if isinstance(usage, dict):
+        prompt = usage.get("input", usage.get("prompt_tokens"))
+        completion = usage.get("output", usage.get("completion_tokens"))
+        total = usage.get("total", usage.get("total_tokens"))
+    else:
+        prompt = getattr(usage, "input", getattr(usage, "prompt_tokens", None))
+        completion = getattr(usage, "output", getattr(usage, "completion_tokens", None))
+        total = getattr(usage, "total", getattr(usage, "total_tokens", None))
+
+    result: dict[str, int] = {}
+    if isinstance(prompt, int):
+        result["input"] = prompt
+    if isinstance(completion, int):
+        result["output"] = completion
+    if isinstance(total, int):
+        result["total"] = total
+    return result or None
 
 
 def _extract_function_call(message: Any) -> dict[str, Any] | None:
