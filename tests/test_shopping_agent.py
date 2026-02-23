@@ -739,6 +739,85 @@ async def test_max_tool_calls_guard() -> None:
 
 
 @pytest.mark.asyncio
+async def test_injects_virtual_recipe_tools_for_qwen() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    tools = await agent._get_tools()
+    names = {
+        str(tool.get("function", {}).get("name", "")).strip()
+        for tool in tools
+        if isinstance(tool, dict)
+    }
+    assert "recipe_ingredients" in names
+    assert "recipe_search" in names
+
+
+@pytest.mark.asyncio
+async def test_keeps_recipe_profile_for_short_followup_message() -> None:
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(_FakeMessage(content="ok-1")),
+            _FakeResponse(_FakeMessage(content="ok-2")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=_FakeMCPClient(),  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+    )
+
+    first = await agent.process_message(user_id=900, text="собери ингредиенты для борща")
+    second = await agent.process_message(user_id=900, text="традиционный с мясом")
+    assert first == "ok-1"
+    assert second == "ok-2"
+    assert len(llm_client.completions.calls) == 2
+    second_system_prompt = str(llm_client.completions.calls[1]["messages"][0]["content"])
+    assert "[PROMPT_PROFILE:recipe]" in second_system_prompt
+
+
+@pytest.mark.asyncio
+async def test_runtime_guard_adds_batch_hint_after_repeated_single_search_steps() -> None:
+    search_call_1 = _FakeToolCall("tc-1", "vkusvill_products_search", '{"q":"говядина"}')
+    search_call_2 = _FakeToolCall("tc-2", "vkusvill_products_search", '{"q":"свекла"}')
+    search_call_3 = _FakeToolCall("tc-3", "vkusvill_products_search", '{"q":"капуста"}')
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(_FakeMessage(content="", tool_calls=[search_call_1])),
+            _FakeResponse(_FakeMessage(content="", tool_calls=[search_call_2])),
+            _FakeResponse(_FakeMessage(content="", tool_calls=[search_call_3])),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=_FakeMCPClient(tool_result='{"ok": true}'),  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        max_tool_calls=6,
+    )
+
+    result = await agent.process_message(user_id=901, text="собери корзину для борща")
+    assert result == "ok"
+    assert len(llm_client.completions.calls) == 4
+    fourth_call_messages = llm_client.completions.calls[3]["messages"]
+    system_messages = [
+        str(msg.get("content", ""))
+        for msg in fourth_call_messages
+        if isinstance(msg, dict) and msg.get("role") == "system"
+    ]
+    assert any(
+        "vkusvill_products_search" in msg and "нескольк" in msg.lower() for msg in system_messages
+    )
+
+
+@pytest.mark.asyncio
 async def test_routing_single_user_gigachat_multi_user_qwen() -> None:
     mcp = _FakeMCPClient()
     giga_adapter = _FakeLLMAdapter(text="Ответ Giga", delay_seconds=0.15)

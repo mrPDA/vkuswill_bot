@@ -22,6 +22,8 @@ from vkuswill_bot.services.llm_adapters import (
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.prompts import (
     RECIPE_EXTRACTION_PROMPT,
+    RECIPE_SEARCH_TOOL,
+    RECIPE_TOOL,
     PromptMode,
     PromptProfile,
     detect_prompt_profile,
@@ -64,6 +66,14 @@ _FORCE_CART_LINK_SOURCE_HINT = (
     "результата vkusvill_cart_link_create. Сначала ОБЯЗАТЕЛЬНО вызови "
     "vkusvill_cart_link_create, затем выдай ответ. "
     "Ссылку бери только из data.link результата инструмента."
+)
+_FORCE_BATCH_SEARCH_HINT = (
+    "[Системная корректировка] Ты слишком долго выполняешь одиночные поиски. "
+    "Для независимых ингредиентов возвращай НЕСКОЛЬКО вызовов "
+    "vkusvill_products_search в одном ответе (batch tool-calls). "
+    "Цель: уложиться в лимит шагов. "
+    "Как только подобраны товары по ингредиентам — сразу вызывай "
+    "vkusvill_cart_link_create и завершай сборку корзины."
 )
 _PANTRY_TAG_SALT = "salt"
 _PANTRY_TAG_SUGAR = "sugar"
@@ -133,6 +143,7 @@ class ShoppingAgent:
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
         self._langfuse = langfuse_service
         self._tools_cache: list[dict[str, Any]] | None = None
+        self._mcp_tool_names: set[str] = set()
         self._history: dict[int, list[dict[str, Any]]] = {}
         self._last_cart_snapshot: dict[int, dict[str, Any]] = {}
         self._routing_lock = asyncio.Lock()
@@ -240,8 +251,8 @@ class ShoppingAgent:
         on_progress: ProgressCallback | None,
         llm_provider: str,
     ) -> str:
-        prompt_profile = self._detect_prompt_profile(text)
         history = self._history.get(user_id)
+        prompt_profile = self._resolve_prompt_profile(text=text, history=history)
         history = self._ensure_system_prompt(
             history=history,
             prompt_profile=prompt_profile,
@@ -255,6 +266,9 @@ class ShoppingAgent:
         product_index_this_turn: dict[int, dict[str, Any]] = {}
         manual_recovery_used = False
         cart_creation_recovery_used = False
+        search_batch_recovery_used = False
+        single_search_steps_streak = 0
+        cart_intent = self._is_cart_intent(text)
         explicit_pantry_requests = self._extract_explicit_pantry_requests(text)
         total_llm_input_chars = 0
 
@@ -359,7 +373,6 @@ class ShoppingAgent:
             tool_calls = self._extract_tool_calls(message)
             if not tool_calls:
                 final_text = self._extract_text(message) or _ERROR_GENERIC
-                cart_intent = self._is_cart_intent(text)
                 manual_cart_reply = self._looks_like_manual_cart_reply(final_text)
 
                 if (
@@ -410,6 +423,21 @@ class ShoppingAgent:
                 return final_text
 
             history.append(self._assistant_msg(message))
+            step_tool_names = [
+                str(tool_call.get("name", "")).strip()
+                for tool_call in tool_calls
+                if str(tool_call.get("name", "")).strip()
+            ]
+            if (
+                cart_intent
+                and cart_data_this_turn is None
+                and len(step_tool_names) == 1
+                and step_tool_names[0] == "vkusvill_products_search"
+            ):
+                single_search_steps_streak += 1
+            else:
+                single_search_steps_streak = 0
+
             for tool_call in tool_calls:
                 tool_name = str(tool_call.get("name", "")).strip()
                 tool_call_id = str(tool_call.get("id", "")).strip()
@@ -463,6 +491,17 @@ class ShoppingAgent:
 
             history = self._trim_history(history)
             history = self._trim_history_by_chars(history)
+            if (
+                cart_intent
+                and cart_data_this_turn is None
+                and single_search_steps_streak >= 3
+                and not search_batch_recovery_used
+                and step < self._max_tool_calls
+            ):
+                search_batch_recovery_used = True
+                history.append({"role": "system", "content": _FORCE_BATCH_SEARCH_HINT})
+                history = self._trim_history(history)
+                history = self._trim_history_by_chars(history)
 
         self._history[user_id] = history
         if trace is not None:
@@ -539,6 +578,19 @@ class ShoppingAgent:
             return get_system_prompt()
         return get_profiled_system_prompt(profile=prompt_profile, mode=mode)
 
+    def _resolve_prompt_profile(
+        self,
+        *,
+        text: str,
+        history: list[dict[str, Any]] | None,
+    ) -> PromptProfile:
+        profile = self._detect_prompt_profile(text)
+        if profile != "general":
+            return profile
+        if self._is_recipe_followup(text=text, history=history):
+            return "recipe"
+        return profile
+
     @staticmethod
     def _detect_prompt_profile(text: str) -> PromptProfile:
         return detect_prompt_profile(text)
@@ -548,6 +600,12 @@ class ShoppingAgent:
             return self._tools_cache
 
         raw_tools = await self._mcp_client.get_tools()
+        self._mcp_tool_names = {
+            str(tool.get("name", "")).strip()
+            for tool in raw_tools
+            if isinstance(tool, dict) and str(tool.get("name", "")).strip()
+        }
+        raw_tools = self._with_virtual_recipe_tools(raw_tools)
         normalized: list[dict[str, Any]] = []
         for tool in raw_tools:
             name = str(tool.get("name", "")).strip()
@@ -566,6 +624,32 @@ class ShoppingAgent:
 
         self._tools_cache = normalized
         return normalized
+
+    @staticmethod
+    def _with_virtual_recipe_tools(raw_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        prepared = list(raw_tools)
+        existing_names = {
+            str(tool.get("name", "")).strip() for tool in prepared if isinstance(tool, dict)
+        }
+        virtual_tools = (
+            {
+                "name": str(RECIPE_TOOL.get("name", "")).strip(),
+                "description": str(RECIPE_TOOL.get("description", "")),
+                "parameters": RECIPE_TOOL.get("parameters", {}),
+            },
+            {
+                "name": str(RECIPE_SEARCH_TOOL.get("name", "")).strip(),
+                "description": str(RECIPE_SEARCH_TOOL.get("description", "")),
+                "parameters": RECIPE_SEARCH_TOOL.get("parameters", {}),
+            },
+        )
+        for virtual in virtual_tools:
+            name = str(virtual.get("name", "")).strip()
+            if not name or name in existing_names:
+                continue
+            prepared.append(virtual)
+            existing_names.add(name)
+        return prepared
 
     async def _call_llm(
         self,
@@ -611,6 +695,11 @@ class ShoppingAgent:
         arguments: dict[str, Any],
         llm_provider: str,
     ) -> str:
+        if name == "recipe_ingredients" and name not in self._mcp_tool_names:
+            return await self._fallback_recipe_ingredients(arguments, llm_provider)
+        if name == "recipe_search" and name not in self._mcp_tool_names:
+            return await self._fallback_recipe_search(arguments)
+
         last_error: Exception | None = None
         for attempt in range(self._mcp_retries + 1):
             try:
@@ -1027,6 +1116,47 @@ class ShoppingAgent:
         if cls._looks_like_pepper_vegetable(normalized):
             return False
         return "соль" in normalized or "сахар" in normalized
+
+    @classmethod
+    def _is_recipe_followup(cls, *, text: str, history: list[dict[str, Any]] | None) -> bool:
+        if not history:
+            return False
+        normalized = cls._normalize_text(text)
+        if not normalized or len(normalized) > 120:
+            return False
+        if any(marker in normalized for marker in ("привяз", "алис", "код", "статус", "отвяз")):
+            return False
+
+        recent_user_messages = [
+            str(msg.get("content", "")).strip()
+            for msg in reversed(history)
+            if msg.get("role") == "user" and isinstance(msg.get("content"), str)
+        ]
+        for prev_text in recent_user_messages[:3]:
+            if detect_prompt_profile(prev_text) == "recipe":
+                return True
+
+        for msg in reversed(history[-8:]):
+            if msg.get("role") == "tool" and msg.get("name") in {
+                "recipe_ingredients",
+                "recipe_search",
+            }:
+                return True
+            if msg.get("role") != "assistant":
+                continue
+            tool_calls = msg.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for call in tool_calls:
+                if not isinstance(call, dict):
+                    continue
+                function_data = call.get("function")
+                if not isinstance(function_data, dict):
+                    continue
+                name = str(function_data.get("name", "")).strip()
+                if name in {"recipe_ingredients", "recipe_search"}:
+                    return True
+        return False
 
     async def _search_products_for_recipe(self, query: str) -> str:
         last_error: Exception | None = None
