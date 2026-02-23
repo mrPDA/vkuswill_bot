@@ -88,6 +88,35 @@ class _FallbackMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _CartLinkOnlyMCPClient(_FakeMCPClient):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"xml_id": 1001, "name": "Яйцо куриное С1", "price": 120, "unit": "шт"},
+                            {
+                                "xml_id": 1002,
+                                "name": "Масло сливочное 82,5%, 200 г",
+                                "price": 282,
+                                "unit": "шт",
+                            },
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://vkusvill.ru/?share_basket=123456789"}},
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _FakeFunction:
     def __init__(self, name: str, arguments: str) -> None:
         self.name = name
@@ -343,6 +372,45 @@ async def test_stabilize_when_final_reply_contains_wrong_cart_link() -> None:
     assert "https://vkusvill.ru/cart" not in result
     assert '<a href="https://shop.example/cart/42">Открыть корзину</a>' in result
     assert "Итого: 310.00 руб" in result
+
+
+@pytest.mark.asyncio
+async def test_builds_price_summary_when_cart_response_has_only_link() -> None:
+    mcp = _CartLinkOnlyMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-1",
+                        "vkusvill_products_search",
+                        '{"q":"яйцо куриное","limit":5}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-2",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":1001,"q":4},{"xml_id":1002,"q":0.5}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Собрала корзину по вашему запросу.")),
+    ]
+    agent, _ = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=200, text="собери яичницу")
+    assert "Яйцо куриное С1 x 4 = 480.00 руб" in result
+    assert "Масло сливочное 82,5%, 200 г x 0.5 = 141.00 руб" in result
+    assert "Итого: 621.00 руб" in result
+    assert '<a href="https://vkusvill.ru/?share_basket=123456789">Открыть корзину</a>' in result
 
 
 @pytest.mark.asyncio
