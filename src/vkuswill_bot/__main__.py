@@ -31,8 +31,9 @@ from vkuswill_bot.bot.handlers import admin_router, router
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware, UserMiddleware
 from vkuswill_bot.config import config
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.chat_engine import ChatEngineProtocol
+from vkuswill_bot.services.chat_engine_factory import create_chat_engine
 from vkuswill_bot.services.dialog_manager import DialogManager
-from vkuswill_bot.services.gigachat_service import GigaChatService
 from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.migration_runner import MigrationRunner
@@ -124,8 +125,14 @@ logger = logging.getLogger(__name__)
 # Увеличенный пул потоков для синхронного SDK GigaChat (asyncio.to_thread)
 THREAD_POOL_WORKERS = 50
 
-# Путь для приёма webhook-обновлений от Telegram
-WEBHOOK_PATH = "/webhook"
+# Внутренний путь на aiohttp-сервере (nginx проксирует внешние пути сюда)
+INTERNAL_WEBHOOK_PATH = "/webhook"
+
+
+def _build_webhook_url(webhook_host: str, webhook_path: str) -> str:
+    host = webhook_host.strip().rstrip("/")
+    base = host if host.startswith(("http://", "https://")) else f"https://{host}"
+    return f"{base}{webhook_path}"
 
 
 # ---------------------------------------------------------------------------
@@ -267,7 +274,10 @@ async def main() -> None:
     dp.message.middleware(ThrottlingMiddleware(rate_limit=5, period=60.0))
 
     # MCP-клиент для ВкусВилл
-    mcp_client = VkusvillMCPClient(config.mcp_server_url)
+    mcp_client = VkusvillMCPClient(
+        config.mcp_server_url,
+        api_key=config.mcp_server_api_key,
+    )
 
     # Хранилище предпочтений (SQLite, отдельная БД)
     prefs_store = PreferencesStore(config.database_path)
@@ -359,22 +369,17 @@ async def main() -> None:
         anonymize_messages=config.langfuse_anonymize_messages,
     )
 
-    # GigaChat-сервис — все зависимости инжектируются явно
-    gigachat_service = GigaChatService(
-        credentials=config.gigachat_credentials,
-        model=config.gigachat_model,
-        scope=config.gigachat_scope,
+    # Chat engine (feature-flag): legacy GigaChat или ShoppingAgent
+    chat_engine = create_chat_engine(
+        cfg=config,
         mcp_client=mcp_client,
         preferences_store=prefs_store,
         recipe_store=recipe_store,
-        max_tool_calls=config.max_tool_calls,
-        max_history=config.max_history_messages,
         dialog_manager=dialog_manager,
         tool_executor=tool_executor,
-        gigachat_max_concurrent=config.gigachat_max_concurrent,
         langfuse_service=langfuse_service,
-        ca_bundle_file=config.gigachat_ca_bundle,
     )
+    logger.info("Chat engine selected: %s", config.chat_engine)
 
     # Предзагрузка MCP-инструментов
     try:
@@ -385,7 +390,8 @@ async def main() -> None:
         logger.warning("Инструменты будут загружены при первом запросе")
 
     # Передаём сервисы в хендлеры через DI
-    dp["gigachat_service"] = gigachat_service
+    # DI-ключ сохраняем для обратной совместимости с существующими handlers.
+    dp["gigachat_service"] = chat_engine
     if user_store is not None:
         dp["user_store"] = user_store
     if stats_aggregator is not None:
@@ -397,7 +403,7 @@ async def main() -> None:
 
     async def _cleanup() -> None:
         logger.info("Закрытие ресурсов...")
-        await gigachat_service.close()
+        await chat_engine.close()
         await recipe_store.close()
         await prefs_store.close()
         await nutrition_service.close()
@@ -427,7 +433,7 @@ async def main() -> None:
             pg_pool=pg_pool,
             mcp_client=mcp_client,
             user_store=user_store,
-            gigachat_service=gigachat_service,
+            chat_engine=chat_engine,
             cleanup=_cleanup,
         )
     else:
@@ -489,12 +495,18 @@ async def _run_webhook(
     pg_pool: asyncpg.Pool | None,
     mcp_client: VkusvillMCPClient,
     user_store: UserStore | None,
-    gigachat_service: GigaChatService,
+    chat_engine: ChatEngineProtocol,
     cleanup: object,
 ) -> None:
     """Запуск бота в режиме webhook через aiohttp."""
-    webhook_url = f"https://{config.webhook_host}{WEBHOOK_PATH}"
-    logger.info("Бот запускается (webhook: %s, порт %d)...", webhook_url, config.webhook_port)
+    public_webhook_path = config.webhook_path
+    webhook_url = _build_webhook_url(config.webhook_host, public_webhook_path)
+    logger.info(
+        "Бот запускается (webhook: %s, порт %d, internal path: %s)...",
+        webhook_url,
+        config.webhook_port,
+        INTERNAL_WEBHOOK_PATH,
+    )
 
     # aiohttp-приложение
     app = web.Application()
@@ -510,13 +522,13 @@ async def _run_webhook(
     register_voice_link_routes(
         app,
         user_store=user_store,
-        gigachat_service=gigachat_service,
+        chat_engine=chat_engine,
         api_key=config.voice_link_api_key,
     )
 
     # Webhook handler от aiogram
     webhook_handler = SimpleRequestHandler(dispatcher=dp, bot=bot)
-    webhook_handler.register(app, path=WEBHOOK_PATH)
+    webhook_handler.register(app, path=INTERNAL_WEBHOOK_PATH)
     setup_application(app, dp, bot=bot)
 
     # Установить webhook в Telegram

@@ -1,0 +1,107 @@
+[
+  {
+    "id": "cart_created",
+    "user_id": 42,
+    "voice_user_id": "alice-1",
+    "utterance": "Собери корзину: молоко и яйца",
+    "before_snapshot": {
+      "link": "https://shop.example/cart/old",
+      "created_at": "2026-02-22T10:00:00+00:00",
+      "products": [
+        {
+          "xml_id": 1,
+          "q": 1
+        }
+      ],
+      "total": 100.0
+    },
+    "after_snapshot": {
+      "link": "https://shop.example/cart/new",
+      "created_at": "2026-02-22T10:01:00+00:00",
+      "products": [
+        {
+          "xml_id": 2,
+          "q": 1
+        },
+        {
+          "xml_id": 3,
+          "q": 1
+        }
+      ],
+      "total": 300.0
+    },
+    "assistant_text": "Готово",
+    "raise_llm_error": false,
+    "expect": {
+      "ok": true,
+      "cart_link_present": true,
+      "items_count": 2,
+      "total_rub": 300.0,
+      "error": null
+    }
+  },
+  {
+    "id": "cart_not_created",
+    "user_id": 42,
+    "voice_user_id": "alice-1",
+    "utterance": "Собери корзину: молоко и яйца",
+    "before_snapshot": {
+      "link": "https://shop.example/cart/same",
+      "created_at": "2026-02-22T10:00:00+00:00",
+      "products": [
+        {
+          "xml_id": 1,
+          "q": 1
+        }
+      ],
+      "total": 100.0
+    },
+    "after_snapshot": {
+      "link": "https://shop.example/cart/same",
+      "created_at": "2026-02-22T10:00:00+00:00",
+      "products": [
+        {
+          "xml_id": 1,
+          "q": 1
+        }
+      ],
+      "total": 100.0
+    },
+    "assistant_text": "Не удалось собрать корзину",
+    "raise_llm_error": false,
+    "expect": {
+      "ok": false,
+      "cart_link_present": false,
+      "items_count": 0,
+      "total_rub": null,
+      "error": "cart_not_created"
+    }
+  },
+  {
+    "id": "llm_error",
+    "user_id": 42,
+    "voice_user_id": "alice-1",
+    "utterance": "Собери корзину: молоко и яйца",
+    "before_snapshot": {
+      "link": "https://shop.example/cart/old",
+      "created_at": "2026-02-22T10:00:00+00:00",
+      "products": [
+        {
+          "xml_id": 1,
+          "q": 1
+        }
+      ],
+      "total": 100.0
+    },
+    "after_snapshot": null,
+    "assistant_text": "",
+    "raise_llm_error": true,
+    "expect": {
+      "ok": false,
+      "cart_link_present": false,
+      "items_count": 0,
+      "total_rub": null,
+      "error": "llm_error"
+    }
+  }
+]

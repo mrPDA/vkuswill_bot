@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import json
 
-from pydantic import field_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Config(BaseSettings):
-    """Настройки бота, GigaChat и MCP."""
+    """Настройки бота, chat engine и MCP."""
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -19,12 +19,26 @@ class Config(BaseSettings):
     # Telegram
     bot_token: str
 
+    # Chat engine runtime selection
+    chat_engine: str = "legacy"  # legacy | shopping_agent
+
     # GigaChat
     gigachat_credentials: str
     gigachat_model: str = "GigaChat-2-Max"
     gigachat_scope: str = "GIGACHAT_API_PERS"
     gigachat_max_concurrent: int = 15  # макс. параллельных запросов к GigaChat
     gigachat_ca_bundle: str = "certs/russian_ca_bundle.pem"  # CA-bundle Минцифры для SSL
+
+    # OpenAI-compatible LLM (для shopping_agent)
+    llm_provider: str = "qwen_openai"  # qwen_openai | gigachat_sdk
+    # single_provider | single_user_gigachat_multi_user_qwen
+    llm_routing_strategy: str = "single_provider"
+    llm_singleton_provider: str = "gigachat_sdk"
+    llm_burst_provider: str = "qwen_openai"
+    llm_base_url: str = "https://llm.api.cloud.yandex.net/v1"
+    llm_api_key: str = ""
+    llm_model: str = ""
+    llm_max_concurrent: int = 10
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
@@ -78,6 +92,72 @@ class Config(BaseSettings):
             return [int(x.strip()) for x in v.split(",") if x.strip()]
         return []  # type: ignore[return-value]
 
+    @field_validator("chat_engine")
+    @classmethod
+    def _validate_chat_engine(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        allowed = {"legacy", "shopping_agent"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(f"chat_engine must be one of: {allowed_values}")
+        return normalized
+
+    @field_validator("llm_provider")
+    @classmethod
+    def _validate_llm_provider(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        aliases = {
+            "qwen": "qwen_openai",
+            "openai": "qwen_openai",
+            "openai_compatible": "qwen_openai",
+            "gigachat": "gigachat_sdk",
+        }
+        normalized = aliases.get(normalized, normalized)
+        allowed = {"qwen_openai", "gigachat_sdk"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(f"llm_provider must be one of: {allowed_values}")
+        return normalized
+
+    @field_validator("llm_singleton_provider", "llm_burst_provider")
+    @classmethod
+    def _validate_llm_routing_provider(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        aliases = {
+            "qwen": "qwen_openai",
+            "openai": "qwen_openai",
+            "openai_compatible": "qwen_openai",
+            "gigachat": "gigachat_sdk",
+        }
+        normalized = aliases.get(normalized, normalized)
+        allowed = {"qwen_openai", "gigachat_sdk"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(f"routing provider must be one of: {allowed_values}")
+        return normalized
+
+    @field_validator("llm_routing_strategy")
+    @classmethod
+    def _validate_llm_routing_strategy(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        allowed = {"single_provider", "single_user_gigachat_multi_user_qwen"}
+        if normalized not in allowed:
+            allowed_values = ", ".join(sorted(allowed))
+            raise ValueError(f"llm_routing_strategy must be one of: {allowed_values}")
+        return normalized
+
+    @model_validator(mode="after")
+    def _validate_llm_routing_consistency(self) -> Config:
+        if (
+            self.llm_routing_strategy == "single_user_gigachat_multi_user_qwen"
+            and self.llm_singleton_provider == self.llm_burst_provider
+        ):
+            raise ValueError(
+                "llm_singleton_provider and llm_burst_provider must differ for "
+                "single_user_gigachat_multi_user_qwen"
+            )
+        return self
+
     @field_validator("mcp_server_api_keys", mode="before")
     @classmethod
     def _parse_mcp_server_api_keys(cls, v: object) -> dict[str, str]:
@@ -108,9 +188,22 @@ class Config(BaseSettings):
                 parsed[client_id] = api_key
         return parsed
 
+    @field_validator("webhook_path")
+    @classmethod
+    def _normalize_webhook_path(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            return "/webhook"
+        if not normalized.startswith("/"):
+            normalized = f"/{normalized}"
+        if len(normalized) > 1:
+            normalized = normalized.rstrip("/")
+        return normalized
+
     # Webhook
     use_webhook: bool = False
     webhook_host: str = ""
+    webhook_path: str = "/webhook"
     webhook_port: int = 8080
     webhook_cert_path: str = ""  # путь к самоподписанному SSL-сертификату для Telegram
 

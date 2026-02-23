@@ -156,6 +156,35 @@ async def test_order_handler_cart_not_created() -> None:
 
 
 @pytest.mark.asyncio
+async def test_order_handler_items_count_uses_snapshot_summary() -> None:
+    svc = _DummyGigaChat()
+    svc._after_snapshot = {
+        "link": "https://shop.example/cart/new",
+        "created_at": "2026-02-21T00:01:00+00:00",
+        "products": [],
+        "total": 300.0,
+        "price_summary": {
+            "count": 3,
+            "items": [
+                "- Молоко: 99 руб/шт x 1 = 99.00 руб",
+                "- Яйца: 160 руб/уп x 1 = 160.00 руб",
+                "- Хлеб: 41 руб/шт x 1 = 41.00 руб",
+            ],
+        },
+    }
+    req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
+        payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
+    )
+    resp = await _order_handler(req)  # type: ignore[arg-type]
+    assert resp.status == 200
+    body = _read_json(resp)
+    assert body["ok"] is True
+    assert body["items_count"] == 3
+
+
+@pytest.mark.asyncio
 async def test_order_start_and_status_done() -> None:
     app = {
         "voice_link_api_key": "secret",

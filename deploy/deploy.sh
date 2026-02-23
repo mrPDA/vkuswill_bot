@@ -29,6 +29,7 @@ LANGFUSE_CONTAINER_NAME="${LANGFUSE_CONTAINER_NAME:-vkuswill-langfuse}"
 METABASE_CONTAINER_NAME="${METABASE_CONTAINER_NAME:-vkuswill-metabase}"
 HEALTH_PORT="${HEALTH_PORT:-8080}"
 MCP_DEFAULT_PORT="${MCP_DEFAULT_PORT:-8081}"
+PUBLIC_WEBHOOK_PATH=""
 HEALTH_RETRIES=10
 HEALTH_DELAY=5
 
@@ -161,7 +162,117 @@ print(f'env={len(env_lines)} prompt={len(prompt)}')
   log "Секреты загружены из Lockbox ($(grep -c '=' "$ENV_FILE" || echo 0) записей, промпт: $(wc -c < "$PROMPT_FILE") байт)"
 }
 
-# ─── 2b. Идемпотентная настройка nginx для voice-link ───────
+# ─── 2b. Определение публичного пути webhook ────────────────
+resolve_public_webhook_path() {
+  local raw=""
+
+  if [[ -f "$ENV_FILE" ]]; then
+    raw=$(grep -E '^WEBHOOK_PATH=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- || true)
+  fi
+
+  if [[ -z "$raw" ]]; then
+    if [[ "$DEPLOY_ROOT" == *-stg ]]; then
+      raw="/webhook-stg"
+    else
+      raw="/webhook"
+    fi
+  fi
+
+  PUBLIC_WEBHOOK_PATH=$(python3 - "$raw" <<'PYCODE'
+import sys
+
+path = (sys.argv[1] or "").strip()
+if not path:
+    path = "/webhook"
+if not path.startswith("/"):
+    path = f"/{path}"
+if len(path) > 1:
+    path = path.rstrip("/")
+print(path)
+PYCODE
+)
+
+  log "Публичный webhook path: ${PUBLIC_WEBHOOK_PATH}"
+}
+
+# ─── 2c. Идемпотентная настройка nginx для webhook ──────────
+ensure_webhook_nginx_route() {
+  local NGINX_CONF="/etc/nginx/sites-available/vkuswill-bot"
+
+  if [[ -z "${PUBLIC_WEBHOOK_PATH}" ]]; then
+    warn "PUBLIC_WEBHOOK_PATH не определён, пропускаем настройку webhook route"
+    return 0
+  fi
+
+  if [[ ! -f "$NGINX_CONF" ]]; then
+    warn "Nginx-конфиг ${NGINX_CONF} не найден, пропускаем проверку ${PUBLIC_WEBHOOK_PATH}"
+    return 0
+  fi
+
+  if ! sudo -n true 2>/dev/null; then
+    warn "Нет прав sudo без пароля, пропускаем автоматическую настройку webhook route"
+    return 0
+  fi
+
+  log "Проверка nginx route ${PUBLIC_WEBHOOK_PATH} -> 127.0.0.1:${HEALTH_PORT}/webhook"
+
+  if ! sudo python3 - "$NGINX_CONF" "$PUBLIC_WEBHOOK_PATH" "$HEALTH_PORT" <<'PYCODE'
+import pathlib
+import re
+import sys
+
+conf_path = pathlib.Path(sys.argv[1])
+webhook_path = sys.argv[2]
+health_port = sys.argv[3]
+
+content = conf_path.read_text(encoding="utf-8")
+escaped_path = re.escape(webhook_path)
+pattern = re.compile(
+    rf"(?ms)^    location\s+{escaped_path}\s*\{{.*?^    \}}\n"
+)
+
+block = (
+    f"    location {webhook_path} {{\n"
+    f"        proxy_pass http://127.0.0.1:{health_port}/webhook;\n"
+    "        proxy_set_header Host $host;\n"
+    "        proxy_set_header X-Real-IP $remote_addr;\n"
+    "        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n"
+    "        proxy_set_header X-Forwarded-Proto $scheme;\n"
+    "        proxy_read_timeout 60s;\n"
+    "        proxy_send_timeout 60s;\n"
+    "    }\n"
+)
+
+match = pattern.search(content)
+if match:
+    current_block = match.group(0)
+    if f"proxy_pass http://127.0.0.1:{health_port}/webhook;" in current_block:
+        raise SystemExit(0)
+    updated = content[: match.start()] + block + content[match.end() :]
+else:
+    needle = "    location / {\n        return 404;\n    }\n"
+    parts = content.rsplit(needle, 1)
+    if len(parts) != 2:
+        raise SystemExit("cannot_find_fallback_location_block")
+    updated = parts[0] + block + "\n" + needle + parts[1]
+
+conf_path.write_text(updated, encoding="utf-8")
+PYCODE
+  then
+    err "Не удалось обновить nginx-конфиг для ${PUBLIC_WEBHOOK_PATH}"
+    return 1
+  fi
+
+  if ! sudo nginx -t >/dev/null 2>&1; then
+    err "nginx -t не прошел после настройки ${PUBLIC_WEBHOOK_PATH}"
+    return 1
+  fi
+
+  sudo systemctl reload nginx
+  log "Nginx route ${PUBLIC_WEBHOOK_PATH} настроен"
+}
+
+# ─── 2d. Идемпотентная настройка nginx для voice-link ───────
 ensure_voice_link_nginx_route() {
   local NGINX_CONF="/etc/nginx/sites-available/vkuswill-bot"
 
@@ -261,10 +372,14 @@ fi
 # ─── 6. Загрузка секретов ────────────────────────────────────
 load_lockbox_secrets
 
-# ─── 6a. Проверка nginx voice-link route ─────────────────────
+# ─── 6a. Определение webhook path + настройка nginx route ────
+resolve_public_webhook_path
+ensure_webhook_nginx_route
+
+# ─── 6b. Проверка nginx voice-link route ─────────────────────
 ensure_voice_link_nginx_route
 
-# ─── 6b. Запуск Langfuse (self-hosted, если настроен) ────────
+# ─── 6c. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
 
   # Проверяем, включён ли Langfuse
@@ -429,6 +544,7 @@ if [[ -f "$ENV_FILE" ]]; then
     warn "WEBHOOK_HOST не задан в ${ENV_FILE}. Укажите внешний домен/IP для webhook (например, bot.example.com)"
     warn "Контейнер будет запущен, но webhook может не работать"
   fi
+  log "WEBHOOK_PATH=${PUBLIC_WEBHOOK_PATH}"
 else
   warn "Файл ${ENV_FILE} не найден. Контейнер будет запущен без переменных окружения из файла."
   warn "Убедитесь, что .env файл создан вручную или секреты доступны через Lockbox."
@@ -464,12 +580,19 @@ log "Файлы в DATA_DIR: $(ls -la "$DATA_DIR/" 2>/dev/null || echo '(пус�
 # SSL-сертификат для самоподписанного webhook
 SSL_MOUNT=""
 SSL_ENV=""
-if [[ -f "${SSL_DIR}/cert.pem" ]]; then
-  SSL_MOUNT="-v ${SSL_DIR}/cert.pem:/app/ssl/cert.pem:ro"
+SSL_CERT_SOURCE="${SSL_DIR}/cert.pem"
+# Для staging допускаем fallback на общий cert production-контура,
+# если отдельный stg-cert не создан.
+if [[ ! -f "${SSL_CERT_SOURCE}" && "${DEPLOY_ROOT}" == *-stg && -f "/opt/vkuswill-bot/ssl/cert.pem" ]]; then
+  SSL_CERT_SOURCE="/opt/vkuswill-bot/ssl/cert.pem"
+fi
+
+if [[ -f "${SSL_CERT_SOURCE}" ]]; then
+  SSL_MOUNT="-v ${SSL_CERT_SOURCE}:/app/ssl/cert.pem:ro"
   SSL_ENV="-e WEBHOOK_CERT_PATH=/app/ssl/cert.pem"
-  log "Найден SSL-сертификат: ${SSL_DIR}/cert.pem"
+  log "Найден SSL-сертификат: ${SSL_CERT_SOURCE}"
 else
-  warn "SSL-сертификат не найден в ${SSL_DIR}/cert.pem — webhook без сертификата"
+  warn "SSL-сертификат не найден (${SSL_DIR}/cert.pem) — webhook без сертификата"
 fi
 
 # Переопределение модели: --model имеет приоритет над Lockbox/.env
@@ -500,6 +623,7 @@ docker run -d \
   $SSL_MOUNT \
   $SSL_ENV \
   -e "USE_WEBHOOK=true" \
+  -e "WEBHOOK_PATH=${PUBLIC_WEBHOOK_PATH}" \
   -e "WEBHOOK_PORT=${HEALTH_PORT}" \
   --health-cmd "python -c \"import urllib.request; urllib.request.urlopen('http://localhost:${HEALTH_PORT}/health')\" 2>/dev/null || exit 1" \
   --health-interval=30s \
