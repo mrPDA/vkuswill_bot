@@ -5,6 +5,14 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.5] — 2026-02-23
+
+### Исправлено
+
+- **Qwen usage в Langfuse** — расширен парсинг usage-метрик (`input/output/total`) для альтернативных форматов ответа OpenAI-compatible API, включая `input_tokens`, `outputTokens`, строковые значения и fallback-расчёт `total = input + output`
+- **Снижение токен-расхода в shopping_agent** — добавлены runtime-параметры `LLM_MAX_TOKENS` и `LLM_TEMPERATURE`, уменьшены дефолты `MAX_TOOL_CALLS` и лимиты истории для сокращения стоимости LLM-запросов
+- **Release pipeline** — синхронизирована версия проекта в `pyproject.toml` с текущим циклом релизов, чтобы шаг `Verify pyproject.toml version` проходил для тегированных релизов
+
 ## [0.18.2] — 2026-02-20
 
 ### Исправлено
