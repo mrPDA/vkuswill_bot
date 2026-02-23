@@ -431,7 +431,9 @@ async def test_forces_cart_tool_call_when_llm_claims_cart_ready_without_tool_res
     )
     mcp = _FakeMCPClient(tool_result=cart_payload)
     llm_script = [
-        _FakeResponse(_FakeMessage(content="Собрала корзину. Открыть корзину: https://vkusvill.ru/cart")),
+        _FakeResponse(
+            _FakeMessage(content="Собрала корзину. Открыть корзину: https://vkusvill.ru/cart")
+        ),
         _FakeResponse(
             _FakeMessage(
                 content="",
