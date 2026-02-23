@@ -102,6 +102,8 @@ def create_chat_engine(
             langfuse_service=langfuse_service,
             llm_max_tokens=cfg.llm_max_tokens,
             llm_temperature=cfg.llm_temperature,
+            prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
+            compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
             gigachat_credentials=cfg.gigachat_credentials,
             gigachat_scope=cfg.gigachat_scope,
             gigachat_ca_bundle=cfg.gigachat_ca_bundle,

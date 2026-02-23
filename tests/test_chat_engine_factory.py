@@ -30,6 +30,8 @@ def _cfg(**overrides: object) -> SimpleNamespace:
         "llm_max_concurrent": 10,
         "llm_max_tokens": 900,
         "llm_temperature": 0.2,
+        "llm_prompt_profiles_enabled": False,
+        "llm_compact_followup_prompt_enabled": True,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -182,8 +184,33 @@ def test_create_chat_engine_shopping_success() -> None:
         langfuse_service=deps["langfuse_service"],
         llm_max_tokens=cfg.llm_max_tokens,
         llm_temperature=cfg.llm_temperature,
+        prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
+        compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
         gigachat_credentials=cfg.gigachat_credentials,
         gigachat_scope=cfg.gigachat_scope,
         gigachat_ca_bundle=cfg.gigachat_ca_bundle,
         gigachat_model=cfg.gigachat_model,
     )
+
+
+def test_create_chat_engine_shopping_passes_prompt_profile_flags() -> None:
+    cfg = _cfg(
+        chat_engine="shopping_agent",
+        llm_api_key="key",
+        llm_model="gpt://folder/model/latest",
+        llm_prompt_profiles_enabled=True,
+        llm_compact_followup_prompt_enabled=False,
+    )
+    deps = _deps()
+    shopping_cls = MagicMock()
+    fake_module = SimpleNamespace(ShoppingAgent=shopping_cls)
+
+    with patch(
+        "vkuswill_bot.services.chat_engine_factory.importlib.import_module",
+        return_value=fake_module,
+    ):
+        create_chat_engine(cfg=cfg, **deps)
+
+    kwargs = shopping_cls.call_args.kwargs
+    assert kwargs["prompt_profiles_enabled"] is True
+    assert kwargs["compact_followup_prompt_enabled"] is False
