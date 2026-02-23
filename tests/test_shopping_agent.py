@@ -287,7 +287,9 @@ async def test_tool_call_then_final_text_and_snapshot() -> None:
     agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
 
     result = await agent.process_message(user_id=42, text="собери корзину")
-    assert result == "Корзина собрана"
+    assert "Собрала корзину по вашему запросу." in result
+    assert "Итого: 430.00 руб" in result
+    assert '<a href="https://shop.example/cart/1">Открыть корзину</a>' in result
     assert mcp_client.calls == [
         ("vkusvill_cart_link_create", {"products": [{"xml_id": 1, "q": 1}]})
     ]
@@ -297,6 +299,50 @@ async def test_tool_call_then_final_text_and_snapshot() -> None:
     assert snapshot["link"] == "https://shop.example/cart/1"
     assert snapshot["total"] == 430.0
     assert snapshot["products"] == [{"xml_id": 1, "q": 1}]
+
+
+@pytest.mark.asyncio
+async def test_stabilize_when_final_reply_contains_wrong_cart_link() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/42",
+                "price_summary": {
+                    "total": 310.0,
+                    "total_text": "Итого: 310.00 руб",
+                    "items": [
+                        "- Яйцо куриное x 4 = 220.00 руб",
+                        "- Масло сливочное x 1 = 90.00 руб",
+                    ],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "vkusvill_cart_link_create",
+        '{"products":[{"xml_id":1,"q":4},{"xml_id":2,"q":1}]}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(
+            _FakeMessage(
+                content=(
+                    "Готово! Собрала корзину.\n"
+                    '<a href="https://vkusvill.ru/cart">Открыть корзину</a>'
+                )
+            )
+        ),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=42, text="собери корзину")
+    assert "https://vkusvill.ru/cart" not in result
+    assert '<a href="https://shop.example/cart/42">Открыть корзину</a>' in result
+    assert "Итого: 310.00 руб" in result
 
 
 @pytest.mark.asyncio
