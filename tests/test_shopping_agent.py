@@ -379,6 +379,48 @@ async def test_stabilize_wrong_zero_items_summary_after_cart_created() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stabilize_when_final_reply_misses_item_prices() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/4",
+                "price_summary": {
+                    "total": 643.0,
+                    "total_text": "Итого: 643.00 руб",
+                    "items": [
+                        "- Яйцо куриное С0 Жёлтики 6 шт x 4 = 404.00 руб",
+                        "- Масло сливочное 82,5%, 100 г x 1 = 198.00 руб",
+                        "- Соль Славяна помол №1 пакет 1 кг x 1 = 41.00 руб",
+                    ],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "vkusvill_cart_link_create",
+        '{"products":[{"xml_id":1,"q":4},{"xml_id":2,"q":1},{"xml_id":3,"q":1}]}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(
+            _FakeMessage(content="Собрала корзину: яйца, сливочное масло и соль. Корзина готова.")
+        ),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=77, text="собери корзину для яичницы")
+    assert "x 4 = 404.00 руб" in result
+    assert "x 1 = 198.00 руб" in result
+    assert "x 1 = 41.00 руб" in result
+    assert "Итого: 643.00 руб" in result
+    assert '<a href="https://shop.example/cart/4">Открыть корзину</a>' in result
+
+
+@pytest.mark.asyncio
 async def test_tool_result_compacted_in_history_for_next_llm_call() -> None:
     large_items = [
         {

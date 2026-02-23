@@ -8,6 +8,7 @@ import datetime as dt
 import json
 import logging
 import math
+import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -1552,8 +1553,10 @@ class ShoppingAgent:
 
     def _stabilize_cart_output(self, *, final_text: str, cart_data: dict[str, Any]) -> str:
         items_count = 0
+        summary_dict: dict[str, Any] = {}
         summary = cart_data.get("price_summary")
         if isinstance(summary, dict):
+            summary_dict = summary
             count_raw = summary.get("count")
             if isinstance(count_raw, int) and count_raw > 0:
                 items_count = count_raw
@@ -1568,4 +1571,33 @@ class ShoppingAgent:
             return self._render_stable_cart_output(cart_data)
         if self._looks_like_wrong_cart_summary(final_text, items_count=items_count):
             return self._render_stable_cart_output(cart_data)
+        if self._looks_like_missing_cart_prices(final_text, summary=summary_dict):
+            return self._render_stable_cart_output(cart_data)
         return final_text
+
+    @staticmethod
+    def _looks_like_missing_cart_prices(text: str, *, summary: dict[str, Any]) -> bool:
+        """Определить, что финальный ответ не содержит цен по позициям корзины."""
+        items = summary.get("items")
+        if not isinstance(items, list) or not any(isinstance(row, str) for row in items):
+            return False
+
+        normalized = text.strip()
+        if not normalized:
+            return True
+
+        # Ищем строки формата:
+        # 1. Товар ... x 2 = 198 ₽
+        # 2. Товар ... × 2 шт = 198 руб
+        priced_row = re.compile(
+            r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)"
+        )
+        has_priced_rows = bool(priced_row.search(normalized))
+
+        # Минимальная проверка: если есть total_text в summary, он тоже должен быть в ответе.
+        total_text_raw = summary.get("total_text")
+        has_total_text = isinstance(total_text_raw, str) and bool(total_text_raw.strip())
+        total_text = total_text_raw.strip().lower() if has_total_text else ""
+        has_total_in_text = total_text in normalized.lower() if total_text else True
+
+        return not (has_priced_rows and has_total_in_text)
