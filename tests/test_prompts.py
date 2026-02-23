@@ -105,12 +105,18 @@ class TestPromptProfiles:
     def test_get_profiled_system_prompt_contains_profile_marker(self):
         prompt = get_profiled_system_prompt(profile="cart", compact=False)
         assert "[PROMPT_PROFILE:cart]" in prompt
+        assert "[PROMPT_MODE:expanded_start]" in prompt
         assert "[PROMPT_MODE:compact_followup]" not in prompt
 
     def test_get_profiled_system_prompt_compact_mode_adds_followup_marker(self):
         prompt = get_profiled_system_prompt(profile="recipe", compact=True)
         assert "[PROMPT_PROFILE:recipe]" in prompt
         assert "[PROMPT_MODE:compact_followup]" in prompt
+
+    def test_get_profiled_system_prompt_finalize_mode(self):
+        prompt = get_profiled_system_prompt(profile="cart", mode="finalize")
+        assert "[PROMPT_PROFILE:cart]" in prompt
+        assert "[PROMPT_MODE:finalize]" in prompt
 
 
 # ============================================================================

@@ -22,6 +22,7 @@ from vkuswill_bot.services.llm_adapters import (
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.prompts import (
     RECIPE_EXTRACTION_PROMPT,
+    PromptMode,
     PromptProfile,
     detect_prompt_profile,
     get_profiled_system_prompt,
@@ -235,7 +236,7 @@ class ShoppingAgent:
         history = self._ensure_system_prompt(
             history=history,
             prompt_profile=prompt_profile,
-            compact=False,
+            mode="start",
         )
 
         history.append({"role": "user", "content": text})
@@ -262,10 +263,14 @@ class ShoppingAgent:
         await _progress("\u2699\ufe0f Анализирую запрос...")
 
         for step in range(1, self._max_tool_calls + 1):
+            prompt_mode = self._resolve_prompt_mode(
+                step=step,
+                expecting_final_answer=cart_data_this_turn is not None,
+            )
             llm_input = self._build_llm_input_messages(
                 history=history,
                 prompt_profile=prompt_profile,
-                step=step,
+                mode=prompt_mode,
             )
             llm_input_chars = self._history_char_count(llm_input)
             total_llm_input_chars += llm_input_chars
@@ -298,7 +303,8 @@ class ShoppingAgent:
                         "provider": llm_provider,
                         "routing_strategy": self._llm_routing_strategy,
                         "prompt_profile": prompt_profile,
-                        "compact_prompt": bool(step > 1 and self._compact_followup_prompt_enabled),
+                        "prompt_mode": prompt_mode,
+                        "compact_prompt": prompt_mode == "compact",
                     },
                 )
 
@@ -454,34 +460,42 @@ class ShoppingAgent:
         *,
         history: list[dict[str, Any]],
         prompt_profile: PromptProfile,
-        step: int,
+        mode: PromptMode,
     ) -> list[dict[str, Any]]:
-        compact = bool(step > 1 and self._compact_followup_prompt_enabled)
         return self._ensure_system_prompt(
             history=history,
             prompt_profile=prompt_profile,
-            compact=compact,
+            mode=mode,
         )
+
+    def _resolve_prompt_mode(self, *, step: int, expecting_final_answer: bool) -> PromptMode:
+        if expecting_final_answer:
+            return "finalize"
+        if step <= 1:
+            return "start"
+        if self._compact_followup_prompt_enabled:
+            return "compact"
+        return "start"
 
     def _ensure_system_prompt(
         self,
         *,
         history: list[dict[str, Any]] | None,
         prompt_profile: PromptProfile,
-        compact: bool,
+        mode: PromptMode,
     ) -> list[dict[str, Any]]:
         """Обеспечить первый system-message с нужной версией промпта."""
-        prompt = self._resolve_system_prompt(prompt_profile=prompt_profile, compact=compact)
+        prompt = self._resolve_system_prompt(prompt_profile=prompt_profile, mode=mode)
         prepared = list(history) if history is not None else []
         if prepared and prepared[0].get("role") == "system":
             prepared[0] = {"role": "system", "content": prompt}
             return prepared
         return [{"role": "system", "content": prompt}, *prepared]
 
-    def _resolve_system_prompt(self, *, prompt_profile: PromptProfile, compact: bool) -> str:
+    def _resolve_system_prompt(self, *, prompt_profile: PromptProfile, mode: PromptMode) -> str:
         if not self._prompt_profiles_enabled:
             return get_system_prompt()
-        return get_profiled_system_prompt(profile=prompt_profile, compact=compact)
+        return get_profiled_system_prompt(profile=prompt_profile, mode=mode)
 
     @staticmethod
     def _detect_prompt_profile(text: str) -> PromptProfile:
