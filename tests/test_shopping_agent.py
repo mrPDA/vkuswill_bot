@@ -117,6 +117,27 @@ class _CartLinkOnlyMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _RecipeIngredientsOnlyMCPClient(_FakeMCPClient):
+    def __init__(self, *, recipe_payload: str) -> None:
+        super().__init__(tool_result='{"ok": true}')
+        self.recipe_payload = recipe_payload
+
+    async def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "recipe_ingredients",
+                "description": "Recipe ingredients",
+                "parameters": {"type": "object", "properties": {"dish": {"type": "string"}}},
+            }
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "recipe_ingredients":
+            return self.recipe_payload
+        return self.tool_result
+
+
 class _FakeFunction:
     def __init__(self, name: str, arguments: str) -> None:
         self.name = name
@@ -872,6 +893,158 @@ async def test_recipe_search_fallback_accepts_string_ingredients() -> None:
     assert len(payload["results"]) >= 1
     assert payload["results"][0]["best_match"]["xml_id"] == 111
     assert payload["data"]["found"][0]["item"]["xml_id"] == 111
+
+
+@pytest.mark.asyncio
+async def test_filters_pantry_ingredients_from_recipe_tool_result_by_default() -> None:
+    recipe_payload = json.dumps(
+        {
+            "ok": True,
+            "dish": "борщ",
+            "servings": 2,
+            "ingredients": [
+                {"name": "свёкла", "search_query": "свекла", "quantity": 0.5, "unit": "кг"},
+                {"name": "соль", "search_query": "соль", "quantity": 1, "unit": "ч.л."},
+                {"name": "сахар", "search_query": "сахар", "quantity": 1, "unit": "ч.л."},
+                {
+                    "name": "перец чёрный молотый",
+                    "search_query": "перец черный молотый",
+                    "quantity": 0.5,
+                    "unit": "ч.л.",
+                },
+                {
+                    "name": "перец болгарский",
+                    "search_query": "перец болгарский",
+                    "quantity": 1,
+                    "unit": "шт",
+                },
+            ],
+            "data": {
+                "ingredients": [
+                    {"name": "свёкла", "search_query": "свекла", "quantity": 0.5, "unit": "кг"},
+                    {"name": "соль", "search_query": "соль", "quantity": 1, "unit": "ч.л."},
+                    {"name": "сахар", "search_query": "сахар", "quantity": 1, "unit": "ч.л."},
+                    {
+                        "name": "перец чёрный молотый",
+                        "search_query": "перец черный молотый",
+                        "quantity": 0.5,
+                        "unit": "ч.л.",
+                    },
+                    {
+                        "name": "перец болгарский",
+                        "search_query": "перец болгарский",
+                        "quantity": 1,
+                        "unit": "шт",
+                    },
+                ]
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _RecipeIngredientsOnlyMCPClient(recipe_payload=recipe_payload)
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "recipe_ingredients",
+                            '{"dish":"борщ","servings":2}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+    )
+
+    result = await agent.process_message(user_id=501, text="собери ингредиенты для борща")
+    assert result == "ok"
+    second_call_messages = llm_client.completions.calls[1]["messages"]
+    tool_messages = [msg for msg in second_call_messages if msg.get("role") == "tool"]
+    assert tool_messages
+    tool_payload = json.loads(tool_messages[-1]["content"])
+    names = [str(item.get("name", "")).lower() for item in tool_payload.get("ingredients", [])]
+    assert "соль" not in names
+    assert "сахар" not in names
+    assert "перец чёрный молотый" not in names
+    assert "перец болгарский" in names
+
+
+@pytest.mark.asyncio
+async def test_keeps_pantry_ingredients_when_user_explicitly_requests_them() -> None:
+    recipe_payload = json.dumps(
+        {
+            "ok": True,
+            "dish": "борщ",
+            "servings": 2,
+            "ingredients": [
+                {"name": "свёкла", "search_query": "свекла", "quantity": 0.5, "unit": "кг"},
+                {"name": "соль", "search_query": "соль", "quantity": 1, "unit": "ч.л."},
+                {"name": "сахар", "search_query": "сахар", "quantity": 1, "unit": "ч.л."},
+                {
+                    "name": "перец чёрный молотый",
+                    "search_query": "перец черный молотый",
+                    "quantity": 0.5,
+                    "unit": "ч.л.",
+                },
+            ],
+        },
+        ensure_ascii=False,
+    )
+    mcp = _RecipeIngredientsOnlyMCPClient(recipe_payload=recipe_payload)
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "recipe_ingredients",
+                            '{"dish":"борщ","servings":2}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+    )
+
+    result = await agent.process_message(
+        user_id=502,
+        text="собери ингредиенты для борща и добавь соль, сахар и черный перец",
+    )
+    assert result == "ok"
+    second_call_messages = llm_client.completions.calls[1]["messages"]
+    tool_messages = [msg for msg in second_call_messages if msg.get("role") == "tool"]
+    assert tool_messages
+    tool_payload = json.loads(tool_messages[-1]["content"])
+    names = [str(item.get("name", "")).lower() for item in tool_payload.get("ingredients", [])]
+    assert "соль" in names
+    assert "сахар" in names
+    assert "перец чёрный молотый" in names
+    assert "pantry_filtered" not in tool_payload
 
 
 @pytest.mark.asyncio

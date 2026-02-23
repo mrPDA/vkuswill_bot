@@ -65,6 +65,9 @@ _FORCE_CART_LINK_SOURCE_HINT = (
     "vkusvill_cart_link_create, затем выдай ответ. "
     "Ссылку бери только из data.link результата инструмента."
 )
+_PANTRY_TAG_SALT = "salt"
+_PANTRY_TAG_SUGAR = "sugar"
+_PANTRY_TAG_PEPPER = "pepper"
 
 
 class ShoppingAgent:
@@ -252,6 +255,7 @@ class ShoppingAgent:
         product_index_this_turn: dict[int, dict[str, Any]] = {}
         manual_recovery_used = False
         cart_creation_recovery_used = False
+        explicit_pantry_requests = self._extract_explicit_pantry_requests(text)
         total_llm_input_chars = 0
 
         tools = await self._get_tools()
@@ -422,6 +426,11 @@ class ShoppingAgent:
                     arguments=tool_args,
                     llm_provider=llm_provider,
                 )
+                if tool_name == "recipe_ingredients":
+                    tool_result = self._sanitize_recipe_ingredients_tool_result(
+                        tool_result=tool_result,
+                        explicit_pantry_requests=explicit_pantry_requests,
+                    )
                 self._update_product_index_from_tool_result(
                     product_index=product_index_this_turn,
                     tool_name=tool_name,
@@ -886,6 +895,138 @@ class ShoppingAgent:
             "quantity": 1.0,
             "unit": "шт",
         }
+
+    @classmethod
+    def _extract_explicit_pantry_requests(cls, user_text: str) -> set[str]:
+        normalized = cls._normalize_text(user_text)
+        requested: set[str] = set()
+        if "соль" in normalized:
+            requested.add(_PANTRY_TAG_SALT)
+        if "сахар" in normalized:
+            requested.add(_PANTRY_TAG_SUGAR)
+        if cls._is_explicit_seasoning_pepper_request(normalized):
+            requested.add(_PANTRY_TAG_PEPPER)
+        return requested
+
+    def _sanitize_recipe_ingredients_tool_result(
+        self,
+        *,
+        tool_result: str,
+        explicit_pantry_requests: set[str],
+    ) -> str:
+        payload = self._parse_json_payload(tool_result)
+        if not isinstance(payload, dict) or not payload:
+            return tool_result
+
+        removed_names: list[str] = []
+        changed = False
+
+        ingredients = payload.get("ingredients")
+        if isinstance(ingredients, list):
+            filtered, removed = self._filter_recipe_ingredients_list(
+                ingredients=ingredients,
+                explicit_pantry_requests=explicit_pantry_requests,
+            )
+            if len(filtered) != len(ingredients):
+                payload["ingredients"] = filtered
+                removed_names.extend(removed)
+                changed = True
+
+        data = payload.get("data")
+        if isinstance(data, dict):
+            nested = data.get("ingredients")
+            if isinstance(nested, list):
+                filtered, removed = self._filter_recipe_ingredients_list(
+                    ingredients=nested,
+                    explicit_pantry_requests=explicit_pantry_requests,
+                )
+                if len(filtered) != len(nested):
+                    data["ingredients"] = filtered
+                    removed_names.extend(removed)
+                    changed = True
+
+        if not changed:
+            return tool_result
+
+        unique_removed = sorted({name for name in removed_names if name})
+        if unique_removed:
+            payload["pantry_filtered"] = unique_removed
+            logger.info("Filtered pantry ingredients from recipe_ingredients: %s", unique_removed)
+
+        return json.dumps(payload, ensure_ascii=False)
+
+    @classmethod
+    def _filter_recipe_ingredients_list(
+        cls,
+        *,
+        ingredients: list[Any],
+        explicit_pantry_requests: set[str],
+    ) -> tuple[list[Any], list[str]]:
+        filtered: list[Any] = []
+        removed: list[str] = []
+        for row in ingredients:
+            if not isinstance(row, dict):
+                filtered.append(row)
+                continue
+            pantry_tag = cls._detect_pantry_tag_for_ingredient(row)
+            if pantry_tag and pantry_tag not in explicit_pantry_requests:
+                removed.append(str(row.get("name", "")).strip())
+                continue
+            filtered.append(row)
+        return filtered, removed
+
+    @classmethod
+    def _detect_pantry_tag_for_ingredient(cls, row: dict[str, Any]) -> str | None:
+        name = cls._normalize_text(str(row.get("name", "")))
+        query = cls._normalize_text(str(row.get("search_query", "")))
+        text = f"{name} {query}".strip()
+        if not text:
+            return None
+        if "соль" in text:
+            return _PANTRY_TAG_SALT
+        if "сахар" in text:
+            return _PANTRY_TAG_SUGAR
+        if "перец" in text and not cls._looks_like_pepper_vegetable(text):
+            return _PANTRY_TAG_PEPPER
+        return None
+
+    @staticmethod
+    def _normalize_text(text: str) -> str:
+        return text.strip().lower().replace("ё", "е")
+
+    @classmethod
+    def _looks_like_pepper_vegetable(cls, text: str) -> bool:
+        normalized = cls._normalize_text(text)
+        vegetable_markers = (
+            "болгар",
+            "сладк",
+            "чили",
+            "халапень",
+            "пепперони",
+            "перец овощ",
+            "фаршированн",
+        )
+        return any(marker in normalized for marker in vegetable_markers)
+
+    @classmethod
+    def _is_explicit_seasoning_pepper_request(cls, text: str) -> bool:
+        normalized = cls._normalize_text(text)
+        if "перец" not in normalized:
+            return False
+        spice_markers = (
+            "черн",
+            "красн",
+            "бел",
+            "молот",
+            "горош",
+            "душист",
+            "приправ",
+        )
+        if any(marker in normalized for marker in spice_markers):
+            return True
+        if cls._looks_like_pepper_vegetable(normalized):
+            return False
+        return "соль" in normalized or "сахар" in normalized
 
     async def _search_products_for_recipe(self, query: str) -> str:
         last_error: Exception | None = None
@@ -1392,11 +1533,17 @@ class ShoppingAgent:
         result: dict[str, Any] = {"ok": payload.get("ok")}
         data = payload.get("data")
         if not isinstance(data, dict):
-            return result
+            # Идемпотентность компактизации: поддержать уже-compact shape.
+            has_compact_shape = any(key in payload for key in ("dish", "servings", "ingredients"))
+            if not has_compact_shape:
+                return result
+            data = payload
 
-        result["dish"] = data.get("dish")
-        result["servings"] = data.get("servings")
-        ingredients = data.get("ingredients", [])
+        result["dish"] = data.get("dish", payload.get("dish"))
+        result["servings"] = data.get("servings", payload.get("servings"))
+        ingredients = data.get("ingredients")
+        if not isinstance(ingredients, list):
+            ingredients = payload.get("ingredients", [])
         if isinstance(ingredients, list):
             result["ingredients"] = [
                 {
