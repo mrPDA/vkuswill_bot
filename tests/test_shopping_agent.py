@@ -570,6 +570,8 @@ async def test_recipe_search_method_not_found_uses_local_search_fallback() -> No
     assert payload["source"] == "shopping_agent_fallback"
     assert payload["results"][0]["best_match"]["xml_id"] == 111
     assert payload["results"][0]["best_match"]["suggested_q"] == 0.5
+    assert payload["data"]["found"][0]["item"]["xml_id"] == 111
+    assert payload["data"]["found"][0]["suggested_q"] == 0.5
 
 
 @pytest.mark.asyncio
@@ -596,3 +598,41 @@ async def test_recipe_search_fallback_accepts_string_ingredients() -> None:
     assert payload["ok"] is True
     assert len(payload["results"]) >= 1
     assert payload["results"][0]["best_match"]["xml_id"] == 111
+    assert payload["data"]["found"][0]["item"]["xml_id"] == 111
+
+
+@pytest.mark.asyncio
+async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = {
+        "ok": True,
+        "results": [
+            {
+                "ingredient": "спагетти",
+                "best_match": {
+                    "xml_id": 781,
+                    "name": "Макароны \"Спагетти\"",
+                    "price": {"current": 89, "currency": "RUB"},
+                    "suggested_q": 1,
+                },
+            },
+            {
+                "ingredient": "бекон",
+                "best_match": {
+                    "xml_id": 103297,
+                    "name": "Бекон сырокопченый",
+                    "price": {"current": 189, "currency": "RUB"},
+                    "suggested_q": 1,
+                },
+            },
+        ],
+        "not_found": ["черный перец"],
+    }
+
+    compact = agent._compact_recipe_search(payload)
+    assert compact["ok"] is True
+    assert len(compact["found"]) == 2
+    assert compact["found"][0]["xml_id"] == 781
+    assert compact["found"][0]["suggested_q"] == 1
+    assert compact["found"][1]["xml_id"] == 103297
+    assert compact["not_found"] == ["черный перец"]
