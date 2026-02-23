@@ -59,6 +59,12 @@ _FORCE_CART_RECOVERY_HINT = (
     "Используй доступные инструменты и обязательно создай корзину через "
     "vkusvill_cart_link_create. После успешного создания дай финальный ответ."
 )
+_FORCE_CART_LINK_SOURCE_HINT = (
+    "[Системная корректировка] Ты сообщил итог/ссылку корзины без фактического "
+    "результата vkusvill_cart_link_create. Сначала ОБЯЗАТЕЛЬНО вызови "
+    "vkusvill_cart_link_create, затем выдай ответ. "
+    "Ссылку бери только из data.link результата инструмента."
+)
 
 
 class ShoppingAgent:
@@ -245,6 +251,7 @@ class ShoppingAgent:
         cart_data_this_turn: dict[str, Any] | None = None
         product_index_this_turn: dict[int, dict[str, Any]] = {}
         manual_recovery_used = False
+        cart_creation_recovery_used = False
         total_llm_input_chars = 0
 
         tools = await self._get_tools()
@@ -365,15 +372,28 @@ class ShoppingAgent:
                     history = self._trim_history_by_chars(history)
                     continue
 
+                if (
+                    cart_data_this_turn is None
+                    and cart_intent
+                    and self._looks_like_cart_ready_reply(final_text)
+                    and not cart_creation_recovery_used
+                    and step < self._max_tool_calls
+                ):
+                    cart_creation_recovery_used = True
+                    history.append(self._assistant_msg(message))
+                    history.append({"role": "system", "content": _FORCE_CART_LINK_SOURCE_HINT})
+                    history = self._trim_history(history)
+                    history = self._trim_history_by_chars(history)
+                    continue
+
                 if cart_data_this_turn is not None:
                     self._ensure_cart_price_summary(
                         cart_data=cart_data_this_turn,
                         product_index=product_index_this_turn,
                     )
-                    final_text = self._stabilize_cart_output(
-                        final_text=final_text,
-                        cart_data=cart_data_this_turn,
-                    )
+                    # При наличии фактической корзины всегда отдаём детерминированный
+                    # формат из данных MCP (а не свободный рерайт LLM).
+                    final_text = self._render_stable_cart_output(cart_data_this_turn)
 
                 self._history[user_id] = self._trim_history(
                     [*history, self._assistant_msg(message)],
@@ -1655,6 +1675,21 @@ class ShoppingAgent:
             "в приложении соберите",
         )
         return any(marker in normalized for marker in markers)
+
+    @staticmethod
+    def _looks_like_cart_ready_reply(text: str) -> bool:
+        normalized = text.lower()
+        if "открыть корзину" in normalized:
+            return True
+        if "итого" in normalized and any(
+            word in normalized for word in ("корзин", "собрал", "собрала")
+        ):
+            return True
+        if "корзин" in normalized and any(
+            word in normalized for word in ("собрал", "собрала", "собрано", "готова", "готово")
+        ):
+            return True
+        return "share_basket" in normalized
 
     @staticmethod
     def _looks_like_wrong_cart_summary(text: str, *, items_count: int) -> bool:
