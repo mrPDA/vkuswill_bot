@@ -12,6 +12,7 @@ from vkuswill_bot.services.llm_adapters import (
     GigaChatLLMAdapter,
     OpenAICompatibleLLMAdapter,
     create_llm_adapter,
+    extract_usage_details,
     normalize_llm_provider,
 )
 
@@ -95,6 +96,8 @@ async def test_openai_adapter_normalizes_response_shape() -> None:
         messages=[{"role": "user", "content": "найди молоко"}],
         tools=[],
         tool_choice="auto",
+        max_tokens=777,
+        temperature=0.3,
     )
 
     message = result["choices"][0]["message"]
@@ -102,6 +105,9 @@ async def test_openai_adapter_normalizes_response_shape() -> None:
     assert message["tool_calls"][0]["id"] == "tc-1"
     assert message["tool_calls"][0]["function"]["name"] == "vkusvill_products_search"
     assert result["usage"] == {"input": 123, "output": 45, "total": 168}
+    request = adapter._client.completions.calls[0]
+    assert request["max_tokens"] == 777
+    assert request["temperature"] == 0.3
 
 
 @pytest.mark.asyncio
@@ -147,6 +153,8 @@ async def test_gigachat_adapter_builds_payload_and_normalizes_function_call() ->
                 },
             }
         ],
+        max_tokens=512,
+        temperature=0.2,
     )
 
     assert len(fake_client.calls) == 1
@@ -158,6 +166,8 @@ async def test_gigachat_adapter_builds_payload_and_normalizes_function_call() ->
     assert payload.messages[2].role == MessagesRole.FUNCTION
     assert payload.messages[2].name == "vkusvill_products_search"
     assert payload.functions[0].name == "vkusvill_products_search"
+    assert payload.max_tokens == 512
+    assert payload.temperature == 0.2
 
     message = result["choices"][0]["message"]
     assert message["content"] == "Ищу товары"
@@ -273,3 +283,24 @@ def test_create_llm_adapter_and_provider_normalization() -> None:
             gigachat_credentials="creds",
             gigachat_scope="GIGACHAT_API_PERS",
         )
+
+
+def test_extract_usage_details_accepts_alt_keys_and_string_numbers() -> None:
+    usage = extract_usage_details(
+        {
+            "usage": {
+                "input_tokens": "120",
+                "outputTokens": 35,
+            }
+        }
+    )
+    assert usage == {"input": 120, "output": 35, "total": 155}
+
+
+def test_extract_usage_details_accepts_model_dump_objects() -> None:
+    class _UsageObj:
+        def model_dump(self) -> dict[str, int]:
+            return {"promptTokens": 40, "completionTokens": 11}
+
+    usage = extract_usage_details({"usage": _UsageObj()})
+    assert usage == {"input": 40, "output": 11, "total": 51}

@@ -100,6 +100,8 @@ def create_chat_engine(
             max_tool_calls=cfg.max_tool_calls,
             max_history=cfg.max_history_messages,
             langfuse_service=langfuse_service,
+            llm_max_tokens=cfg.llm_max_tokens,
+            llm_temperature=cfg.llm_temperature,
             gigachat_credentials=cfg.gigachat_credentials,
             gigachat_scope=cfg.gigachat_scope,
             gigachat_ca_bundle=cfg.gigachat_ca_bundle,

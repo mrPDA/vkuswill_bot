@@ -162,6 +162,8 @@ class _FakeLLMAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_choice: str = "auto",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         self.calls.append(
             {
@@ -169,6 +171,8 @@ class _FakeLLMAdapter:
                 "messages": messages,
                 "tools": tools,
                 "tool_choice": tool_choice,
+                "max_tokens": max_tokens,
+                "temperature": temperature,
             }
         )
         if self.delay_seconds > 0:
@@ -507,6 +511,30 @@ async def test_routing_single_user_gigachat_multi_user_qwen() -> None:
 
 
 @pytest.mark.asyncio
+async def test_forwards_llm_max_tokens_and_temperature() -> None:
+    mcp = _FakeMCPClient()
+    adapter = _FakeLLMAdapter(text="ok")
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": adapter},
+        llm_max_tokens=900,
+        llm_temperature=0.2,
+    )
+
+    result = await agent.process_message(user_id=99, text="привет")
+    assert result == "ok"
+    assert len(adapter.calls) == 1
+    assert adapter.calls[0]["max_tokens"] == 900
+    assert adapter.calls[0]["temperature"] == 0.2
+
+
+@pytest.mark.asyncio
 async def test_recipe_ingredients_method_not_found_uses_llm_fallback() -> None:
     mcp = _FallbackMCPClient()
     llm_adapter = _FakeLLMAdapter(
@@ -689,3 +717,16 @@ def test_extract_usage_details_from_normalized_dict() -> None:
         }
     )
     assert usage == {"input": 101, "output": 19, "total": 120}
+
+
+def test_extract_usage_details_from_alt_qwen_shape() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    usage = agent._extract_usage_details(
+        {
+            "usage": {
+                "input_tokens": "88",
+                "outputTokens": 12,
+            }
+        }
+    )
+    assert usage == {"input": 88, "output": 12, "total": 100}

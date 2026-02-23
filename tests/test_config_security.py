@@ -110,6 +110,18 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_max_concurrent == 10
 
+    def test_llm_max_tokens_default(self):
+        """llm_max_tokens по умолчанию — 900."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_max_tokens == 900
+
+    def test_llm_temperature_default(self):
+        """llm_temperature по умолчанию — 0.2."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_temperature == 0.2
+
     def test_debug_disabled_by_default(self):
         """Debug отключён по умолчанию."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -123,6 +135,12 @@ class TestDefaultValues:
         assert 1 <= cfg.max_tool_calls <= 50, (
             f"max_tool_calls={cfg.max_tool_calls} — должен быть в диапазоне [1, 50]"
         )
+
+    def test_max_tool_calls_default(self):
+        """max_tool_calls по умолчанию — 10."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.max_tool_calls == 10
 
     def test_max_history_reasonable(self):
         """Лимит истории разумный (не > 200)."""
@@ -453,6 +471,8 @@ class TestSecretProtection:
             "LLM_API_KEY": "yc-llm-test-key",
             "LLM_MODEL": "gpt://folder/qwen3-235b-a22b-fp8/latest",
             "LLM_MAX_CONCURRENT": "16",
+            "LLM_MAX_TOKENS": "1024",
+            "LLM_TEMPERATURE": "0.1",
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
@@ -461,6 +481,8 @@ class TestSecretProtection:
         assert cfg.llm_api_key == "yc-llm-test-key"
         assert cfg.llm_model == "gpt://folder/qwen3-235b-a22b-fp8/latest"
         assert cfg.llm_max_concurrent == 16
+        assert cfg.llm_max_tokens == 1024
+        assert cfg.llm_temperature == 0.1
 
     def test_llm_provider_alias_openai_compatible(self):
         """llm_provider принимает алиас openai_compatible."""
@@ -472,6 +494,18 @@ class TestSecretProtection:
     def test_llm_provider_invalid_rejected(self):
         """Некорректный llm_provider отклоняется валидатором."""
         custom_env = {**MINIMAL_ENV, "LLM_PROVIDER": "unknown_provider"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_llm_max_tokens_invalid_rejected(self):
+        """llm_max_tokens ниже минимального отклоняется валидатором."""
+        custom_env = {**MINIMAL_ENV, "LLM_MAX_TOKENS": "0"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_llm_temperature_invalid_rejected(self):
+        """llm_temperature вне диапазона [0.0, 1.0] отклоняется валидатором."""
+        custom_env = {**MINIMAL_ENV, "LLM_TEMPERATURE": "1.5"}
         with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
             Config(_env_file=None)  # type: ignore[call-arg]
 
