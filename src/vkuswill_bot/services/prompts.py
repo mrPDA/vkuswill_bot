@@ -24,6 +24,7 @@ def get_system_prompt() -> str:
 SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
 
 PromptProfile = Literal["general", "cart", "recipe", "status", "linking"]
+PromptMode = Literal["start", "compact", "finalize"]
 
 _PROFILE_CORE_PROMPT = """\
 Ты — продавец-консультант ВкусВилл в Telegram-боте.
@@ -75,11 +76,29 @@ _PROFILE_PROMPTS: dict[PromptProfile, str] = {
 """,
 }
 
+_PROFILE_START_PROMPT = """\
+[PROMPT_MODE:expanded_start]
+Старт нового цикла. Сначала составь краткий план действий и выполняй его инструментами.
+Если речь о корзине, ответ пользователю должен опираться на фактический результат инструментов.
+"""
+
 _PROFILE_CONTINUATION_PROMPT = """\
 [PROMPT_MODE:compact_followup]
 Продолжай текущую задачу на основе уже собранного контекста.
 Не повторяй длинные объяснения и общие правила.
 Сфокусируйся на следующем нужном tool-call или финальном ответе.
+"""
+
+_PROFILE_FINALIZER_PROMPT = """\
+[PROMPT_MODE:finalize]
+Финишируй ответ по уже собранной корзине.
+
+Правила финализации:
+1) Ссылку бери ТОЛЬКО из результата vkusvill_cart_link_create (data.link), не придумывай URL.
+2) Для позиций используй price_summary.items (если есть) и покажи нумерованным списком.
+3) Итого бери из price_summary.total_text (или total).
+4) Формат ссылки: <a href="URL">Открыть корзину</a>.
+5) Не предлагай ручную сборку и не заменяй ссылку на общий сайт.
 """
 
 
@@ -110,11 +129,21 @@ def detect_prompt_profile(text: str) -> PromptProfile:
     return "general"
 
 
-def get_profiled_system_prompt(*, profile: PromptProfile, compact: bool) -> str:
-    """Скомпоновать короткий профильный system-prompt."""
+def get_profiled_system_prompt(
+    *,
+    profile: PromptProfile,
+    compact: bool = False,
+    mode: PromptMode | None = None,
+) -> str:
+    """Скомпоновать профильный system-prompt для конкретного режима."""
+    resolved_mode: PromptMode = mode or ("compact" if compact else "start")
     parts = [_PROFILE_CORE_PROMPT, _PROFILE_PROMPTS.get(profile, _PROFILE_PROMPTS["general"])]
-    if compact:
+    if resolved_mode == "compact":
         parts.append(_PROFILE_CONTINUATION_PROMPT)
+    elif resolved_mode == "finalize":
+        parts.append(_PROFILE_FINALIZER_PROMPT)
+    else:
+        parts.append(_PROFILE_START_PROMPT)
     return "\n\n".join(parts)
 
 

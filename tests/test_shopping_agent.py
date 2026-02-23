@@ -993,3 +993,57 @@ async def test_compact_followup_prompt_can_be_disabled() -> None:
     second_system = llm_client.completions.calls[1]["messages"][0]["content"]
     assert "[PROMPT_PROFILE:cart]" in second_system
     assert "[PROMPT_MODE:compact_followup]" not in second_system
+
+
+@pytest.mark.asyncio
+async def test_final_step_uses_finalize_prompt_mode_after_cart_created() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/final",
+                "price_summary": {
+                    "total": 99.0,
+                    "total_text": "Итого: 99.00 руб",
+                    "items": ["- Молоко x 1 = 99.00 руб"],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "vkusvill_cart_link_create",
+                            '{"products":[{"xml_id":1,"q":1}]}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+        compact_followup_prompt_enabled=True,
+    )
+
+    result = await agent.process_message(user_id=125, text="закажи молоко")
+    assert "Итого: 99.00 руб" in result
+    assert len(llm_client.completions.calls) == 2
+    second_system = llm_client.completions.calls[1]["messages"][0]["content"]
+    assert "[PROMPT_PROFILE:cart]" in second_system
+    assert "[PROMPT_MODE:finalize]" in second_system
