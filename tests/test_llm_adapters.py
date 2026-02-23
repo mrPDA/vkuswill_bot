@@ -84,6 +84,7 @@ class _FakeOpenAIResponse:
                 )
             )
         ]
+        self.usage = SimpleNamespace(prompt_tokens=123, completion_tokens=45, total_tokens=168)
 
 
 @pytest.mark.asyncio
@@ -100,6 +101,7 @@ async def test_openai_adapter_normalizes_response_shape() -> None:
     assert message["content"] == "Готово"
     assert message["tool_calls"][0]["id"] == "tc-1"
     assert message["tool_calls"][0]["function"]["name"] == "vkusvill_products_search"
+    assert result["usage"] == {"input": 123, "output": 45, "total": 168}
 
 
 @pytest.mark.asyncio

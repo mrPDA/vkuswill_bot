@@ -636,3 +636,56 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
     assert compact["found"][0]["suggested_q"] == 1
     assert compact["found"][1]["xml_id"] == 103297
     assert compact["not_found"] == ["черный перец"]
+
+
+def test_trim_history_recompacts_legacy_tool_messages() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    agent._max_tool_result_chars = 500
+    huge_tool_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "meta": {"q": "молоко", "total": 10, "page": 1, "pages": 1},
+                "items": [
+                    {
+                        "xml_id": idx,
+                        "name": f"Молоко очень длинное название {idx} " + ("X" * 200),
+                        "price": 100 + idx,
+                        "unit": "шт",
+                    }
+                    for idx in range(10)
+                ],
+            },
+        },
+        ensure_ascii=False,
+    )
+    history = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc-1", "type": "function", "function": {"name": "x"}}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc-1",
+            "name": "vkusvill_products_search",
+            "content": huge_tool_payload,
+        },
+    ]
+
+    trimmed = agent._trim_history_by_chars(history)
+    tool_messages = [msg for msg in trimmed if msg.get("role") == "tool"]
+    assert tool_messages
+    assert len(tool_messages[0]["content"]) <= 500
+
+
+def test_extract_usage_details_from_normalized_dict() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    usage = agent._extract_usage_details(
+        {
+            "choices": [{"message": {"content": "ok", "tool_calls": []}}],
+            "usage": {"input": 101, "output": 19, "total": 120},
+        }
+    )
+    assert usage == {"input": 101, "output": 19, "total": 120}

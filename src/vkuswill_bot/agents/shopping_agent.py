@@ -36,8 +36,9 @@ _DEFAULT_LLM_RETRIES = 2
 _DEFAULT_MCP_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MCP_RETRIES = 2
 _DEFAULT_LLM_ROUTING_STRATEGY = "single_provider"
-_DEFAULT_MAX_TOOL_RESULT_CHARS = 4000
-_DEFAULT_MAX_HISTORY_CHARS = 180000
+_DEFAULT_MAX_TOOL_RESULT_CHARS = 1800
+_DEFAULT_MAX_HISTORY_CHARS = 60000
+_DEFAULT_MAX_INPUT_CHARS_PER_TURN = 250000
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
 _ERROR_TOO_MANY_TOOLS = (
     "Не удалось завершить подбор в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
@@ -76,6 +77,7 @@ class ShoppingAgent:
         mcp_retries: int = _DEFAULT_MCP_RETRIES,
         max_tool_result_chars: int = _DEFAULT_MAX_TOOL_RESULT_CHARS,
         max_history_chars: int = _DEFAULT_MAX_HISTORY_CHARS,
+        max_input_chars_per_turn: int = _DEFAULT_MAX_INPUT_CHARS_PER_TURN,
         gigachat_credentials: str = "",
         gigachat_scope: str = "GIGACHAT_API_PERS",
         gigachat_ca_bundle: str | None = None,
@@ -99,6 +101,7 @@ class ShoppingAgent:
         self._mcp_retries = max(0, mcp_retries)
         self._max_tool_result_chars = max(300, max_tool_result_chars)
         self._max_history_chars = max(10000, max_history_chars)
+        self._max_input_chars_per_turn = max(10000, max_input_chars_per_turn)
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
         self._langfuse = langfuse_service
         self._tools_cache: list[dict[str, Any]] | None = None
@@ -218,6 +221,7 @@ class ShoppingAgent:
         history = self._trim_history_by_chars(history)
         cart_data_this_turn: dict[str, Any] | None = None
         manual_recovery_used = False
+        total_llm_input_chars = 0
 
         tools = await self._get_tools()
         trace = self._create_trace(user_id=user_id, text=text, llm_provider=llm_provider)
@@ -232,6 +236,25 @@ class ShoppingAgent:
 
         for step in range(1, self._max_tool_calls + 1):
             llm_input = list(history)
+            llm_input_chars = self._history_char_count(llm_input)
+            total_llm_input_chars += llm_input_chars
+            if step > 1 and total_llm_input_chars > self._max_input_chars_per_turn:
+                logger.warning(
+                    "ShoppingAgent prompt budget exceeded: total_chars=%d step=%d",
+                    total_llm_input_chars,
+                    step,
+                )
+                self._history[user_id] = self._trim_history(self._trim_history_by_chars(history))
+                if trace is not None:
+                    trace.update(
+                        output=_ERROR_TOO_MANY_TOOLS,
+                        metadata={
+                            "reason": "prompt_budget_exceeded",
+                            "provider": llm_provider,
+                            "input_chars_total": total_llm_input_chars,
+                        },
+                    )
+                return _ERROR_TOO_MANY_TOOLS
             gen = None
             if trace is not None:
                 gen = trace.generation(
@@ -260,8 +283,9 @@ class ShoppingAgent:
                 return _ERROR_GENERIC
 
             message = self._extract_message(response)
+            usage_details = self._extract_usage_details(response)
             if gen is not None:
-                gen.end(output=message)
+                gen.end(output=message, usage_details=usage_details)
 
             tool_calls = self._extract_tool_calls(message)
             if not tool_calls:
@@ -1032,11 +1056,36 @@ class ShoppingAgent:
         if not history:
             return history
 
-        trimmed = list(history)
+        trimmed = self._recompact_tool_history(list(history))
         while self._history_char_count(trimmed) > self._max_history_chars and len(trimmed) > 2:
             del trimmed[1]
             trimmed = self._sanitize_tool_history(trimmed)
         return trimmed
+
+    def _recompact_tool_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Повторно сжать старые tool-сообщения в истории, чтобы убрать раздувшийся контекст."""
+        if len(history) <= 2:
+            return history
+
+        compacted = [history[0]]
+        for message in history[1:]:
+            if message.get("role") != "tool":
+                compacted.append(message)
+                continue
+
+            name = str(message.get("name", "")).strip()
+            content = message.get("content")
+            if not name or not isinstance(content, str):
+                compacted.append(message)
+                continue
+
+            compacted.append(
+                {
+                    **message,
+                    "content": self._prepare_tool_result_for_history(name, content),
+                }
+            )
+        return compacted
 
     @staticmethod
     def _sanitize_tool_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1107,6 +1156,36 @@ class ShoppingAgent:
         }
         return json.dumps(tiny, ensure_ascii=False)
 
+    @staticmethod
+    def _extract_usage_details(response: Any) -> dict[str, int] | None:
+        """Извлечь usage-details из ответа LLM (OpenAI-compatible / normalized dict)."""
+        usage = None
+        if isinstance(response, dict):
+            usage = response.get("usage")
+        else:
+            usage = getattr(response, "usage", None)
+
+        if usage is None:
+            return None
+
+        if isinstance(usage, dict):
+            prompt = usage.get("input", usage.get("prompt_tokens"))
+            completion = usage.get("output", usage.get("completion_tokens"))
+            total = usage.get("total", usage.get("total_tokens"))
+        else:
+            prompt = getattr(usage, "input", getattr(usage, "prompt_tokens", None))
+            completion = getattr(usage, "output", getattr(usage, "completion_tokens", None))
+            total = getattr(usage, "total", getattr(usage, "total_tokens", None))
+
+        result: dict[str, int] = {}
+        if isinstance(prompt, int):
+            result["input"] = prompt
+        if isinstance(completion, int):
+            result["output"] = completion
+        if isinstance(total, int):
+            result["total"] = total
+        return result or None
+
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "vkusvill_products_search":
             return self._compact_products_search(payload)
@@ -1122,7 +1201,14 @@ class ShoppingAgent:
         result: dict[str, Any] = {"ok": payload.get("ok")}
         data = payload.get("data")
         if not isinstance(data, dict):
-            return result
+            # Идемпотентность компактизации: поддержать уже-compact shape
+            # {"ok":true,"meta":...,"items":[...]}.
+            has_compact_shape = any(
+                key in payload for key in ("meta", "items", "relevance_warning")
+            )
+            if not has_compact_shape:
+                return result
+            data = payload
 
         result["meta"] = data.get("meta", {})
         items = data.get("items", [])
