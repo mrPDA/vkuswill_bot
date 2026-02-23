@@ -243,6 +243,7 @@ class ShoppingAgent:
         history = self._trim_history(history)
         history = self._trim_history_by_chars(history)
         cart_data_this_turn: dict[str, Any] | None = None
+        product_index_this_turn: dict[int, dict[str, Any]] = {}
         manual_recovery_used = False
         total_llm_input_chars = 0
 
@@ -365,6 +366,10 @@ class ShoppingAgent:
                     continue
 
                 if cart_data_this_turn is not None:
+                    self._ensure_cart_price_summary(
+                        cart_data=cart_data_this_turn,
+                        product_index=product_index_this_turn,
+                    )
                     final_text = self._stabilize_cart_output(
                         final_text=final_text,
                         cart_data=cart_data_this_turn,
@@ -397,8 +402,16 @@ class ShoppingAgent:
                     arguments=tool_args,
                     llm_provider=llm_provider,
                 )
+                self._update_product_index_from_tool_result(
+                    product_index=product_index_this_turn,
+                    tool_name=tool_name,
+                    tool_result=tool_result,
+                )
                 cart_data = self._extract_cart_data(tool_name=tool_name, tool_result=tool_result)
                 if cart_data is not None:
+                    products = tool_args.get("products")
+                    if isinstance(products, list) and "products" not in cart_data:
+                        cart_data["products"] = products
                     cart_data_this_turn = cart_data
                 self._capture_cart_snapshot(
                     user_id=user_id,
@@ -1480,6 +1493,138 @@ class ShoppingAgent:
                 return None
             return data
         return None
+
+    def _update_product_index_from_tool_result(
+        self,
+        *,
+        product_index: dict[int, dict[str, Any]],
+        tool_name: str,
+        tool_result: str,
+    ) -> None:
+        if tool_name not in {"vkusvill_products_search", "vkusvill_product_details"}:
+            return
+        with contextlib.suppress(Exception):
+            payload = json.loads(tool_result)
+            for item in self._extract_search_items(payload):
+                normalized = self._normalize_product_row(item)
+                if normalized is None:
+                    continue
+                product_index[normalized["xml_id"]] = normalized
+
+    def _normalize_product_row(self, item: dict[str, Any]) -> dict[str, Any] | None:
+        xml_id_raw = item.get("xml_id", item.get("id"))
+        if isinstance(xml_id_raw, bool):
+            return None
+        with contextlib.suppress(TypeError, ValueError):
+            xml_id = int(xml_id_raw)
+        if not isinstance(xml_id, int):
+            return None
+        name = str(item.get("name", f"Товар {xml_id}")).strip() or f"Товар {xml_id}"
+        unit = str(item.get("unit", "шт")).strip() or "шт"
+        price = self._extract_price_value(item.get("price"))
+        result: dict[str, Any] = {
+            "xml_id": xml_id,
+            "name": name,
+            "unit": unit,
+        }
+        if price is not None:
+            result["price"] = price
+        return result
+
+    def _extract_price_value(self, raw_price: Any) -> float | None:
+        if isinstance(raw_price, dict):
+            for key in ("current", "value", "amount", "price"):
+                if key in raw_price:
+                    price = self._safe_float(raw_price.get(key), default=-1.0)
+                    if price >= 0:
+                        return price
+            return None
+        price = self._safe_float(raw_price, default=-1.0)
+        return price if price >= 0 else None
+
+    def _ensure_cart_price_summary(
+        self,
+        *,
+        cart_data: dict[str, Any],
+        product_index: dict[int, dict[str, Any]],
+    ) -> None:
+        summary = cart_data.get("price_summary")
+        if isinstance(summary, dict):
+            items = summary.get("items")
+            total_text = summary.get("total_text")
+            has_total_text = isinstance(total_text, str) and bool(total_text.strip())
+            if isinstance(items, list) and items and has_total_text:
+                return
+
+        products = cart_data.get("products")
+        if not isinstance(products, list) or not products:
+            return
+
+        lines: list[str] = []
+        total = 0.0
+        all_priced = True
+        original_total_text = ""
+        original_total_value = -1.0
+        if isinstance(summary, dict):
+            total_text_raw = summary.get("total_text")
+            if isinstance(total_text_raw, str) and total_text_raw.strip():
+                original_total_text = total_text_raw.strip()
+            original_total_value = self._safe_float(summary.get("total"), default=-1.0)
+
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id = item.get("xml_id")
+            xml_id_int: int | None = None
+            with contextlib.suppress(TypeError, ValueError):
+                xml_id_int = int(xml_id)
+            quantity = self._safe_float(item.get("q"), default=1.0)
+            if quantity <= 0:
+                quantity = 1.0
+
+            normalized = product_index.get(xml_id_int) if isinstance(xml_id_int, int) else None
+            name = (
+                str(normalized.get("name", f"Товар {xml_id}")).strip()
+                if normalized
+                else f"Товар {xml_id}"
+            )
+            price = (
+                self._safe_float(normalized.get("price"), default=-1.0)
+                if isinstance(normalized, dict)
+                else -1.0
+            )
+            if float(quantity).is_integer():
+                quantity_text = str(int(quantity))
+            else:
+                quantity_text = f"{quantity:.3f}".rstrip("0").rstrip(".")
+
+            if price >= 0:
+                subtotal = price * quantity
+                total += subtotal
+                lines.append(f"- {name} x {quantity_text} = {subtotal:.2f} руб")
+            else:
+                all_priced = False
+                lines.append(f"- {name} x {quantity_text} = цена уточняется")
+
+        if not lines:
+            return
+
+        synthesized: dict[str, Any] = {
+            "items": lines,
+            "count": len(lines),
+        }
+        if all_priced:
+            synthesized["total"] = round(total, 2)
+            synthesized["total_text"] = f"Итого: {total:.2f} руб"
+        elif original_total_text:
+            synthesized["total_text"] = original_total_text
+        elif original_total_value >= 0:
+            synthesized["total"] = round(original_total_value, 2)
+            synthesized["total_text"] = f"Итого: {original_total_value:.2f} руб"
+        else:
+            synthesized["total_text"] = "Итого: будет рассчитано при открытии корзины"
+
+        cart_data["price_summary"] = synthesized
 
     @staticmethod
     def _is_cart_intent(user_text: str) -> bool:
