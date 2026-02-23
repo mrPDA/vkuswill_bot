@@ -15,6 +15,7 @@ from vkuswill_bot.services.llm_adapters import (
     LLMAdapterProtocol,
     OpenAICompatibleLLMAdapter,
     create_llm_adapter,
+    extract_usage_details,
     normalize_llm_provider,
 )
 from vkuswill_bot.services.cart_processor import CartProcessor
@@ -30,14 +31,14 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TOOL_CALLS = 20
-_DEFAULT_MAX_HISTORY = 50
+_DEFAULT_MAX_HISTORY = 30
 _DEFAULT_LLM_TIMEOUT_SECONDS = 30.0
 _DEFAULT_LLM_RETRIES = 2
 _DEFAULT_MCP_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MCP_RETRIES = 2
 _DEFAULT_LLM_ROUTING_STRATEGY = "single_provider"
 _DEFAULT_MAX_TOOL_RESULT_CHARS = 1800
-_DEFAULT_MAX_HISTORY_CHARS = 60000
+_DEFAULT_MAX_HISTORY_CHARS = 30000
 _DEFAULT_MAX_INPUT_CHARS_PER_TURN = 250000
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
 _ERROR_TOO_MANY_TOOLS = (
@@ -72,6 +73,8 @@ class ShoppingAgent:
         max_history: int = _DEFAULT_MAX_HISTORY,
         langfuse_service: LangfuseService | None = None,
         llm_timeout_seconds: float = _DEFAULT_LLM_TIMEOUT_SECONDS,
+        llm_max_tokens: int | None = None,
+        llm_temperature: float | None = None,
         llm_retries: int = _DEFAULT_LLM_RETRIES,
         mcp_timeout_seconds: float = _DEFAULT_MCP_TIMEOUT_SECONDS,
         mcp_retries: int = _DEFAULT_MCP_RETRIES,
@@ -96,6 +99,10 @@ class ShoppingAgent:
         self._max_tool_calls = max(1, max_tool_calls)
         self._max_history = max(10, max_history)
         self._llm_timeout_seconds = max(1.0, llm_timeout_seconds)
+        self._llm_max_tokens = max(1, llm_max_tokens) if llm_max_tokens is not None else None
+        self._llm_temperature = (
+            max(0.0, min(1.0, llm_temperature)) if llm_temperature is not None else None
+        )
         self._llm_retries = max(0, llm_retries)
         self._mcp_timeout_seconds = max(1.0, mcp_timeout_seconds)
         self._mcp_retries = max(0, mcp_retries)
@@ -284,6 +291,12 @@ class ShoppingAgent:
 
             message = self._extract_message(response)
             usage_details = self._extract_usage_details(response)
+            if usage_details is None:
+                logger.warning(
+                    "ShoppingAgent response has no usage details (provider=%s, step=%d)",
+                    llm_provider,
+                    step,
+                )
             if gen is not None:
                 gen.end(output=message, usage_details=usage_details)
 
@@ -430,6 +443,8 @@ class ShoppingAgent:
                             messages=messages,
                             tools=tools,
                             tool_choice="auto",
+                            max_tokens=self._llm_max_tokens,
+                            temperature=self._llm_temperature,
                         ),
                         timeout=self._llm_timeout_seconds,
                     )
@@ -1159,32 +1174,7 @@ class ShoppingAgent:
     @staticmethod
     def _extract_usage_details(response: Any) -> dict[str, int] | None:
         """Извлечь usage-details из ответа LLM (OpenAI-compatible / normalized dict)."""
-        usage = None
-        if isinstance(response, dict):
-            usage = response.get("usage")
-        else:
-            usage = getattr(response, "usage", None)
-
-        if usage is None:
-            return None
-
-        if isinstance(usage, dict):
-            prompt = usage.get("input", usage.get("prompt_tokens"))
-            completion = usage.get("output", usage.get("completion_tokens"))
-            total = usage.get("total", usage.get("total_tokens"))
-        else:
-            prompt = getattr(usage, "input", getattr(usage, "prompt_tokens", None))
-            completion = getattr(usage, "output", getattr(usage, "completion_tokens", None))
-            total = getattr(usage, "total", getattr(usage, "total_tokens", None))
-
-        result: dict[str, int] = {}
-        if isinstance(prompt, int):
-            result["input"] = prompt
-        if isinstance(completion, int):
-            result["output"] = completion
-        if isinstance(total, int):
-            result["total"] = total
-        return result or None
+        return extract_usage_details(response)
 
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "vkusvill_products_search":

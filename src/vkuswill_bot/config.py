@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from pydantic import field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -39,6 +39,8 @@ class Config(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_max_concurrent: int = 10
+    llm_max_tokens: int = Field(default=900, ge=1, le=8192)
+    llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"
@@ -51,7 +53,7 @@ class Config(BaseSettings):
     mcp_server_api_keys: dict[str, str] = {}
 
     # Лимиты
-    max_tool_calls: int = 20
+    max_tool_calls: int = 10
     max_history_messages: int = 50
 
     # Хранилище (SQLite — legacy)

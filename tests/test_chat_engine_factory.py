@@ -28,6 +28,8 @@ def _cfg(**overrides: object) -> SimpleNamespace:
         "llm_api_key": "",
         "llm_model": "",
         "llm_max_concurrent": 10,
+        "llm_max_tokens": 900,
+        "llm_temperature": 0.2,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -178,6 +180,8 @@ def test_create_chat_engine_shopping_success() -> None:
         max_tool_calls=cfg.max_tool_calls,
         max_history=cfg.max_history_messages,
         langfuse_service=deps["langfuse_service"],
+        llm_max_tokens=cfg.llm_max_tokens,
+        llm_temperature=cfg.llm_temperature,
         gigachat_credentials=cfg.gigachat_credentials,
         gigachat_scope=cfg.gigachat_scope,
         gigachat_ca_bundle=cfg.gigachat_ca_bundle,

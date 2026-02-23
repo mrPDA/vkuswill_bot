@@ -45,6 +45,8 @@ class LLMAdapterProtocol(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_choice: str = "auto",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         """Create one chat completion and return normalized response."""
 
@@ -87,12 +89,21 @@ class OpenAICompatibleLLMAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_choice: str = "auto",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> dict[str, Any]:
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": messages,
+            "tools": tools,
+            "tool_choice": tool_choice,
+        }
+        if max_tokens is not None:
+            request["max_tokens"] = max_tokens
+        if temperature is not None:
+            request["temperature"] = temperature
         response = await self._client.chat.completions.create(
-            model=model,
-            messages=messages,
-            tools=tools,
-            tool_choice=tool_choice,
+            **request,
         )
         return normalize_chat_response(response)
 
@@ -158,12 +169,16 @@ class GigaChatLLMAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_choice: str = "auto",
+        max_tokens: int | None = None,
+        temperature: float | None = None,
     ) -> dict[str, Any]:
         chat_payload = self._build_chat_payload(
             model=model,
             messages=messages,
             tools=tools,
             tool_choice=tool_choice,
+            max_tokens=max_tokens,
+            temperature=temperature,
         )
         response = await asyncio.to_thread(self._client.chat, chat_payload)
         return self._normalize_response(response)
@@ -186,6 +201,8 @@ class GigaChatLLMAdapter:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         tool_choice: str,
+        max_tokens: int | None,
+        temperature: float | None,
     ) -> Any:
         from gigachat.models import Chat
 
@@ -197,6 +214,10 @@ class GigaChatLLMAdapter:
         }
         if mode != "none":
             payload["functions"] = GigaChatLLMAdapter._to_gigachat_functions(tools)
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
+        if temperature is not None:
+            payload["temperature"] = temperature
         return Chat(**payload)
 
     @staticmethod
@@ -331,7 +352,7 @@ def normalize_chat_response(response: Any) -> dict[str, Any]:
     message = _extract_message(response)
     content = _normalize_text_content(_extract_content(message))
     tool_calls = _normalize_tool_calls(_extract_tool_calls(message))
-    usage = _extract_usage_details(response)
+    usage = extract_usage_details(response)
     return {
         "choices": [
             {
@@ -374,7 +395,7 @@ def _extract_tool_calls(message: Any) -> Any:
     return getattr(message, "tool_calls", None)
 
 
-def _extract_usage_details(response: Any) -> dict[str, int] | None:
+def extract_usage_details(response: Any) -> dict[str, int] | None:
     """Extract usage details from provider response into canonical shape."""
     usage = getattr(response, "usage", None)
     if usage is None and isinstance(response, dict):
@@ -382,23 +403,122 @@ def _extract_usage_details(response: Any) -> dict[str, int] | None:
     if usage is None:
         return None
 
-    if isinstance(usage, dict):
-        prompt = usage.get("input", usage.get("prompt_tokens"))
-        completion = usage.get("output", usage.get("completion_tokens"))
-        total = usage.get("total", usage.get("total_tokens"))
-    else:
-        prompt = getattr(usage, "input", getattr(usage, "prompt_tokens", None))
-        completion = getattr(usage, "output", getattr(usage, "completion_tokens", None))
-        total = getattr(usage, "total", getattr(usage, "total_tokens", None))
+    usage_dict = _usage_to_dict(usage)
+    if usage_dict is None:
+        return None
+
+    prompt = _pick_usage_value(
+        usage_dict,
+        "input",
+        "prompt_tokens",
+        "promptTokens",
+        "input_tokens",
+        "inputTokens",
+        "input_text_tokens",
+        "inputTextTokens",
+    )
+    completion = _pick_usage_value(
+        usage_dict,
+        "output",
+        "completion_tokens",
+        "completionTokens",
+        "output_tokens",
+        "outputTokens",
+        "output_text_tokens",
+        "outputTextTokens",
+        "generated_tokens",
+    )
+    total = _pick_usage_value(
+        usage_dict,
+        "total",
+        "total_tokens",
+        "totalTokens",
+        "token_count",
+        "tokenCount",
+    )
+    if total is None and prompt is not None and completion is not None:
+        total = prompt + completion
 
     result: dict[str, int] = {}
-    if isinstance(prompt, int):
+    if prompt is not None:
         result["input"] = prompt
-    if isinstance(completion, int):
+    if completion is not None:
         result["output"] = completion
-    if isinstance(total, int):
+    if total is not None:
         result["total"] = total
     return result or None
+
+
+def _extract_usage_details(response: Any) -> dict[str, int] | None:
+    """Backward-compatible alias."""
+    return extract_usage_details(response)
+
+
+def _usage_to_dict(usage: Any) -> dict[str, Any] | None:
+    if isinstance(usage, dict):
+        return usage
+
+    model_dump = getattr(usage, "model_dump", None)
+    if callable(model_dump):
+        with contextlib.suppress(Exception):
+            dumped = model_dump()
+            if isinstance(dumped, dict):
+                return dumped
+
+    to_dict = getattr(usage, "dict", None)
+    if callable(to_dict):
+        with contextlib.suppress(Exception):
+            dumped = to_dict()
+            if isinstance(dumped, dict):
+                return dumped
+
+    values: dict[str, Any] = {}
+    for key in (
+        "input",
+        "output",
+        "total",
+        "prompt_tokens",
+        "completion_tokens",
+        "total_tokens",
+        "promptTokens",
+        "completionTokens",
+        "totalTokens",
+        "input_tokens",
+        "output_tokens",
+        "inputTokens",
+        "outputTokens",
+        "inputTextTokens",
+        "outputTextTokens",
+        "tokenCount",
+    ):
+        value = getattr(usage, key, None)
+        if value is not None:
+            values[key] = value
+    return values or None
+
+
+def _pick_usage_value(usage: dict[str, Any], *keys: str) -> int | None:
+    for key in keys:
+        if key not in usage:
+            continue
+        normalized = _to_int(usage.get(key))
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _to_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value) if value >= 0 else None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.isdigit():
+            return int(stripped)
+    return None
 
 
 def _extract_function_call(message: Any) -> dict[str, Any] | None:
