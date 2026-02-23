@@ -823,3 +823,85 @@ async def test_langfuse_generation_marks_provider_usage_when_present() -> None:
     end_call = langfuse.trace_spy.gen.end_calls[-1]
     assert end_call["usage_details"] == {"input": 10, "output": 3, "total": 13}
     assert end_call["metadata"]["usage_source"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_prompt_profile_and_compact_followup_are_applied_per_step() -> None:
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "vkusvill_products_search",
+                            '{"query":"молоко"}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+        compact_followup_prompt_enabled=True,
+    )
+
+    result = await agent.process_message(user_id=123, text="закажи молоко")
+    assert result == "ok"
+    assert len(llm_client.completions.calls) == 2
+    first_system = llm_client.completions.calls[0]["messages"][0]["content"]
+    second_system = llm_client.completions.calls[1]["messages"][0]["content"]
+    assert "[PROMPT_PROFILE:cart]" in first_system
+    assert "[PROMPT_MODE:compact_followup]" not in first_system
+    assert "[PROMPT_PROFILE:cart]" in second_system
+    assert "[PROMPT_MODE:compact_followup]" in second_system
+
+
+@pytest.mark.asyncio
+async def test_compact_followup_prompt_can_be_disabled() -> None:
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "vkusvill_products_search",
+                            '{"query":"молоко"}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+        compact_followup_prompt_enabled=False,
+    )
+
+    result = await agent.process_message(user_id=124, text="закажи молоко")
+    assert result == "ok"
+    second_system = llm_client.completions.calls[1]["messages"][0]["content"]
+    assert "[PROMPT_PROFILE:cart]" in second_system
+    assert "[PROMPT_MODE:compact_followup]" not in second_system

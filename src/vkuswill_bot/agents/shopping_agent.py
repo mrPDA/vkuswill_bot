@@ -19,7 +19,13 @@ from vkuswill_bot.services.llm_adapters import (
     normalize_llm_provider,
 )
 from vkuswill_bot.services.cart_processor import CartProcessor
-from vkuswill_bot.services.prompts import RECIPE_EXTRACTION_PROMPT, get_system_prompt
+from vkuswill_bot.services.prompts import (
+    RECIPE_EXTRACTION_PROMPT,
+    PromptProfile,
+    detect_prompt_profile,
+    get_profiled_system_prompt,
+    get_system_prompt,
+)
 
 if TYPE_CHECKING:
     from vkuswill_bot.services.chat_engine import ProgressCallback
@@ -75,6 +81,8 @@ class ShoppingAgent:
         llm_timeout_seconds: float = _DEFAULT_LLM_TIMEOUT_SECONDS,
         llm_max_tokens: int | None = None,
         llm_temperature: float | None = None,
+        prompt_profiles_enabled: bool = False,
+        compact_followup_prompt_enabled: bool = True,
         llm_retries: int = _DEFAULT_LLM_RETRIES,
         mcp_timeout_seconds: float = _DEFAULT_MCP_TIMEOUT_SECONDS,
         mcp_retries: int = _DEFAULT_MCP_RETRIES,
@@ -103,6 +111,8 @@ class ShoppingAgent:
         self._llm_temperature = (
             max(0.0, min(1.0, llm_temperature)) if llm_temperature is not None else None
         )
+        self._prompt_profiles_enabled = bool(prompt_profiles_enabled)
+        self._compact_followup_prompt_enabled = bool(compact_followup_prompt_enabled)
         self._llm_retries = max(0, llm_retries)
         self._mcp_timeout_seconds = max(1.0, mcp_timeout_seconds)
         self._mcp_retries = max(0, mcp_retries)
@@ -219,9 +229,13 @@ class ShoppingAgent:
         on_progress: ProgressCallback | None,
         llm_provider: str,
     ) -> str:
+        prompt_profile = self._detect_prompt_profile(text)
         history = self._history.get(user_id)
-        if history is None:
-            history = [{"role": "system", "content": get_system_prompt()}]
+        history = self._ensure_system_prompt(
+            history=history,
+            prompt_profile=prompt_profile,
+            compact=False,
+        )
 
         history.append({"role": "user", "content": text})
         history = self._trim_history(history)
@@ -231,7 +245,12 @@ class ShoppingAgent:
         total_llm_input_chars = 0
 
         tools = await self._get_tools()
-        trace = self._create_trace(user_id=user_id, text=text, llm_provider=llm_provider)
+        trace = self._create_trace(
+            user_id=user_id,
+            text=text,
+            llm_provider=llm_provider,
+            prompt_profile=prompt_profile,
+        )
 
         async def _progress(message: str) -> None:
             if on_progress is None:
@@ -242,7 +261,11 @@ class ShoppingAgent:
         await _progress("\u2699\ufe0f Анализирую запрос...")
 
         for step in range(1, self._max_tool_calls + 1):
-            llm_input = list(history)
+            llm_input = self._build_llm_input_messages(
+                history=history,
+                prompt_profile=prompt_profile,
+                step=step,
+            )
             llm_input_chars = self._history_char_count(llm_input)
             total_llm_input_chars += llm_input_chars
             if step > 1 and total_llm_input_chars > self._max_input_chars_per_turn:
@@ -273,12 +296,14 @@ class ShoppingAgent:
                         "step": step,
                         "provider": llm_provider,
                         "routing_strategy": self._llm_routing_strategy,
+                        "prompt_profile": prompt_profile,
+                        "compact_prompt": bool(step > 1 and self._compact_followup_prompt_enabled),
                     },
                 )
 
             try:
                 response = await self._call_llm(
-                    messages=history,
+                    messages=llm_input,
                     tools=tools,
                     llm_provider=llm_provider,
                 )
@@ -293,7 +318,7 @@ class ShoppingAgent:
             usage_details = self._extract_usage_details(response)
             usage_source = "provider"
             if usage_details is None:
-                usage_details = self._estimate_usage_details(messages=history, message=message)
+                usage_details = self._estimate_usage_details(messages=llm_input, message=message)
                 usage_source = "estimated" if usage_details is not None else "missing"
                 logger.warning(
                     "ShoppingAgent response has no usage details (provider=%s, step=%d, source=%s)",
@@ -305,7 +330,11 @@ class ShoppingAgent:
                 gen.end(
                     output=message,
                     usage_details=usage_details,
-                    metadata={"usage_source": usage_source, "provider": llm_provider},
+                    metadata={
+                        "usage_source": usage_source,
+                        "provider": llm_provider,
+                        "prompt_profile": prompt_profile,
+                    },
                 )
 
             tool_calls = self._extract_tool_calls(message)
@@ -394,7 +423,14 @@ class ShoppingAgent:
             )
         return _ERROR_TOO_MANY_TOOLS
 
-    def _create_trace(self, *, user_id: int, text: str, llm_provider: str) -> Any | None:
+    def _create_trace(
+        self,
+        *,
+        user_id: int,
+        text: str,
+        llm_provider: str,
+        prompt_profile: PromptProfile,
+    ) -> Any | None:
         if self._langfuse is None:
             return None
         with contextlib.suppress(Exception):
@@ -403,9 +439,52 @@ class ShoppingAgent:
                 user_id=str(user_id),
                 session_id=str(user_id),
                 input=text,
-                tags=["shopping_agent", "telegram_or_voice", llm_provider],
+                tags=[
+                    "shopping_agent",
+                    "telegram_or_voice",
+                    llm_provider,
+                    f"profile:{prompt_profile}",
+                ],
             )
         return None
+
+    def _build_llm_input_messages(
+        self,
+        *,
+        history: list[dict[str, Any]],
+        prompt_profile: PromptProfile,
+        step: int,
+    ) -> list[dict[str, Any]]:
+        compact = bool(step > 1 and self._compact_followup_prompt_enabled)
+        return self._ensure_system_prompt(
+            history=history,
+            prompt_profile=prompt_profile,
+            compact=compact,
+        )
+
+    def _ensure_system_prompt(
+        self,
+        *,
+        history: list[dict[str, Any]] | None,
+        prompt_profile: PromptProfile,
+        compact: bool,
+    ) -> list[dict[str, Any]]:
+        """Обеспечить первый system-message с нужной версией промпта."""
+        prompt = self._resolve_system_prompt(prompt_profile=prompt_profile, compact=compact)
+        prepared = list(history) if history is not None else []
+        if prepared and prepared[0].get("role") == "system":
+            prepared[0] = {"role": "system", "content": prompt}
+            return prepared
+        return [{"role": "system", "content": prompt}, *prepared]
+
+    def _resolve_system_prompt(self, *, prompt_profile: PromptProfile, compact: bool) -> str:
+        if not self._prompt_profiles_enabled:
+            return get_system_prompt()
+        return get_profiled_system_prompt(profile=prompt_profile, compact=compact)
+
+    @staticmethod
+    def _detect_prompt_profile(text: str) -> PromptProfile:
+        return detect_prompt_profile(text)
 
     async def _get_tools(self) -> list[dict[str, Any]]:
         if self._tools_cache is not None:

@@ -122,6 +122,18 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_temperature == 0.2
 
+    def test_llm_prompt_profiles_default_disabled(self):
+        """Профили промптов по умолчанию отключены (безопасный rollout)."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_prompt_profiles_enabled is False
+
+    def test_llm_compact_followup_prompt_default_enabled(self):
+        """Компактный follow-up промпт включён по умолчанию."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.llm_compact_followup_prompt_enabled is True
+
     def test_debug_disabled_by_default(self):
         """Debug отключён по умолчанию."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -473,6 +485,8 @@ class TestSecretProtection:
             "LLM_MAX_CONCURRENT": "16",
             "LLM_MAX_TOKENS": "1024",
             "LLM_TEMPERATURE": "0.1",
+            "LLM_PROMPT_PROFILES_ENABLED": "true",
+            "LLM_COMPACT_FOLLOWUP_PROMPT_ENABLED": "false",
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
@@ -483,6 +497,8 @@ class TestSecretProtection:
         assert cfg.llm_max_concurrent == 16
         assert cfg.llm_max_tokens == 1024
         assert cfg.llm_temperature == 0.1
+        assert cfg.llm_prompt_profiles_enabled is True
+        assert cfg.llm_compact_followup_prompt_enabled is False
 
     def test_llm_provider_alias_openai_compatible(self):
         """llm_provider принимает алиас openai_compatible."""

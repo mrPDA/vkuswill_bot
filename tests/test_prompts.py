@@ -16,11 +16,14 @@ from vkuswill_bot.services.prompts import (
     ERROR_GIGACHAT,
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
+    PromptProfile,
     RECIPE_EXTRACTION_PROMPT,
     RECIPE_SEARCH_TOOL,
     RECIPE_TOOL,
     SYSTEM_PROMPT,
     _DEFAULT_SYSTEM_PROMPT,
+    detect_prompt_profile,
+    get_profiled_system_prompt,
     get_system_prompt,
 )
 
@@ -81,6 +84,33 @@ class TestDefaultPromptContent:
         prompt = get_system_prompt()
         assert "продавец-консультант" in prompt.lower()
         assert "ВкусВилл" in prompt
+
+
+class TestPromptProfiles:
+    """Тесты компактных профильных system-промптов."""
+
+    @pytest.mark.parametrize(
+        ("text", "profile"),
+        [
+            ("Закажи молоко и яйца", "cart"),
+            ("Собери ингредиенты для борща", "recipe"),
+            ("Проверь статус корзины", "status"),
+            ("Как привязать алису по коду", "linking"),
+            ("Привет", "general"),
+        ],
+    )
+    def test_detect_prompt_profile(self, text: str, profile: PromptProfile):
+        assert detect_prompt_profile(text) == profile
+
+    def test_get_profiled_system_prompt_contains_profile_marker(self):
+        prompt = get_profiled_system_prompt(profile="cart", compact=False)
+        assert "[PROMPT_PROFILE:cart]" in prompt
+        assert "[PROMPT_MODE:compact_followup]" not in prompt
+
+    def test_get_profiled_system_prompt_compact_mode_adds_followup_marker(self):
+        prompt = get_profiled_system_prompt(profile="recipe", compact=True)
+        assert "[PROMPT_PROFILE:recipe]" in prompt
+        assert "[PROMPT_MODE:compact_followup]" in prompt
 
 
 # ============================================================================
