@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.18.6] — 2026-02-23
+
+### Исправлено
+
+- **Langfuse usage для Qwen** — добавлен fallback расчёт токенов в `ShoppingAgent`, если провайдер не вернул `usage`; теперь `usage_details` не остаётся пустым в generation-traces
+- **Маркировка источника usage** — в metadata generation добавляется `usage_source=provider|estimated|missing` для диагностики качества метрик
+- **Формат legacy usage в Langfuse wrapper** — cost-ключи переведены в snake_case (`input_cost/output_cost/total_cost`) для совместимости с SDK v2 model usage schema
+- **Тесты observability** — добавлены unit-тесты на fallback usage и формирование payload в `langfuse_tracing`
+
 ## [0.18.5] — 2026-02-23
 
 ### Исправлено
