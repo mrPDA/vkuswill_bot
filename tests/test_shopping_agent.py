@@ -611,7 +611,7 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
                 "ingredient": "спагетти",
                 "best_match": {
                     "xml_id": 781,
-                    "name": "Макароны \"Спагетти\"",
+                    "name": 'Макароны "Спагетти"',
                     "price": {"current": 89, "currency": "RUB"},
                     "suggested_q": 1,
                 },
