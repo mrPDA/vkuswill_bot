@@ -1276,6 +1276,75 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
     assert compact["not_found"] == ["черный перец"]
 
 
+def test_compact_products_search_flattens_price_and_meta() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = {
+        "ok": True,
+        "data": {
+            "meta": {
+                "q": "укроп",
+                "limit": 10,
+                "total": 44,
+                "page": 1,
+                "pages": 5,
+                "has_more": True,
+            },
+            "items": [
+                {
+                    "xml_id": 15194,
+                    "name": "Укроп, 50 г",
+                    "price": {"current": 80, "currency": "RUB", "old": None},
+                    "unit": "шт",
+                    "rating": {"average": 4.8, "count": 100},
+                }
+            ],
+        },
+    }
+
+    compact = agent._compact_products_search(payload)
+    assert compact["ok"] is True
+    assert compact["meta"] == {"q": "укроп", "total": 44, "has_more": True}
+    assert compact["items"][0]["xml_id"] == 15194
+    assert compact["items"][0]["price"] == 80
+    assert compact["items"][0]["rating"] == 4.8
+
+
+def test_compact_product_details_drops_heavy_fields() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    agent._max_tool_result_chars = 500
+    payload = {
+        "ok": True,
+        "data": {
+            "xml_id": 488,
+            "name": "Филе грудки цыпленка-бройлера",
+            "description": "Очень длинное описание " + ("мясо " * 200),
+            "brand": "ВкусВилл",
+            "price": {"current": 586, "currency": "RUB"},
+            "unit": "кг",
+            "weight": None,
+            "rating": {"average": 4.9, "count": 51969},
+            "url": "https://vkusvill.ru/goods/file-grudki-tsyplenka-broylera-488.html",
+            "images": [{"small": "https://img.vkusvill.ru/image1.webp"} for _ in range(10)],
+            "category": [{"id": 1, "name": "Курица"}],
+        },
+    }
+
+    compact_text = agent._prepare_tool_result_for_history(
+        "vkusvill_product_details",
+        json.dumps(payload, ensure_ascii=False),
+    )
+    compact = json.loads(compact_text)
+    compact_dump = json.dumps(compact, ensure_ascii=False)
+    assert compact["ok"] is True
+    assert compact["data"]["xml_id"] == 488
+    assert compact["data"]["price"] == 586
+    assert compact["data"]["rating"] == 4.9
+    assert "images" not in compact_dump
+    assert "category" not in compact_dump
+    assert "url" not in compact_dump
+    assert len(compact_text) <= 500
+
+
 def test_trim_history_recompacts_legacy_tool_messages() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     agent._max_tool_result_chars = 500
