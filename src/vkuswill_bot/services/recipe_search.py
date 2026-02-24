@@ -74,7 +74,16 @@ class RecipeSearchService:
             )
 
         sem = asyncio.Semaphore(self._max_concurrency)
-        tasks = [self._search_one(ingredient, sem, on_found=on_found) for ingredient in ingredients]
+        query_tasks: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        tasks = [
+            self._search_one(
+                ingredient,
+                sem,
+                query_tasks=query_tasks,
+                on_found=on_found,
+            )
+            for ingredient in ingredients
+        ]
         raw_results = await asyncio.gather(*tasks, return_exceptions=True)
 
         results: list[dict] = []
@@ -82,7 +91,7 @@ class RecipeSearchService:
         search_log: dict[str, list[int]] = {}
 
         for ingredient, outcome in zip(ingredients, raw_results, strict=True):
-            query = str(ingredient.get("search_query", "")).strip()
+            query = self._resolve_query(ingredient)
             if isinstance(outcome, Exception):
                 logger.warning("Ошибка recipe_search для %r: %s", query, outcome)
                 if query:
@@ -100,10 +109,17 @@ class RecipeSearchService:
 
             results.append(outcome["result"])
             found_ids = outcome["found_ids"]
-            if found_ids:
-                search_log[query] = found_ids
-            elif query:
-                not_found.append(query)
+            result_payload = outcome.get("result", {})
+            resolved_query = ""
+            if isinstance(result_payload, dict):
+                resolved_query = str(result_payload.get("search_query", "")).strip()
+            if not resolved_query:
+                resolved_query = query
+
+            if found_ids and resolved_query:
+                search_log[resolved_query] = found_ids
+            elif resolved_query:
+                not_found.append(resolved_query)
 
         return json.dumps(
             {
@@ -119,9 +135,10 @@ class RecipeSearchService:
         self,
         ingredient: dict,
         sem: asyncio.Semaphore,
+        query_tasks: dict[str, asyncio.Task[dict[str, Any]]],
         on_found: Callable[[], Coroutine[Any, Any, None]] | None = None,
     ) -> dict:
-        query = str(ingredient.get("search_query", "")).strip()
+        query = self._resolve_query(ingredient)
         ingredient_name = ingredient.get("name", query)
 
         if not query:
@@ -140,33 +157,23 @@ class RecipeSearchService:
             }
 
         cleaned_query = self._search_processor.clean_search_query(query)
-        args = {"q": cleaned_query, "limit": SEARCH_LIMIT}
-
-        async with sem:
-            raw = await self._mcp_client.call_tool("vkusvill_products_search", args)
-
-        # Сохраняем в кэш цен и триммим тяжёлые поля.
-        await self._search_processor.cache_prices(raw)
-        trimmed = self._search_processor.trim_search_result(raw)
-        parsed = self._search_processor.parse_search_items(trimmed)
-        if parsed is None:
+        search_outcome = await self._search_query_cached(cleaned_query, sem, query_tasks)
+        if search_outcome.get("error"):
             return {
                 "result": {
                     "ingredient": ingredient_name,
                     "search_query": cleaned_query,
                     "best_match": None,
                     "alternatives": [],
-                    "error": "Поиск не вернул items",
+                    "error": str(search_outcome.get("error")),
                 },
                 "found_ids": [],
             }
 
-        data, items = parsed
-        found_ids: list[int] = [
-            item["xml_id"]
-            for item in items
-            if isinstance(item, dict) and isinstance(item.get("xml_id"), int)
-        ]
+        data = search_outcome.get("data", {})
+        items = search_outcome.get("items", [])
+        found_ids_raw = search_outcome.get("found_ids", [])
+        found_ids = [item for item in found_ids_raw if isinstance(item, int)]
 
         best_match = None
         alternatives: list[dict] = []
@@ -194,6 +201,48 @@ class RecipeSearchService:
                 await on_found()
 
         return {"result": result, "found_ids": found_ids}
+
+    async def _search_query_cached(
+        self,
+        cleaned_query: str,
+        sem: asyncio.Semaphore,
+        query_tasks: dict[str, asyncio.Task[dict[str, Any]]],
+    ) -> dict[str, Any]:
+        task = query_tasks.get(cleaned_query)
+        if task is None:
+            task = asyncio.create_task(self._search_query(cleaned_query, sem))
+            query_tasks[cleaned_query] = task
+        try:
+            return await task
+        except Exception:
+            query_tasks.pop(cleaned_query, None)
+            raise
+
+    async def _search_query(self, cleaned_query: str, sem: asyncio.Semaphore) -> dict[str, Any]:
+        args = {"q": cleaned_query, "limit": SEARCH_LIMIT}
+        async with sem:
+            raw = await self._mcp_client.call_tool("vkusvill_products_search", args)
+
+        await self._search_processor.cache_prices(raw)
+        trimmed = self._search_processor.trim_search_result(raw)
+        parsed = self._search_processor.parse_search_items(trimmed)
+        if parsed is None:
+            return {"error": "Поиск не вернул items", "data": {}, "items": [], "found_ids": []}
+
+        data, items = parsed
+        found_ids: list[int] = [
+            item["xml_id"]
+            for item in items
+            if isinstance(item, dict) and isinstance(item.get("xml_id"), int)
+        ]
+        return {"data": data, "items": items, "found_ids": found_ids}
+
+    @staticmethod
+    def _resolve_query(ingredient: dict[str, Any]) -> str:
+        query = str(ingredient.get("search_query", "")).strip()
+        if query:
+            return query
+        return str(ingredient.get("name", "")).strip()
 
     async def _to_match(self, item: dict, ingredient: dict) -> dict:
         xml_id = item.get("xml_id")

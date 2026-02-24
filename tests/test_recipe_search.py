@@ -114,6 +114,72 @@ class TestRecipeSearchService:
         assert parsed["results"][0]["best_match"] is None
         assert parsed["search_log"] == {}
 
+    async def test_deduplicates_same_search_query_within_batch(self, service, mock_mcp_client):
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "лук репчатый",
+            [
+                {
+                    "xml_id": 200,
+                    "name": "Лук репчатый",
+                    "price": {"current": 45},
+                    "unit": "шт",
+                    "weight": {"value": 100, "unit": "г"},
+                }
+            ],
+        )
+        ingredients = [
+            {"name": "лук", "search_query": "лук репчатый", "quantity": 1, "unit": "шт"},
+            {
+                "name": "лук для зажарки",
+                "search_query": "лук репчатый",
+                "quantity": 2,
+                "unit": "шт",
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        assert parsed["ok"] is True
+        assert len(parsed["results"]) == 2
+        assert parsed["results"][0]["best_match"]["xml_id"] == 200
+        assert parsed["results"][1]["best_match"]["xml_id"] == 200
+        assert parsed["search_log"]["лук репчатый"] == [200]
+        mock_mcp_client.call_tool.assert_awaited_once_with(
+            "vkusvill_products_search",
+            {"q": "лук репчатый", "limit": 5},
+        )
+
+    async def test_fallback_to_name_when_search_query_missing(self, service, mock_mcp_client):
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "томатная паста",
+            [
+                {
+                    "xml_id": 310,
+                    "name": "Томатная паста 70 г",
+                    "price": {"current": 99},
+                    "unit": "шт",
+                }
+            ],
+        )
+        ingredients = [
+            {
+                "name": "томатная паста 2 ст.л.",
+                "quantity": 2,
+                "unit": "ст.л.",
+            }
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        assert parsed["ok"] is True
+        assert parsed["not_found"] == []
+        assert parsed["results"][0]["search_query"] == "томатная паста"
+        assert parsed["search_log"]["томатная паста"] == [310]
+        mock_mcp_client.call_tool.assert_awaited_once_with(
+            "vkusvill_products_search",
+            {"q": "томатная паста", "limit": 5},
+        )
+
     async def test_discrete_weight_based_suggested_q(self, service, mock_mcp_client):
         mock_mcp_client.call_tool.return_value = _search_response(
             "томатная паста",
