@@ -1743,6 +1743,8 @@ class ShoppingAgent:
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         if tool_name == "vkusvill_products_search":
             return self._compact_products_search(payload)
+        if tool_name == "vkusvill_product_details":
+            return self._compact_product_details(payload)
         if tool_name == "recipe_ingredients":
             return self._compact_recipe_ingredients(payload)
         if tool_name == "recipe_search":
@@ -1764,7 +1766,15 @@ class ShoppingAgent:
                 return result
             data = payload
 
-        result["meta"] = data.get("meta", {})
+        meta = data.get("meta", {})
+        if isinstance(meta, dict):
+            compact_meta: dict[str, Any] = {}
+            for key in ("q", "total", "has_more"):
+                if key in meta:
+                    compact_meta[key] = meta.get(key)
+            if compact_meta:
+                result["meta"] = compact_meta
+
         items = data.get("items", [])
         if isinstance(items, list):
             top_items = []
@@ -1772,11 +1782,14 @@ class ShoppingAgent:
                 if not isinstance(item, dict):
                     continue
                 rating = item.get("rating")
+                price = item.get("price")
+                if isinstance(price, dict):
+                    price = price.get("current")
                 top_items.append(
                     {
                         "xml_id": item.get("xml_id"),
                         "name": item.get("name"),
-                        "price": item.get("price"),
+                        "price": price,
                         "unit": item.get("unit"),
                         "rating": rating.get("average") if isinstance(rating, dict) else None,
                     }
@@ -1786,6 +1799,54 @@ class ShoppingAgent:
         relevance_warning = data.get("relevance_warning")
         if relevance_warning:
             result["relevance_warning"] = relevance_warning
+        return result
+
+    @staticmethod
+    def _compact_product_details(payload: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {"ok": payload.get("ok")}
+        data = payload.get("data")
+        if isinstance(data, dict):
+            price = data.get("price")
+            if isinstance(price, dict):
+                price = price.get("current")
+            rating = data.get("rating")
+            rating_value = rating.get("average") if isinstance(rating, dict) else rating
+            weight = data.get("weight")
+            compact_weight: dict[str, Any] | None = None
+            if isinstance(weight, dict):
+                compact_weight = {}
+                if "value" in weight:
+                    compact_weight["value"] = weight.get("value")
+                if "unit" in weight:
+                    compact_weight["unit"] = weight.get("unit")
+                if not compact_weight:
+                    compact_weight = None
+
+            description = str(data.get("description", "")).strip()
+            if description:
+                description = re.sub(r"\s+", " ", description)
+                description = description[:220]
+
+            compact_data: dict[str, Any] = {
+                "xml_id": data.get("xml_id", data.get("id")),
+                "name": data.get("name"),
+                "brand": data.get("brand"),
+                "price": price,
+                "unit": data.get("unit"),
+                "weight": compact_weight,
+                "rating": rating_value,
+                "description": description or None,
+            }
+            result["data"] = {
+                key: value
+                for key, value in compact_data.items()
+                if value is not None and value != ""
+            }
+
+        if "error" in payload:
+            result["error"] = payload.get("error")
+        if "message" in payload:
+            result["message"] = payload.get("message")
         return result
 
     def _compact_recipe_ingredients(self, payload: dict[str, Any]) -> dict[str, Any]:
