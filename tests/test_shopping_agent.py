@@ -1457,7 +1457,7 @@ def test_compact_products_search_flattens_price_and_meta() -> None:
     assert compact["items"][0]["rating"] == 4.8
 
 
-def test_compact_products_search_sanitizes_and_limits_top5() -> None:
+def test_compact_products_search_sanitizes_and_limits_top3() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     payload = {
         "ok": True,
@@ -1501,7 +1501,7 @@ def test_compact_products_search_sanitizes_and_limits_top5() -> None:
     compact = agent._compact_products_search(payload)
     assert compact["ok"] is True
     assert compact["meta"] == {"q": "филе грудки", "total": 77, "has_more": True}
-    assert len(compact["items"]) == 5
+    assert len(compact["items"]) == 3
     assert compact["items"][0]["xml_id"] == 1
     assert compact["items"][0]["name"] == "Филе грудки цыпленка"
     assert all(isinstance(item.get("confidence"), float) for item in compact["items"])
@@ -1585,6 +1585,116 @@ def test_trim_history_recompacts_legacy_tool_messages() -> None:
     tool_messages = [msg for msg in trimmed if msg.get("role") == "tool"]
     assert tool_messages
     assert len(tool_messages[0]["content"]) <= 500
+
+
+def test_trim_history_replaces_duplicate_tool_payload_with_cached_stub() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "meta": {"q": "молоко", "total": 3, "has_more": True},
+                "items": [
+                    {"xml_id": 1001, "name": "Молоко 3,2%", "price": {"current": 93}, "unit": "шт"},
+                    {"xml_id": 1002, "name": "Молоко 2,5%", "price": {"current": 89}, "unit": "шт"},
+                ],
+            },
+        },
+        ensure_ascii=False,
+    )
+    history = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc-1", "type": "function", "function": {"name": "x"}}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc-1",
+            "name": "vkusvill_products_search",
+            "content": payload,
+        },
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [{"id": "tc-2", "type": "function", "function": {"name": "x"}}],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc-2",
+            "name": "vkusvill_products_search",
+            "content": payload,
+        },
+    ]
+
+    trimmed = agent._trim_history_by_chars(history)
+    tool_messages = [msg for msg in trimmed if msg.get("role") == "tool"]
+    assert len(tool_messages) == 2
+    first_payload = json.loads(tool_messages[0]["content"])
+    second_payload = json.loads(tool_messages[1]["content"])
+    assert first_payload.get("cached") is not True
+    assert second_payload["cached"] is True
+    assert second_payload["duplicate"] is True
+    assert second_payload["meta"]["q"] == "молоко"
+
+
+def test_should_start_fresh_context_for_new_independent_cart_request() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    history = [
+        {"role": "system", "content": "sys"},
+        {"role": "user", "content": "собери ингредиенты для оливье"},
+        {
+            "role": "assistant",
+            "content": (
+                "Собрала корзину по вашему запросу.\n\n"
+                '<a href="https://vkusvill.ru/?share_basket=123">Открыть корзину</a>'
+            ),
+        },
+    ]
+
+    assert (
+        agent._should_start_fresh_context(
+            text="собери ингридиенты для плова на 3 человек",
+            history=history,
+        )
+        is True
+    )
+    assert (
+        agent._should_start_fresh_context(
+            text="собери новую корзину для плова",
+            history=history,
+        )
+        is True
+    )
+    assert (
+        agent._should_start_fresh_context(
+            text="добавь еще молоко к этой корзине",
+            history=history,
+        )
+        is False
+    )
+    assert (
+        agent._should_start_fresh_context(
+            text="убери лук из корзины",
+            history=history,
+        )
+        is False
+    )
+    assert (
+        agent._should_start_fresh_context(
+            text="замени молоко на кефир в корзине",
+            history=history,
+        )
+        is False
+    )
+    assert (
+        agent._should_start_fresh_context(
+            text="что с корзиной?",
+            history=history,
+        )
+        is False
+    )
 
 
 def test_extract_usage_details_from_normalized_dict() -> None:

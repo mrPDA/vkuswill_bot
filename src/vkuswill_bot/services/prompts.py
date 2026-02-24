@@ -110,6 +110,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
     recipe_markers = (
         "рецепт",
         "ингредиент",
+        "ингридиент",
         "приготов",
         "свари",
         "испеч",
@@ -117,8 +118,27 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "суп",
         "паста",
     )
-    status_markers = ("статус", "где заказ", "что с заказом", "корзин", "провер")
+    status_markers = (
+        "статус",
+        "где заказ",
+        "что с заказом",
+        "что с корзин",
+        "статус корзин",
+        "проверь статус",
+    )
     linking_markers = ("привяз", "код", "алис", "voice", "отвяз")
+    cart_markers = (
+        "купи",
+        "закажи",
+        "добав",
+        "собери",
+        "убер",
+        "удал",
+        "замен",
+        "измени",
+        "поменя",
+        "объедин",
+    )
 
     if any(marker in low for marker in recipe_markers):
         return "recipe"
@@ -126,7 +146,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         return "status"
     if any(marker in low for marker in linking_markers):
         return "linking"
-    if any(marker in low for marker in ("купи", "закажи", "добав", "собери")):
+    if any(marker in low for marker in cart_markers):
         return "cart"
     return "general"
 

@@ -51,7 +51,7 @@ _DEFAULT_MCP_TIMEOUT_SECONDS = 15.0
 _DEFAULT_MCP_RETRIES = 2
 _DEFAULT_LLM_ROUTING_STRATEGY = "single_provider"
 _DEFAULT_MAX_TOOL_RESULT_CHARS = 1800
-_DEFAULT_MAX_HISTORY_CHARS = 30000
+_DEFAULT_MAX_HISTORY_CHARS = 16000
 _DEFAULT_MAX_INPUT_CHARS_PER_TURN = 250000
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
 _ERROR_TOO_MANY_TOOLS = (
@@ -90,6 +90,44 @@ _PANTRY_TAG_SALT = "salt"
 _PANTRY_TAG_SUGAR = "sugar"
 _PANTRY_TAG_PEPPER = "pepper"
 _EGG_PACK_SIZE = 10
+_MODIFY_EXISTING_CART_MARKERS = (
+    "добав",
+    "ещё",
+    "еще",
+    "объедин",
+    "к предыдущ",
+    "к прошл",
+    "ту же корзин",
+    "к этой корзин",
+    "дополни",
+    "продолж",
+    "и еще",
+    "убер",
+    "удал",
+    "замен",
+    "измени",
+    "поменя",
+    "исключ",
+)
+_EXPLICIT_NEW_CART_MARKERS = (
+    "новая корзин",
+    "новый заказ",
+    "с нуля",
+    "заново",
+    "собери заново",
+    "отдельную корзин",
+    "другую корзин",
+    "не в эту корзин",
+)
+_NEW_CART_ACTION_MARKERS = (
+    "собери",
+    "закаж",
+    "купи",
+    "подбери",
+    "ингредиент",
+    "ингридиент",
+    "рецепт",
+)
 
 
 class ShoppingAgent:
@@ -266,6 +304,8 @@ class ShoppingAgent:
         llm_provider: str,
     ) -> str:
         history = self._history.get(user_id)
+        if self._should_start_fresh_context(text=text, history=history):
+            history = None
         prompt_profile = self._resolve_prompt_profile(text=text, history=history)
         history = self._ensure_system_prompt(
             history=history,
@@ -1702,6 +1742,7 @@ class ShoppingAgent:
             return history
 
         compacted = [history[0]]
+        seen_tool_signatures: set[str] = set()
         for message in history[1:]:
             if message.get("role") != "tool":
                 compacted.append(message)
@@ -1713,12 +1754,17 @@ class ShoppingAgent:
                 compacted.append(message)
                 continue
 
-            compacted.append(
-                {
-                    **message,
-                    "content": self._prepare_tool_result_for_history(name, content),
-                }
-            )
+            compact_content = self._prepare_tool_result_for_history(name, content)
+            signature = f"{name}:{compact_content}"
+            if signature in seen_tool_signatures:
+                compact_content = self._build_cached_tool_stub(
+                    tool_name=name,
+                    compact_content=compact_content,
+                )
+            else:
+                seen_tool_signatures.add(signature)
+
+            compacted.append({**message, "content": compact_content})
         return compacted
 
     @staticmethod
@@ -1756,6 +1802,53 @@ class ShoppingAgent:
                 compact = self._compact_tool_result(tool_name, parsed)
                 return self._fit_payload_to_limit(compact)
         return tool_result[: self._max_tool_result_chars]
+
+    def _build_cached_tool_stub(self, *, tool_name: str, compact_content: str) -> str:
+        """Построить сверх-компактный stub для повторного tool-результата в history."""
+        base: dict[str, Any] = {"ok": True, "cached": True, "duplicate": True}
+        with contextlib.suppress(Exception):
+            parsed = json.loads(compact_content)
+            if isinstance(parsed, dict):
+                if "ok" in parsed:
+                    base["ok"] = bool(parsed.get("ok"))
+                if tool_name == "vkusvill_products_search":
+                    meta = parsed.get("meta")
+                    if isinstance(meta, dict):
+                        q = str(meta.get("q", "")).strip()
+                        if q:
+                            base["meta"] = {"q": q}
+                    items = parsed.get("items")
+                    if isinstance(items, list) and items:
+                        first = items[0]
+                        if isinstance(first, dict):
+                            base["item"] = {
+                                key: first.get(key)
+                                for key in ("xml_id", "name", "price", "unit")
+                                if first.get(key) is not None
+                            }
+                elif tool_name == "vkusvill_product_details":
+                    data = parsed.get("data")
+                    if isinstance(data, dict):
+                        base["data"] = {
+                            key: data.get(key)
+                            for key in ("xml_id", "name", "price", "unit")
+                            if data.get(key) is not None
+                        }
+                elif tool_name == "recipe_ingredients":
+                    dish = str(parsed.get("dish", "")).strip()
+                    if dish:
+                        base["dish"] = dish
+                    servings = parsed.get("servings")
+                    if isinstance(servings, int | float) and not isinstance(servings, bool):
+                        base["servings"] = servings
+                elif tool_name == "recipe_search":
+                    found = parsed.get("found")
+                    if isinstance(found, list):
+                        base["found_count"] = len(found)
+                    not_found = parsed.get("not_found")
+                    if isinstance(not_found, list):
+                        base["not_found_count"] = len(not_found)
+        return self._fit_payload_to_limit(base)
 
     def _fit_payload_to_limit(self, payload: dict[str, Any]) -> str:
         """Уместить JSON-пейлоад в лимит, сохранив валидный JSON."""
@@ -1908,7 +2001,7 @@ class ShoppingAgent:
 
             scored_items.sort(key=lambda row: row.get("_score", 0.0), reverse=True)
             top_items = []
-            for row in scored_items[:5]:
+            for row in scored_items[:3]:
                 top_items.append({k: v for k, v in row.items() if k != "_score" and v is not None})
             result["items"] = top_items
 
@@ -1938,11 +2031,6 @@ class ShoppingAgent:
                 if not compact_weight:
                     compact_weight = None
 
-            description = str(data.get("description", "")).strip()
-            if description:
-                description = re.sub(r"\s+", " ", description)
-                description = description[:220]
-
             compact_data: dict[str, Any] = {
                 "xml_id": data.get("xml_id", data.get("id")),
                 "name": cls._normalize_compact_text(data.get("name")),
@@ -1951,7 +2039,6 @@ class ShoppingAgent:
                 "unit": cls._normalize_compact_text(data.get("unit")),
                 "weight": compact_weight,
                 "rating": rating_value,
-                "description": description or None,
             }
             result["data"] = {
                 key: value
@@ -2294,7 +2381,14 @@ class ShoppingAgent:
             "купить",
             "заказ",
             "ингредиент",
+            "ингридиент",
             "рецепт",
+            "убер",
+            "удал",
+            "замен",
+            "измени",
+            "поменя",
+            "объедин",
         )
         return any(marker in normalized for marker in markers)
 
@@ -2339,6 +2433,45 @@ class ShoppingAgent:
         ):
             return True
         return "не удалось создать корзину" in normalized or "не могу создать корзину" in normalized
+
+    def _should_start_fresh_context(
+        self,
+        *,
+        text: str,
+        history: list[dict[str, Any]] | None,
+    ) -> bool:
+        if not history or len(history) < 3:
+            return False
+
+        normalized = text.lower()
+        if any(marker in normalized for marker in _MODIFY_EXISTING_CART_MARKERS):
+            return False
+
+        if not self._is_cart_intent(text):
+            return False
+
+        last_assistant_text = ""
+        for msg in reversed(history):
+            if msg.get("role") != "assistant":
+                continue
+            content = msg.get("content")
+            if isinstance(content, str) and content.strip():
+                last_assistant_text = content
+                break
+        if not last_assistant_text:
+            return False
+
+        response_low = last_assistant_text.lower()
+        has_last_cart = self._looks_like_cart_ready_reply(last_assistant_text) or (
+            "<a href=" in response_low and "vkusvill.ru" in response_low
+        )
+        if not has_last_cart:
+            return False
+
+        if any(marker in normalized for marker in _EXPLICIT_NEW_CART_MARKERS):
+            return True
+
+        return any(marker in normalized for marker in _NEW_CART_ACTION_MARKERS)
 
     @staticmethod
     def _render_stable_cart_output(cart_data: dict[str, Any]) -> str:
