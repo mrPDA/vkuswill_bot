@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import datetime as dt
+import html
 import json
 import logging
 import math
@@ -20,6 +21,7 @@ from vkuswill_bot.services.llm_adapters import (
     normalize_llm_provider,
 )
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.prompts import (
     RECIPE_EXTRACTION_PROMPT,
     RECIPE_SEARCH_TOOL,
@@ -56,6 +58,14 @@ _ERROR_TOO_MANY_TOOLS = (
     "Не удалось завершить подбор в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
 )
 _MCP_TOOL_NOT_FOUND = "method not found"
+_MCP_CACHEABLE_TOOLS = frozenset(
+    {
+        "vkusvill_products_search",
+        "vkusvill_product_details",
+        "recipe_ingredients",
+        "recipe_search",
+    }
+)
 _FORCE_CART_RECOVERY_HINT = (
     "[Системная корректировка] Пользователь ожидает готовую корзину. "
     "Запрещено предлагать ручную сборку или отправлять пользователя собирать корзину самому. "
@@ -277,6 +287,7 @@ class ShoppingAgent:
         explicit_egg_pack_request = self._has_explicit_egg_pack_request(text)
         user_preferences = await self._load_user_preferences(user_id)
         total_llm_input_chars = 0
+        mcp_call_cache: dict[str, str] = {}
 
         tools = await self._get_tools()
         trace = self._create_trace(
@@ -462,6 +473,7 @@ class ShoppingAgent:
                     name=tool_name,
                     arguments=tool_args,
                     llm_provider=llm_provider,
+                    call_cache=mcp_call_cache,
                 )
                 if tool_name == "recipe_ingredients":
                     tool_result = self._sanitize_recipe_ingredients_tool_result(
@@ -723,19 +735,36 @@ class ShoppingAgent:
         name: str,
         arguments: dict[str, Any],
         llm_provider: str,
+        call_cache: dict[str, str] | None = None,
     ) -> str:
+        cache_key: str | None = None
+        if call_cache is not None and name in _MCP_CACHEABLE_TOOLS:
+            cache_key = self._make_mcp_call_cache_key(name=name, arguments=arguments)
+            cached = call_cache.get(cache_key)
+            if isinstance(cached, str):
+                return cached
+
         if name == "recipe_ingredients" and name not in self._mcp_tool_names:
-            return await self._fallback_recipe_ingredients(arguments, llm_provider)
+            fallback = await self._fallback_recipe_ingredients(arguments, llm_provider)
+            if cache_key is not None and self._is_successful_tool_result(fallback):
+                call_cache[cache_key] = fallback
+            return fallback
         if name == "recipe_search" and name not in self._mcp_tool_names:
-            return await self._fallback_recipe_search(arguments)
+            fallback = await self._fallback_recipe_search(arguments)
+            if cache_key is not None and self._is_successful_tool_result(fallback):
+                call_cache[cache_key] = fallback
+            return fallback
 
         last_error: Exception | None = None
         for attempt in range(self._mcp_retries + 1):
             try:
-                return await asyncio.wait_for(
+                result = await asyncio.wait_for(
                     self._mcp_client.call_tool(name, arguments),
                     timeout=self._mcp_timeout_seconds,
                 )
+                if cache_key is not None and self._is_successful_tool_result(result):
+                    call_cache[cache_key] = result
+                return result
             except Exception as exc:
                 last_error = exc
                 fallback = await self._fallback_missing_mcp_tool(
@@ -745,6 +774,8 @@ class ShoppingAgent:
                     error=exc,
                 )
                 if fallback is not None:
+                    if cache_key is not None and self._is_successful_tool_result(fallback):
+                        call_cache[cache_key] = fallback
                     return fallback
                 if attempt >= self._mcp_retries:
                     break
@@ -759,6 +790,24 @@ class ShoppingAgent:
             },
             ensure_ascii=False,
         )
+
+    @staticmethod
+    def _make_mcp_call_cache_key(*, name: str, arguments: dict[str, Any]) -> str:
+        args_json = json.dumps(
+            arguments,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return f"{name}:{args_json}"
+
+    @staticmethod
+    def _is_successful_tool_result(tool_result: str) -> bool:
+        with contextlib.suppress(Exception):
+            payload = json.loads(tool_result)
+            if isinstance(payload, dict) and payload.get("ok") is True:
+                return True
+        return False
 
     async def _fallback_missing_mcp_tool(
         self,
@@ -1423,7 +1472,42 @@ class ShoppingAgent:
             if enhanced_query == original_query:
                 return tool_args
             return {**tool_args, query_key: enhanced_query}
+        if tool_name == "recipe_search":
+            return ShoppingAgent._normalize_recipe_search_args(tool_args)
         return tool_args
+
+    @staticmethod
+    def _normalize_recipe_search_args(tool_args: dict[str, Any]) -> dict[str, Any]:
+        ingredients = tool_args.get("ingredients")
+        if not isinstance(ingredients, list):
+            return tool_args
+
+        normalized_rows: list[Any] = []
+        changed = False
+        for row in ingredients:
+            if not isinstance(row, dict):
+                normalized_rows.append(row)
+                continue
+
+            normalized = dict(row)
+            raw_query = normalized.get("search_query", "")
+            query = str(raw_query).strip() if raw_query is not None else ""
+            if query:
+                cleaned_query = SearchProcessor.clean_search_query(query)
+                if cleaned_query and cleaned_query != query:
+                    normalized["search_query"] = cleaned_query
+                    changed = True
+            else:
+                name = str(normalized.get("name", "")).strip()
+                if name:
+                    normalized["search_query"] = SearchProcessor.clean_search_query(name)
+                    changed = True
+
+            normalized_rows.append(normalized)
+
+        if not changed:
+            return tool_args
+        return {**tool_args, "ingredients": normalized_rows}
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]:
         if self._preferences_store is None:
@@ -1766,6 +1850,7 @@ class ShoppingAgent:
                 return result
             data = payload
 
+        query_text = ""
         meta = data.get("meta", {})
         if isinstance(meta, dict):
             compact_meta: dict[str, Any] = {}
@@ -1774,26 +1859,57 @@ class ShoppingAgent:
                     compact_meta[key] = meta.get(key)
             if compact_meta:
                 result["meta"] = compact_meta
+                query_text = str(compact_meta.get("q", "")).strip()
 
         items = data.get("items", [])
         if isinstance(items, list):
-            top_items = []
-            for item in items[:5]:
+            scored_items: list[dict[str, Any]] = []
+            query_terms = self._tokenize_query_terms(query_text)
+            for item in items[:10]:
                 if not isinstance(item, dict):
                     continue
+                xml_id_raw = item.get("xml_id")
+                if isinstance(xml_id_raw, bool):
+                    continue
+                xml_id: int | None = None
+                with contextlib.suppress(TypeError, ValueError):
+                    xml_id = int(xml_id_raw)
+                if not isinstance(xml_id, int):
+                    continue
+
+                name = self._normalize_compact_text(item.get("name"))
+                if not name:
+                    continue
                 rating = item.get("rating")
+                rating_avg = rating.get("average") if isinstance(rating, dict) else rating
+                if not isinstance(rating_avg, int | float) or isinstance(rating_avg, bool):
+                    rating_avg = None
                 price = item.get("price")
                 if isinstance(price, dict):
                     price = price.get("current")
-                top_items.append(
+                price_value = self._safe_float(price, default=-1.0)
+                unit = str(item.get("unit", "")).strip()
+                score, confidence = self._score_search_candidate(
+                    query_terms=query_terms,
+                    product_name=name,
+                    rating=rating_avg,
+                )
+                scored_items.append(
                     {
-                        "xml_id": item.get("xml_id"),
-                        "name": item.get("name"),
-                        "price": price,
-                        "unit": item.get("unit"),
-                        "rating": rating.get("average") if isinstance(rating, dict) else None,
+                        "xml_id": xml_id,
+                        "name": name,
+                        "price": price_value if price_value >= 0 else None,
+                        "unit": unit or None,
+                        "rating": rating_avg,
+                        "confidence": confidence,
+                        "_score": score,
                     }
                 )
+
+            scored_items.sort(key=lambda row: row.get("_score", 0.0), reverse=True)
+            top_items = []
+            for row in scored_items[:5]:
+                top_items.append({k: v for k, v in row.items() if k != "_score" and v is not None})
             result["items"] = top_items
 
         relevance_warning = data.get("relevance_warning")
@@ -1801,8 +1917,8 @@ class ShoppingAgent:
             result["relevance_warning"] = relevance_warning
         return result
 
-    @staticmethod
-    def _compact_product_details(payload: dict[str, Any]) -> dict[str, Any]:
+    @classmethod
+    def _compact_product_details(cls, payload: dict[str, Any]) -> dict[str, Any]:
         result: dict[str, Any] = {"ok": payload.get("ok")}
         data = payload.get("data")
         if isinstance(data, dict):
@@ -1829,10 +1945,10 @@ class ShoppingAgent:
 
             compact_data: dict[str, Any] = {
                 "xml_id": data.get("xml_id", data.get("id")),
-                "name": data.get("name"),
-                "brand": data.get("brand"),
+                "name": cls._normalize_compact_text(data.get("name")),
+                "brand": cls._normalize_compact_text(data.get("brand")),
                 "price": price,
-                "unit": data.get("unit"),
+                "unit": cls._normalize_compact_text(data.get("unit")),
                 "weight": compact_weight,
                 "rating": rating_value,
                 "description": description or None,
@@ -1865,16 +1981,25 @@ class ShoppingAgent:
         if not isinstance(ingredients, list):
             ingredients = payload.get("ingredients", [])
         if isinstance(ingredients, list):
-            result["ingredients"] = [
-                {
+            compact_ingredients: list[dict[str, Any]] = []
+            for row in ingredients[:30]:
+                if not isinstance(row, dict):
+                    continue
+
+                compact_row: dict[str, Any] = {
                     "name": row.get("name"),
                     "quantity": row.get("quantity"),
                     "unit": row.get("unit"),
-                    "optional": row.get("optional"),
                 }
-                for row in ingredients[:30]
-                if isinstance(row, dict)
-            ]
+                if row.get("optional") is True:
+                    compact_row["optional"] = True
+                for field in ("search_query", "kg_equivalent", "l_equivalent", "pack_equivalent"):
+                    value = row.get(field)
+                    if value is not None and value != "":
+                        compact_row[field] = value
+                compact_ingredients.append(compact_row)
+
+            result["ingredients"] = compact_ingredients
         return result
 
     def _compact_recipe_search(self, payload: dict[str, Any]) -> dict[str, Any]:
@@ -1892,11 +2017,19 @@ class ShoppingAgent:
                     item = row.get("item")
                     compact_found.append(
                         {
-                            "ingredient": row.get("ingredient"),
+                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
                             "suggested_q": row.get("suggested_q"),
                             "xml_id": item.get("xml_id") if isinstance(item, dict) else None,
-                            "name": item.get("name") if isinstance(item, dict) else None,
-                            "price": item.get("price") if isinstance(item, dict) else None,
+                            "name": (
+                                self._normalize_compact_text(item.get("name"))
+                                if isinstance(item, dict)
+                                else None
+                            ),
+                            "price": (
+                                self._extract_price_value(item.get("price"))
+                                if isinstance(item, dict)
+                                else None
+                            ),
                         }
                     )
             raw_not_found = data.get("not_found", [])
@@ -1915,11 +2048,11 @@ class ShoppingAgent:
                         continue
                     compact_found.append(
                         {
-                            "ingredient": row.get("ingredient"),
+                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
                             "suggested_q": best_match.get("suggested_q"),
                             "xml_id": best_match.get("xml_id"),
-                            "name": best_match.get("name"),
-                            "price": best_match.get("price"),
+                            "name": self._normalize_compact_text(best_match.get("name")),
+                            "price": self._extract_price_value(best_match.get("price")),
                         }
                     )
             if not not_found:
@@ -1931,6 +2064,42 @@ class ShoppingAgent:
         if isinstance(not_found, list):
             result["not_found"] = not_found[:40]
         return result
+
+    @staticmethod
+    def _normalize_compact_text(value: Any) -> str:
+        text = str(value or "")
+        if not text:
+            return ""
+        text = html.unescape(text)
+        text = re.sub(r"<[^>]+>", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    @classmethod
+    def _tokenize_query_terms(cls, query: str) -> list[str]:
+        normalized = cls._normalize_compact_text(query).lower().replace("ё", "е")
+        tokens = re.findall(r"[a-zа-я0-9]+", normalized, flags=re.IGNORECASE)
+        return [token for token in tokens if len(token) >= 2][:6]
+
+    @classmethod
+    def _score_search_candidate(
+        cls,
+        *,
+        query_terms: list[str],
+        product_name: str,
+        rating: float | None,
+    ) -> tuple[float, float]:
+        normalized_name = cls._normalize_compact_text(product_name).lower().replace("ё", "е")
+        if not query_terms:
+            rating_bonus = (rating or 0.0) / 10 if rating is not None else 0.0
+            return rating_bonus, 0.5
+
+        matched = sum(1 for token in query_terms if token in normalized_name)
+        coverage = matched / max(1, len(query_terms))
+        prefix_bonus = 0.2 if normalized_name.startswith(query_terms[0]) else 0.0
+        rating_bonus = (rating or 0.0) / 10 if rating is not None else 0.0
+        score = coverage * 2.5 + prefix_bonus + rating_bonus
+        confidence = min(0.99, max(0.0, 0.3 + coverage * 0.7))
+        return score, round(confidence, 2)
 
     def _compact_cart_link(self, payload: dict[str, Any]) -> dict[str, Any]:
         result: dict[str, Any] = {"ok": payload.get("ok")}

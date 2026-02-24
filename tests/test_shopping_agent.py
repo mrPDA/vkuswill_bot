@@ -1088,6 +1088,36 @@ async def test_recipe_search_fallback_accepts_string_ingredients() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_mcp_tool_uses_cache_for_readonly_tools() -> None:
+    mcp = _FakeMCPClient(
+        tool_result=json.dumps({"ok": True, "data": {"items": [{"xml_id": 1}]}}, ensure_ascii=False)
+    )
+    agent, mcp_client = _agent(
+        llm_script=[_FakeResponse(_FakeMessage(content="ok"))],
+        mcp_client=mcp,
+    )
+    cache: dict[str, str] = {}
+    args = {"q": "молоко", "limit": 5}
+
+    first = await agent._call_mcp_tool(
+        name="vkusvill_products_search",
+        arguments=args,
+        llm_provider="qwen_openai",
+        call_cache=cache,
+    )
+    second = await agent._call_mcp_tool(
+        name="vkusvill_products_search",
+        arguments=dict(args),
+        llm_provider="qwen_openai",
+        call_cache=cache,
+    )
+
+    assert first == second
+    assert len(mcp_client.calls) == 1
+    assert mcp_client.calls[0] == ("vkusvill_products_search", args)
+
+
+@pytest.mark.asyncio
 async def test_filters_pantry_ingredients_from_recipe_tool_result_by_default() -> None:
     recipe_payload = json.dumps(
         {
@@ -1276,6 +1306,64 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
     assert compact["not_found"] == ["черный перец"]
 
 
+def test_compact_recipe_ingredients_keeps_search_hints() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = {
+        "ok": True,
+        "data": {
+            "dish": "омлет",
+            "servings": 2,
+            "ingredients": [
+                {
+                    "name": "яйцо куриное",
+                    "quantity": 4,
+                    "unit": "шт",
+                    "search_query": "яйцо куриное",
+                    "pack_equivalent": 1,
+                },
+                {
+                    "name": "масло сливочное",
+                    "quantity": 0.04,
+                    "unit": "кг",
+                    "search_query": "масло сливочное",
+                    "kg_equivalent": 0.04,
+                    "optional": False,
+                },
+            ],
+        },
+    }
+
+    compact = agent._compact_recipe_ingredients(payload)
+    assert compact["ok"] is True
+    assert compact["dish"] == "омлет"
+    assert compact["servings"] == 2
+    assert compact["ingredients"][0]["search_query"] == "яйцо куриное"
+    assert compact["ingredients"][0]["pack_equivalent"] == 1
+    assert compact["ingredients"][1]["search_query"] == "масло сливочное"
+    assert compact["ingredients"][1]["kg_equivalent"] == 0.04
+    assert "optional" not in compact["ingredients"][1]
+
+
+def test_preprocess_recipe_search_autofills_and_cleans_search_query() -> None:
+    args = {
+        "ingredients": [
+            {"name": "яйцо куриное 4 шт", "quantity": 4, "unit": "шт"},
+            {"name": "масло сливочное", "search_query": "масло сливочное 82,5% 100 г"},
+        ]
+    }
+
+    normalized = ShoppingAgent._preprocess_tool_args(
+        "recipe_search",
+        args,
+        user_preferences=None,
+        product_index=None,
+        explicit_egg_pack_request=False,
+    )
+    ingredients = normalized["ingredients"]
+    assert ingredients[0]["search_query"] == "яйцо куриное"
+    assert ingredients[1]["search_query"] == "масло сливочное"
+
+
 def test_compact_products_search_flattens_price_and_meta() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     payload = {
@@ -1307,6 +1395,58 @@ def test_compact_products_search_flattens_price_and_meta() -> None:
     assert compact["items"][0]["xml_id"] == 15194
     assert compact["items"][0]["price"] == 80
     assert compact["items"][0]["rating"] == 4.8
+
+
+def test_compact_products_search_sanitizes_and_limits_top5() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = {
+        "ok": True,
+        "data": {
+            "meta": {"q": "филе грудки", "total": 77, "has_more": True},
+            "items": [
+                {
+                    "xml_id": 1,
+                    "name": "<b>Филе грудки</b> цыпленка",
+                    "price": {"current": 586, "currency": "RUB"},
+                    "unit": "кг",
+                    "rating": {"average": 4.9},
+                },
+                {
+                    "xml_id": 2,
+                    "name": "Грудка индейки",
+                    "price": {"current": 650},
+                    "unit": "кг",
+                    "rating": {"average": 4.8},
+                },
+                {
+                    "xml_id": 3,
+                    "name": "Филе куриное охлажденное",
+                    "price": {"current": 530},
+                    "unit": "кг",
+                    "rating": {"average": 4.7},
+                },
+                {"xml_id": 4, "name": "Курица тушка", "price": {"current": 299}, "unit": "кг"},
+                {"xml_id": 5, "name": "Бедро цыпленка", "price": {"current": 350}, "unit": "кг"},
+                {"xml_id": 6, "name": "Крыло куриное", "price": {"current": 290}, "unit": "кг"},
+                {
+                    "xml_id": True,
+                    "name": "Некорректный xml_id",
+                    "price": {"current": 1},
+                    "unit": "шт",
+                },
+            ],
+        },
+    }
+
+    compact = agent._compact_products_search(payload)
+    assert compact["ok"] is True
+    assert compact["meta"] == {"q": "филе грудки", "total": 77, "has_more": True}
+    assert len(compact["items"]) == 5
+    assert compact["items"][0]["xml_id"] == 1
+    assert compact["items"][0]["name"] == "Филе грудки цыпленка"
+    assert all(isinstance(item.get("confidence"), float) for item in compact["items"])
+    assert all(item["xml_id"] != 0 for item in compact["items"])
+    assert all(item["xml_id"] is not True for item in compact["items"])
 
 
 def test_compact_product_details_drops_heavy_fields() -> None:
