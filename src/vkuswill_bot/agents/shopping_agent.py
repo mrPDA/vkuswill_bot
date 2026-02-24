@@ -2239,11 +2239,12 @@ class ShoppingAgent:
                 quantity = 1.0
 
             normalized = product_index.get(xml_id_int) if isinstance(xml_id_int, int) else None
-            name = (
+            raw_name = (
                 str(normalized.get("name", f"Товар {xml_id}")).strip()
                 if normalized
                 else f"Товар {xml_id}"
             )
+            name = self._normalize_compact_text(raw_name) or f"Товар {xml_id}"
             price = (
                 self._safe_float(normalized.get("price"), default=-1.0)
                 if isinstance(normalized, dict)
@@ -2351,7 +2352,7 @@ class ShoppingAgent:
             for index, row in enumerate(items[:20], start=1):
                 if not isinstance(row, str):
                     continue
-                normalized = row.strip()
+                normalized = ShoppingAgent._normalize_compact_text(row)
                 if not normalized:
                     continue
                 if normalized.startswith("-"):
@@ -2361,7 +2362,7 @@ class ShoppingAgent:
         total_text = ""
         total_text_raw = summary_dict.get("total_text")
         if isinstance(total_text_raw, str) and total_text_raw.strip():
-            total_text = total_text_raw.strip()
+            total_text = ShoppingAgent._normalize_compact_text(total_text_raw)
         else:
             total_raw = summary_dict.get("total")
             total = ShoppingAgent._safe_float(total_raw, default=-1.0)

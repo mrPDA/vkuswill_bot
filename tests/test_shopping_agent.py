@@ -447,6 +447,66 @@ async def test_builds_price_summary_when_cart_response_has_only_link() -> None:
 
 
 @pytest.mark.asyncio
+async def test_decodes_html_entities_in_cart_summary_lines() -> None:
+    class _NbspCartLinkOnlyMCPClient(_FakeMCPClient):
+        async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+            self.calls.append((name, arguments))
+            if name == "vkusvill_products_search":
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "data": {
+                            "items": [
+                                {
+                                    "xml_id": 1001,
+                                    "name": "Яйцо&nbsp;куриное&nbsp;С1 &amp; фермерское",
+                                    "price": 120,
+                                    "unit": "шт",
+                                }
+                            ]
+                        },
+                    },
+                    ensure_ascii=False,
+                )
+            if name == "vkusvill_cart_link_create":
+                return json.dumps(
+                    {"ok": True, "data": {"link": "https://vkusvill.ru/?share_basket=123456789"}},
+                    ensure_ascii=False,
+                )
+            return self.tool_result
+
+    mcp = _NbspCartLinkOnlyMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-1", "vkusvill_products_search", '{"q":"яйцо","limit":5}')
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-2",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":1001,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Собрала корзину по вашему запросу.")),
+    ]
+    agent, _ = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=201, text="добавь яйцо")
+    assert "&nbsp;" not in result
+    assert "Яйцо куриное С1 & фермерское x 1 = 120.00 руб" in result
+
+
+@pytest.mark.asyncio
 async def test_keeps_egg_pack_quantity_when_user_explicitly_requests_packs() -> None:
     mcp = _CartLinkOnlyMCPClient(tool_result='{"ok": true}')
     llm_script = [
