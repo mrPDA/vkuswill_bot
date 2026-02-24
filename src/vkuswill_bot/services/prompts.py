@@ -399,6 +399,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "ингредиент",
         "ингридиент",
         "приготов",
+        "сдела",
         "свари",
         "испеч",
         "борщ",

@@ -119,14 +119,11 @@ _EXPLICIT_NEW_CART_MARKERS = (
     "другую корзин",
     "не в эту корзин",
 )
-_NEW_CART_ACTION_MARKERS = (
-    "собери",
-    "закаж",
-    "купи",
-    "подбери",
-    "ингредиент",
-    "ингридиент",
-    "рецепт",
+_STATUS_QUERY_MARKERS = (
+    "статус",
+    "что с корзин",
+    "где корзин",
+    "проверь корзин",
 )
 
 
@@ -2383,6 +2380,10 @@ class ShoppingAgent:
             "ингредиент",
             "ингридиент",
             "рецепт",
+            "приготов",
+            "сдела",
+            "свари",
+            "испеч",
             "убер",
             "удал",
             "замен",
@@ -2468,10 +2469,16 @@ class ShoppingAgent:
         if not has_last_cart:
             return False
 
+        # Статус/проверка не должны запускать новую корзину.
+        if any(marker in normalized for marker in _STATUS_QUERY_MARKERS):
+            return False
+
         if any(marker in normalized for marker in _EXPLICIT_NEW_CART_MARKERS):
             return True
 
-        return any(marker in normalized for marker in _NEW_CART_ACTION_MARKERS)
+        # Если корзина уже собрана и пользователь не просит явную модификацию,
+        # трактуем сообщение как новый запрос на новую корзину.
+        return True
 
     @staticmethod
     def _render_stable_cart_output(cart_data: dict[str, Any]) -> str:

@@ -1662,6 +1662,13 @@ def test_should_start_fresh_context_for_new_independent_cart_request() -> None:
     )
     assert (
         agent._should_start_fresh_context(
+            text="хочу сделать тонкие блины на молоке",
+            history=history,
+        )
+        is True
+    )
+    assert (
+        agent._should_start_fresh_context(
             text="собери новую корзину для плова",
             history=history,
         )
