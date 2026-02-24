@@ -817,6 +817,41 @@ async def test_max_tool_calls_guard() -> None:
 
 
 @pytest.mark.asyncio
+async def test_max_tool_calls_recovery_returns_cart_when_cart_already_created() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/last-step",
+                "price_summary": {
+                    "items": ["- Молоко x 1 = 100.00 руб"],
+                    "total": 100.0,
+                    "total_text": "Итого: 100.00 руб",
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "vkusvill_cart_link_create",
+        '{"products":[{"xml_id":1,"q":1}]}',
+    )
+    llm_script = [_FakeResponse(_FakeMessage(content="", tool_calls=[tool_call]))]
+    agent, _mcp = _agent(
+        llm_script=llm_script,
+        mcp_client=_FakeMCPClient(tool_result=cart_payload),
+        max_tool_calls=1,
+    )
+
+    result = await agent.process_message(user_id=42, text="собери корзину")
+    assert "Собрала корзину по вашему запросу." in result
+    assert "Итого: 100.00 руб" in result
+    assert '<a href="https://shop.example/cart/last-step">Открыть корзину</a>' in result
+    assert "в пределах лимита шагов" not in result
+
+
+@pytest.mark.asyncio
 async def test_injects_virtual_recipe_tools_for_qwen() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     tools = await agent._get_tools()

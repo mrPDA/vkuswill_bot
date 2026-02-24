@@ -512,6 +512,26 @@ class ShoppingAgent:
                 history = self._trim_history(history)
                 history = self._trim_history_by_chars(history)
 
+        if cart_data_this_turn is not None:
+            self._ensure_cart_price_summary(
+                cart_data=cart_data_this_turn,
+                product_index=product_index_this_turn,
+            )
+            final_text = self._render_stable_cart_output(cart_data_this_turn)
+            self._history[user_id] = self._trim_history(
+                [*history, {"role": "assistant", "content": final_text}],
+            )
+            if trace is not None:
+                trace.update(
+                    output=final_text,
+                    metadata={
+                        "reason": "max_tool_calls_recovered_with_cart",
+                        "provider": llm_provider,
+                        "tool_calls": self._max_tool_calls,
+                    },
+                )
+            return final_text
+
         self._history[user_id] = history
         if trace is not None:
             trace.update(
