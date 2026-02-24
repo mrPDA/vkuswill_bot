@@ -12,10 +12,12 @@ import asyncio
 import contextlib
 import json
 import logging
+import re
 import uuid
 from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+_INLINE_TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
 
 DEFAULT_LLM_PROVIDER = "qwen_openai"
 
@@ -352,6 +354,11 @@ def normalize_chat_response(response: Any) -> dict[str, Any]:
     message = _extract_message(response)
     content = _normalize_text_content(_extract_content(message))
     tool_calls = _normalize_tool_calls(_extract_tool_calls(message))
+    if not tool_calls and content:
+        parsed_tool_calls, cleaned_content = _extract_inline_tool_calls(content)
+        if parsed_tool_calls:
+            tool_calls = parsed_tool_calls
+            content = cleaned_content
     usage = extract_usage_details(response)
     return {
         "choices": [
@@ -393,6 +400,56 @@ def _extract_tool_calls(message: Any) -> Any:
     if isinstance(message, dict):
         return message.get("tool_calls")
     return getattr(message, "tool_calls", None)
+
+
+def _extract_inline_tool_calls(content: str) -> tuple[list[dict[str, Any]], str]:
+    """Parse textual ``<tool_call>...</tool_call>`` blocks from model content."""
+    matches = list(_INLINE_TOOL_CALL_RE.finditer(content))
+    if not matches:
+        return [], content
+
+    parsed_calls: list[dict[str, Any]] = []
+    for match in matches:
+        parsed = _parse_inline_tool_call_payload(match.group(1))
+        if parsed is not None:
+            parsed_calls.append(parsed)
+
+    if not parsed_calls:
+        return [], content
+
+    cleaned_content = _INLINE_TOOL_CALL_RE.sub("", content).strip()
+    return parsed_calls, cleaned_content
+
+
+def _parse_inline_tool_call_payload(raw_payload: str) -> dict[str, Any] | None:
+    with contextlib.suppress(Exception):
+        payload = json.loads(raw_payload.strip())
+        if not isinstance(payload, dict):
+            return None
+
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            return None
+
+        if "arguments" in payload:
+            arguments = payload.get("arguments")
+        elif "params" in payload:
+            arguments = payload.get("params")
+        else:
+            arguments = {k: v for k, v in payload.items() if k != "name"}
+
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments, ensure_ascii=False)
+
+        return {
+            "id": f"inline-{uuid.uuid4().hex[:12]}",
+            "type": "function",
+            "function": {
+                "name": name,
+                "arguments": arguments,
+            },
+        }
+    return None
 
 
 def extract_usage_details(response: Any) -> dict[str, int] | None:

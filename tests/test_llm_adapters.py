@@ -13,6 +13,7 @@ from vkuswill_bot.services.llm_adapters import (
     OpenAICompatibleLLMAdapter,
     create_llm_adapter,
     extract_usage_details,
+    normalize_chat_response,
     normalize_llm_provider,
 )
 
@@ -304,3 +305,32 @@ def test_extract_usage_details_accepts_model_dump_objects() -> None:
 
     usage = extract_usage_details({"usage": _UsageObj()})
     assert usage == {"input": 40, "output": 11, "total": 51}
+
+
+def test_normalize_chat_response_parses_inline_tool_call_tags() -> None:
+    response = {
+        "choices": [
+            {
+                "message": {
+                    "content": (
+                        "<tool_call>\n"
+                        '{"name":"vkusvill_product_details","id":59422}\n'
+                        "</tool_call>\n"
+                        "<tool_call>\n"
+                        '{"name":"vkusvill_cart_link_create","arguments":{"products":[{"xml_id":59422,"q":1}]}}\n'
+                        "</tool_call>"
+                    ),
+                    "tool_calls": [],
+                }
+            }
+        ]
+    }
+
+    normalized = normalize_chat_response(response)
+    message = normalized["choices"][0]["message"]
+    assert message["content"] == ""
+    assert len(message["tool_calls"]) == 2
+    assert message["tool_calls"][0]["function"]["name"] == "vkusvill_product_details"
+    assert message["tool_calls"][0]["function"]["arguments"] == '{"id": 59422}'
+    assert message["tool_calls"][1]["function"]["name"] == "vkusvill_cart_link_create"
+    assert '"xml_id": 59422' in message["tool_calls"][1]["function"]["arguments"]
