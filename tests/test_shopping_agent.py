@@ -183,6 +183,34 @@ class _DualPricingMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _KgProduceMCPClient(_FakeMCPClient):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 9001,
+                                "name": "Яблоки сезонные",
+                                "price": {"current": 150},
+                                "unit": "кг",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/kg-1"}},
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _RecipeFlowMCPClient(_FakeMCPClient):
     async def get_tools(self) -> list[dict[str, Any]]:
         return [
@@ -1232,6 +1260,40 @@ async def test_cart_summary_builds_dual_pricing_in_shopping_agent_path() -> None
 
 
 @pytest.mark.asyncio
+async def test_cart_summary_rounds_kilogram_quantities_to_100g() -> None:
+    mcp = _KgProduceMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[_FakeToolCall("tc-1", "vkusvill_products_search", '{"q":"яблоки"}')],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-2",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":9001,"q":0.67}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Готово")),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=82, text="добавь яблоки")
+
+    assert "Яблоки сезонные x 0.7 = 105.00 руб" in result
+    assert "Итого: 105.00 руб" in result
+    cart_call = next(args for name, args in mcp_client.calls if name == "vkusvill_cart_link_create")
+    assert cart_call["products"] == [{"xml_id": 9001, "q": 0.7}]
+
+
+@pytest.mark.asyncio
 async def test_tool_result_compacted_in_history_for_next_llm_call() -> None:
     large_items = [
         {
@@ -1483,13 +1545,24 @@ def test_preprocess_search_args_drops_page_parameter() -> None:
 def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
     args = ShoppingAgent._preprocess_tool_args(
         "vkusvill_cart_link_create",
-        {"products": [{"xml_id": 14526, "q": 0.2}, {"xml_id": 1713, "q": 4}]},
+        {
+            "products": [
+                {"xml_id": 14526, "q": 0.2},
+                {"xml_id": 1713, "q": 4},
+                {"xml_id": 9001, "q": 0.67},
+            ]
+        },
         product_index={
             14526: {"name": "Сметана 15%, 250 г", "unit": "шт"},
             1713: {"name": "Яйцо куриное С0", "unit": "шт"},
+            9001: {"name": "Яблоки сезонные", "unit": "кг"},
         },
     )
-    assert args["products"] == [{"xml_id": 14526, "q": 1}, {"xml_id": 1713, "q": 1}]
+    assert args["products"] == [
+        {"xml_id": 14526, "q": 1},
+        {"xml_id": 1713, "q": 1},
+        {"xml_id": 9001, "q": 0.7},
+    ]
 
 
 @pytest.mark.asyncio
