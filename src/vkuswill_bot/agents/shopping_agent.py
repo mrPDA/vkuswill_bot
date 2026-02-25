@@ -1646,6 +1646,9 @@ class ShoppingAgent:
                     continue
                 if unit in _DISCRETE_UNITS:
                     item["q"] = max(1, math.ceil(q))
+                    continue
+                if unit in {"кг", "kg"}:
+                    item["q"] = ShoppingAgent._round_kilogram_quantity(q)
             return normalized
         if tool_name == "vkusvill_products_search":
             normalized_search_args = dict(tool_args)
@@ -1710,6 +1713,10 @@ class ShoppingAgent:
                 continue
             name = str(product.get("name", "")).strip().lower()
             if not any(stem in name for stem in ("яйц", "яиц", "яйк")):
+                unit = str(product.get("unit", "")).strip().lower()
+                if unit in {"кг", "kg"}:
+                    quantity = ShoppingAgent._safe_float(row.get("q"), default=0.1)
+                    row["q"] = ShoppingAgent._round_kilogram_quantity(quantity)
                 normalized_snapshot.append(row)
                 continue
             quantity = ShoppingAgent._safe_float(row.get("q"), default=1.0)
@@ -2673,7 +2680,8 @@ class ShoppingAgent:
                 if isinstance(normalized, dict)
                 else -1.0
             )
-            quantity_text = self._format_quantity_text(quantity)
+            unit = str(normalized.get("unit", "")).strip() if isinstance(normalized, dict) else ""
+            quantity_text = self._format_quantity_text(quantity, unit=unit)
 
             if price >= 0:
                 subtotal = price * quantity
@@ -2682,7 +2690,7 @@ class ShoppingAgent:
                 recipe_total += recipe_subtotal
                 lines.append(f"- {name} x {quantity_text} = {subtotal:.2f} руб")
                 recipe_lines.append(
-                    f"- {name} x {self._format_quantity_text(recipe_quantity)} = "
+                    f"- {name} x {self._format_quantity_text(recipe_quantity, unit=unit)} = "
                     f"{recipe_subtotal:.2f} руб"
                 )
                 item_details.append(
@@ -2702,7 +2710,9 @@ class ShoppingAgent:
                 all_priced = False
                 lines.append(f"- {name} x {quantity_text} = цена уточняется")
                 recipe_lines.append(
-                    f"- {name} x {self._format_quantity_text(recipe_quantity)} = цена уточняется"
+                    "- "
+                    f"{name} x {self._format_quantity_text(recipe_quantity, unit=unit)} = "
+                    "цена уточняется"
                 )
                 item_details.append(
                     {
@@ -2771,10 +2781,21 @@ class ShoppingAgent:
         return totals, order
 
     @staticmethod
-    def _format_quantity_text(quantity: float) -> str:
+    def _format_quantity_text(quantity: float, *, unit: str = "") -> str:
+        normalized_unit = unit.strip().lower()
+        if normalized_unit in _DISCRETE_UNITS:
+            return str(max(1, math.ceil(quantity)))
+        if normalized_unit in {"кг", "kg"}:
+            return f"{ShoppingAgent._round_kilogram_quantity(quantity):.1f}"
         if float(quantity).is_integer():
             return str(int(quantity))
         return f"{quantity:.3f}".rstrip("0").rstrip(".")
+
+    @staticmethod
+    def _round_kilogram_quantity(quantity: float) -> float:
+        safe_quantity = quantity if quantity > 0 else 0.1
+        rounded = math.ceil(safe_quantity * 10) / 10
+        return round(max(0.1, rounded), 1)
 
     @staticmethod
     def _is_cart_intent(user_text: str) -> bool:
