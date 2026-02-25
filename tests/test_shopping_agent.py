@@ -1596,6 +1596,103 @@ def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
     ]
 
 
+def test_extract_structured_ingredient_requests_parses_ranges_and_units() -> None:
+    text = (
+        "Говядина на кости - 800 г\n"
+        "Сосиски - 2-3 шт.\n"
+        "Томатная паста -1 ст. ложка\n"
+    )
+    rows = ShoppingAgent._extract_structured_ingredient_requests(text)
+    assert len(rows) == 3
+    assert rows[0]["name"] == "Говядина на кости"
+    assert rows[0]["quantity"] == pytest.approx(800.0, abs=0.001)
+    assert rows[0]["unit"] == "г"
+    assert rows[1]["name"] == "Сосиски"
+    assert rows[1]["quantity"] == pytest.approx(3.0, abs=0.001)
+    assert rows[1]["unit"] == "шт"
+    assert rows[2]["quantity"] == pytest.approx(1.0, abs=0.001)
+    assert rows[2]["unit"] == "ст.л."
+
+
+def test_preprocess_cart_args_recalculates_quantities_from_structured_request() -> None:
+    requested = ShoppingAgent._extract_structured_ingredient_requests(
+        "Говядина на кости - 800 г\n"
+        "Колбаса копчёная - 150 г\n"
+        "Сосиски - 2-3 шт.\n"
+        "Огурцы солёные - 150 г\n"
+        "Лук репчатый - 2 шт.\n"
+        "Оливки без косточек - 100 г\n"
+        "Томатная паста -1 ст. ложка\n"
+    )
+    requested_overrides: dict[int, float] = {}
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_cart_link_create",
+        {
+            "products": [
+                {"xml_id": 112931, "q": 0.8},
+                {"xml_id": 75461, "q": 0.15},
+                {"xml_id": 96521, "q": 2.5},
+                {"xml_id": 16516, "q": 0.15},
+                {"xml_id": 605, "q": 2},
+                {"xml_id": 90216, "q": 0.1},
+                {"xml_id": 80956, "q": 0.018},
+            ]
+        },
+        product_index={
+            112931: {"name": "Говядина мякоть бедра без кости охл., вес", "unit": "кг"},
+            75461: {
+                "name": "Колбаса сырокопченая полусухая Классическая",
+                "unit": "шт",
+                "weight": {"value": 0.2, "unit": "кг"},
+            },
+            96521: {
+                "name": "Сосиски ВкусВилл со сливками",
+                "unit": "шт",
+                "weight": {"value": 0.38, "unit": "кг"},
+            },
+            16516: {
+                "name": "Огурцы соленые, 400 г",
+                "unit": "шт",
+                "weight": {"value": 0.4, "unit": "кг"},
+            },
+            605: {"name": "Лук репчатый", "unit": "кг"},
+            90216: {
+                "name": "Оливки Monini без косточки 300 г",
+                "unit": "шт",
+                "weight": {"value": 0.3, "unit": "кг"},
+            },
+            80956: {
+                "name": "Томатная паста (мини формат), 70 г",
+                "unit": "шт",
+                "weight": {"value": 0.07, "unit": "кг"},
+            },
+        },
+        requested_ingredients=requested,
+        search_query_by_xml_id={
+            112931: "Говядина на кости",
+            75461: "Колбаса копчёная",
+            96521: "Сосиски",
+            16516: "Огурцы солёные",
+            605: "Лук репчатый",
+            90216: "Оливки без косточек",
+            80956: "Томатная паста",
+        },
+        requested_quantity_overrides=requested_overrides,
+    )
+    assert args["products"] == [
+        {"xml_id": 112931, "q": 0.8},
+        {"xml_id": 75461, "q": 1},
+        {"xml_id": 96521, "q": 3},
+        {"xml_id": 16516, "q": 1},
+        {"xml_id": 605, "q": 0.2},
+        {"xml_id": 90216, "q": 1},
+        {"xml_id": 80956, "q": 1},
+    ]
+    assert requested_overrides[605] == pytest.approx(0.2, abs=0.001)
+    assert requested_overrides[75461] == pytest.approx(0.75, abs=0.001)
+    assert requested_overrides[16516] == pytest.approx(0.375, abs=0.001)
+
+
 @pytest.mark.asyncio
 async def test_injects_virtual_recipe_tools_for_qwen() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
