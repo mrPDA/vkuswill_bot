@@ -1597,11 +1597,7 @@ def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
 
 
 def test_extract_structured_ingredient_requests_parses_ranges_and_units() -> None:
-    text = (
-        "Говядина на кости - 800 г\n"
-        "Сосиски - 2-3 шт.\n"
-        "Томатная паста -1 ст. ложка\n"
-    )
+    text = "Говядина на кости - 800 г\nСосиски - 2-3 шт.\nТоматная паста -1 ст. ложка\n"
     rows = ShoppingAgent._extract_structured_ingredient_requests(text)
     assert len(rows) == 3
     assert rows[0]["name"] == "Говядина на кости"
@@ -1612,6 +1608,21 @@ def test_extract_structured_ingredient_requests_parses_ranges_and_units() -> Non
     assert rows[1]["unit"] == "шт"
     assert rows[2]["quantity"] == pytest.approx(1.0, abs=0.001)
     assert rows[2]["unit"] == "ст.л."
+
+
+def test_extract_structured_ingredient_requests_parses_inline_list_with_prefix() -> None:
+    text = (
+        "собери корзину Говядина на кости - 800 г, Колбаса копченая - 150 г, "
+        "Сосиски - 2-3 шт., Огурцы солёные - 150 г, Лук репчатый - 2 шт., "
+        "Оливки без косточек - 100 г, Томатная паста -1 ст. ложка"
+    )
+    rows = ShoppingAgent._extract_structured_ingredient_requests(text)
+    assert len(rows) == 7
+    assert rows[0]["name"] == "Говядина на кости"
+    assert rows[1]["name"] == "Колбаса копченая"
+    assert rows[4]["name"] == "Лук репчатый"
+    assert rows[4]["quantity"] == pytest.approx(2.0, abs=0.001)
+    assert rows[4]["unit"] == "шт"
 
 
 def test_preprocess_cart_args_recalculates_quantities_from_structured_request() -> None:
@@ -1691,6 +1702,68 @@ def test_preprocess_cart_args_recalculates_quantities_from_structured_request() 
     assert requested_overrides[605] == pytest.approx(0.2, abs=0.001)
     assert requested_overrides[75461] == pytest.approx(0.75, abs=0.001)
     assert requested_overrides[16516] == pytest.approx(0.375, abs=0.001)
+
+
+def test_preprocess_cart_args_recalculates_quantities_from_inline_structured_request() -> None:
+    requested = ShoppingAgent._extract_structured_ingredient_requests(
+        "собери корзину Говядина на кости - 800 г, "
+        "Колбаса копчёная - 150 г, Сосиски - 2-3 шт., Огурцы солёные - 150 г, "
+        "Лук репчатый - 2 шт., Оливки без косточек - 100 г, Томатная паста -1 ст. ложка"
+    )
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_cart_link_create",
+        {
+            "products": [
+                {"xml_id": 112931, "q": 0.8},
+                {"xml_id": 75461, "q": 0.15},
+                {"xml_id": 96521, "q": 2.5},
+                {"xml_id": 16516, "q": 0.15},
+                {"xml_id": 605, "q": 2},
+                {"xml_id": 90216, "q": 0.1},
+                {"xml_id": 80956, "q": 0.018},
+            ]
+        },
+        product_index={
+            112931: {"name": "Говядина мякоть бедра без кости охл., вес", "unit": "кг"},
+            75461: {
+                "name": "Колбаса сырокопченая полусухая Классическая",
+                "unit": "шт",
+                "weight": {"value": 0.2, "unit": "кг"},
+            },
+            96521: {
+                "name": "Сосиски ВкусВилл со сливками",
+                "unit": "шт",
+                "weight": {"value": 0.38, "unit": "кг"},
+            },
+            16516: {
+                "name": "Огурцы соленые, 400 г",
+                "unit": "шт",
+                "weight": {"value": 0.4, "unit": "кг"},
+            },
+            605: {"name": "Лук репчатый", "unit": "кг"},
+            90216: {
+                "name": "Оливки Monini без косточки 300 г",
+                "unit": "шт",
+                "weight": {"value": 0.3, "unit": "кг"},
+            },
+            80956: {
+                "name": "Томатная паста (мини формат), 70 г",
+                "unit": "шт",
+                "weight": {"value": 0.07, "unit": "кг"},
+            },
+        },
+        requested_ingredients=requested,
+        search_query_by_xml_id={
+            112931: "Говядина на кости",
+            75461: "Колбаса копчёная",
+            96521: "Сосиски",
+            16516: "Огурцы солёные",
+            605: "Лук репчатый",
+            90216: "Оливки без косточек",
+            80956: "Томатная паста",
+        },
+    )
+    assert args["products"][4] == {"xml_id": 605, "q": 0.2}
 
 
 @pytest.mark.asyncio

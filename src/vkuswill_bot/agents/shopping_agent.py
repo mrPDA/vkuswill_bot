@@ -1626,8 +1626,8 @@ class ShoppingAgent:
         if parsed is not None:
             parsed_q, parsed_unit, fragment = parsed
         else:
-            parsed_q, parsed_unit, fragment = (
-                _RecipeQuantityCalculator.parse_quantity_and_unit(cleaned)
+            parsed_q, parsed_unit, fragment = _RecipeQuantityCalculator.parse_quantity_and_unit(
+                cleaned
             )
         if fragment:
             name = re.sub(re.escape(fragment), " ", cleaned, flags=re.IGNORECASE).strip(" ,.-")
@@ -1660,9 +1660,52 @@ class ShoppingAgent:
         if not user_text.strip():
             return []
         rows: list[dict[str, Any]] = []
-        for raw_line in user_text.splitlines():
+        seen_keys: set[tuple[str, float, str]] = set()
+
+        def _append_row(name_raw: str, quantity: float, unit: str) -> None:
+            cleaned_name = cls._clean_structured_ingredient_name(name_raw)
+            if not cleaned_name:
+                return
+            search_query = SearchProcessor.clean_search_query(cleaned_name) or cleaned_name
+            key = (search_query.lower(), round(quantity, 4), unit)
+            if key in seen_keys:
+                return
+            seen_keys.add(key)
+            rows.append(
+                {
+                    "name": cleaned_name,
+                    "quantity": quantity,
+                    "unit": unit,
+                    "search_query": search_query,
+                }
+            )
+
+        unit_pattern = (
+            r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
+            r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
+            r"чайн(?:ая|ые)\s+ложк[аи]"
+        )
+        inline_pattern = re.compile(
+            rf"(?:^|[\n,;])\s*(?P<name>[^\n,;]+?)\s*[-–—:]\s*"
+            rf"(?P<qty>\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?\s*(?:{unit_pattern}))"
+            r"(?=$|[\n,;])",
+            flags=re.IGNORECASE,
+        )
+        normalized_text = user_text.replace("\r", "\n")
+        for match in inline_pattern.finditer(normalized_text):
+            name_part = str(match.group("name") or "").strip()
+            qty_part = str(match.group("qty") or "").strip()
+            parsed = cls._parse_quantity_hint(qty_part)
+            if parsed is None:
+                continue
+            quantity, unit, _fragment = parsed
+            _append_row(name_part, quantity, unit)
+
+        for raw_line in normalized_text.splitlines():
             line = raw_line.strip()
             if not line:
+                continue
+            if inline_pattern.search(line):
                 continue
             line = re.sub(r"^\s*\d+[.)]\s*", "", line).strip()
             line = line.lstrip("-• ").strip()
@@ -1683,19 +1726,23 @@ class ShoppingAgent:
             if parsed is None:
                 continue
             quantity, unit, _fragment = parsed
-            name = name_part.strip(" ,.;:").strip()
-            if not name:
-                continue
-            search_query = SearchProcessor.clean_search_query(name) or name
-            rows.append(
-                {
-                    "name": name,
-                    "quantity": quantity,
-                    "unit": unit,
-                    "search_query": search_query,
-                }
-            )
+            _append_row(name_part, quantity, unit)
         return rows[:30]
+
+    @staticmethod
+    def _clean_structured_ingredient_name(name_raw: str) -> str:
+        name = name_raw.strip(" ,.;:").strip()
+        if not name:
+            return ""
+        prefixes = (
+            r"^\s*собери(?:\s+мне)?\s+корзин[ауые]?\s+",
+            r"^\s*добав(?:ь|ьте)(?:\s+в\s+корзин[ауые]?)?\s+",
+            r"^\s*закаж(?:и|ите)\s+",
+        )
+        for pattern in prefixes:
+            name = re.sub(pattern, "", name, flags=re.IGNORECASE).strip()
+        name = re.sub(r"^\s*и\s+", "", name, flags=re.IGNORECASE).strip()
+        return name
 
     @classmethod
     def _parse_quantity_hint(cls, text: str) -> tuple[float, str, str] | None:
