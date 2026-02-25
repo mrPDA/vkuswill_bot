@@ -93,6 +93,12 @@ _FORCE_BATCH_SEARCH_HINT = (
     "Как только подобраны товары по ингредиентам — сразу вызывай "
     "vkusvill_cart_link_create и завершай сборку корзины."
 )
+_FORCE_RECIPE_TO_CART_HINT = (
+    "[Системная корректировка] Результаты recipe_search уже получены. "
+    "Не делай дополнительную пагинацию и не вызывай vkusvill_product_details "
+    "для каждого ингредиента. Используй найденные xml_id и suggested_q из recipe_search, "
+    "вызови vkusvill_cart_link_create и завершай сборку корзины."
+)
 _PANTRY_TAG_SALT = "salt"
 _PANTRY_TAG_SUGAR = "sugar"
 _PANTRY_TAG_PEPPER = "pepper"
@@ -328,6 +334,7 @@ class ShoppingAgent:
         cart_creation_recovery_used = False
         search_batch_recovery_used = False
         cart_flow_recovery_used = False
+        recipe_to_cart_recovery_used = False
         single_search_steps_streak = 0
         tools_called_this_turn = False
         recipe_flow_started_this_turn = False
@@ -589,6 +596,18 @@ class ShoppingAgent:
             history = self._trim_history_by_chars(history)
             if (
                 cart_intent
+                and recipe_flow_started_this_turn
+                and cart_data_this_turn is None
+                and not recipe_to_cart_recovery_used
+                and self._has_recipe_search_candidates(history)
+                and step < self._max_tool_calls
+            ):
+                recipe_to_cart_recovery_used = True
+                history.append({"role": "system", "content": _FORCE_RECIPE_TO_CART_HINT})
+                history = self._trim_history(history)
+                history = self._trim_history_by_chars(history)
+            if (
+                cart_intent
                 and cart_data_this_turn is None
                 and single_search_steps_streak >= 3
                 and not search_batch_recovery_used
@@ -598,6 +617,24 @@ class ShoppingAgent:
                 history.append({"role": "system", "content": _FORCE_BATCH_SEARCH_HINT})
                 history = self._trim_history(history)
                 history = self._trim_history_by_chars(history)
+
+        if cart_data_this_turn is None and cart_intent and recipe_flow_started_this_turn:
+            (
+                cart_data_this_turn,
+                recovered_cart_args,
+                recovered_cart_result,
+            ) = await self._recover_cart_from_recipe_search_history(
+                history=history,
+                llm_provider=llm_provider,
+                call_cache=mcp_call_cache,
+            )
+            if cart_data_this_turn is not None:
+                self._capture_cart_snapshot(
+                    user_id=user_id,
+                    tool_name="vkusvill_cart_link_create",
+                    args=recovered_cart_args,
+                    result=recovered_cart_result,
+                )
 
         if cart_data_this_turn is not None:
             self._ensure_cart_price_summary(
@@ -1365,6 +1402,36 @@ class ShoppingAgent:
         products = payload.get("products")
         if isinstance(products, list):
             return [item for item in products if isinstance(item, dict)]
+        found = payload.get("found")
+        if isinstance(found, list):
+            result: list[dict[str, Any]] = []
+            for row in found:
+                if not isinstance(row, dict):
+                    continue
+                xml_id = row.get("xml_id")
+                if xml_id is None:
+                    continue
+                result.append(
+                    {
+                        "xml_id": xml_id,
+                        "name": row.get("name"),
+                        "price": row.get("price"),
+                        "unit": row.get("unit", "шт"),
+                    }
+                )
+            if result:
+                return result
+        results = payload.get("results")
+        if isinstance(results, list):
+            expanded: list[dict[str, Any]] = []
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+                best_match = row.get("best_match")
+                if isinstance(best_match, dict):
+                    expanded.append(best_match)
+            if expanded:
+                return expanded
         return []
 
     def _build_product_index_from_history(
@@ -1562,23 +1629,28 @@ class ShoppingAgent:
                 item["q"] = max(1, math.ceil(q / _EGG_PACK_SIZE))
             return normalized
         if tool_name == "vkusvill_products_search":
+            normalized_search_args = dict(tool_args)
+            # Для сборки корзины достаточно первой страницы; pagination page>1
+            # часто создаёт лишние шаги без улучшения результата.
+            if "page" in normalized_search_args:
+                normalized_search_args.pop("page", None)
             prefs = user_preferences or {}
             if not prefs:
-                return tool_args
+                return normalized_search_args
             query_key = None
-            if isinstance(tool_args.get("q"), str):
+            if isinstance(normalized_search_args.get("q"), str):
                 query_key = "q"
-            elif isinstance(tool_args.get("query"), str):
+            elif isinstance(normalized_search_args.get("query"), str):
                 query_key = "query"
             if query_key is None:
-                return tool_args
-            original_query = str(tool_args.get(query_key, "")).strip()
+                return normalized_search_args
+            original_query = str(normalized_search_args.get(query_key, "")).strip()
             if not original_query:
-                return tool_args
+                return normalized_search_args
             enhanced_query = ShoppingAgent._apply_preferences_to_query(original_query, prefs)
             if enhanced_query == original_query:
-                return tool_args
-            return {**tool_args, query_key: enhanced_query}
+                return normalized_search_args
+            return {**normalized_search_args, query_key: enhanced_query}
         if tool_name == "recipe_search":
             return ShoppingAgent._normalize_recipe_search_args(tool_args)
         return tool_args
@@ -2190,6 +2262,28 @@ class ShoppingAgent:
             if isinstance(raw_not_found, list):
                 not_found = raw_not_found
 
+        # Идемпотентность компактизации: поддержать уже-compact shape
+        # {"ok":true,"found":[...],"not_found":[...]}.
+        if not compact_found:
+            raw_found = payload.get("found", [])
+            if isinstance(raw_found, list):
+                for row in raw_found[:40]:
+                    if not isinstance(row, dict):
+                        continue
+                    compact_found.append(
+                        {
+                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
+                            "suggested_q": row.get("suggested_q"),
+                            "xml_id": row.get("xml_id"),
+                            "name": self._normalize_compact_text(row.get("name")),
+                            "price": self._extract_price_value(row.get("price")),
+                        }
+                    )
+            if not not_found:
+                raw_not_found = payload.get("not_found", [])
+                if isinstance(raw_not_found, list):
+                    not_found = raw_not_found
+
         # Совместимость с fallback-форматом: top-level results/best_match.
         if not compact_found:
             results = payload.get("results", [])
@@ -2314,6 +2408,7 @@ class ShoppingAgent:
         if tool_name not in {
             "vkusvill_products_search",
             "vkusvill_product_details",
+            "recipe_search",
             "get_previous_cart",
             "vkusvill_cart_link_create",
         }:
@@ -2330,6 +2425,93 @@ class ShoppingAgent:
                 ):
                     continue
                 product_index[normalized["xml_id"]] = normalized
+
+    @staticmethod
+    def _has_recipe_search_candidates(history: list[dict[str, Any]]) -> bool:
+        products, _not_found_count = ShoppingAgent._extract_recipe_products_from_history(history)
+        return bool(products)
+
+    @staticmethod
+    def _extract_recipe_products_from_history(
+        history: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], int]:
+        for msg in reversed(history):
+            if msg.get("role") != "tool" or msg.get("name") != "recipe_search":
+                continue
+            payload = ShoppingAgent._parse_json_payload(msg.get("content"))
+            if not isinstance(payload, dict):
+                continue
+            found_raw = payload.get("found")
+            if not isinstance(found_raw, list):
+                results_raw = payload.get("results")
+                if isinstance(results_raw, list):
+                    found_raw = []
+                    for row in results_raw:
+                        if not isinstance(row, dict):
+                            continue
+                        best_match = row.get("best_match")
+                        if not isinstance(best_match, dict):
+                            continue
+                        found_raw.append(
+                            {
+                                "xml_id": best_match.get("xml_id"),
+                                "suggested_q": best_match.get("suggested_q"),
+                            }
+                        )
+                if not isinstance(found_raw, list):
+                    continue
+
+            not_found_raw = payload.get("not_found")
+            not_found_count = len(not_found_raw) if isinstance(not_found_raw, list) else 0
+            quantities_by_xml_id: dict[int, float] = {}
+            for row in found_raw:
+                if not isinstance(row, dict):
+                    continue
+                xml_id_raw = row.get("xml_id")
+                if isinstance(xml_id_raw, bool):
+                    continue
+                try:
+                    xml_id = int(xml_id_raw)
+                except (TypeError, ValueError):
+                    continue
+                suggested_q = ShoppingAgent._safe_float(row.get("suggested_q"), default=1.0)
+                if suggested_q <= 0:
+                    suggested_q = 1.0
+                quantities_by_xml_id[xml_id] = quantities_by_xml_id.get(xml_id, 0.0) + suggested_q
+
+            products: list[dict[str, Any]] = [
+                {"xml_id": xml_id, "q": q} for xml_id, q in quantities_by_xml_id.items()
+            ]
+            return products, not_found_count
+        return [], 0
+
+    async def _recover_cart_from_recipe_search_history(
+        self,
+        *,
+        history: list[dict[str, Any]],
+        llm_provider: str,
+        call_cache: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any], str]:
+        products, _not_found_count = self._extract_recipe_products_from_history(history)
+        if not products:
+            return None, {}, ""
+
+        cart_args = CartProcessor.fix_cart_args({"products": products})
+        cart_result = await self._call_mcp_tool(
+            name="vkusvill_cart_link_create",
+            arguments=cart_args,
+            llm_provider=llm_provider,
+            call_cache=call_cache,
+        )
+        cart_data = self._extract_cart_data(
+            tool_name="vkusvill_cart_link_create",
+            tool_result=cart_result,
+        )
+        if cart_data is None:
+            return None, cart_args, cart_result
+        if "products" not in cart_data:
+            cart_data["products"] = cart_args.get("products", [])
+        return cart_data, cart_args, cart_result
 
     def _normalize_product_row(self, item: dict[str, Any]) -> dict[str, Any] | None:
         xml_id_raw = item.get("xml_id", item.get("id"))

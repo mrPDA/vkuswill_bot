@@ -214,6 +214,135 @@ class _RecipeFlowMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _RecipeLoopMCPClient(_FakeMCPClient):
+    async def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "recipe_ingredients",
+                "description": "Extract recipe ingredients",
+                "parameters": {"type": "object", "properties": {"dish": {"type": "string"}}},
+            },
+            {
+                "name": "recipe_search",
+                "description": "Batch recipe search",
+                "parameters": {"type": "object", "properties": {"ingredients": {"type": "array"}}},
+            },
+            {
+                "name": "vkusvill_products_search",
+                "description": "Search products",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+            {
+                "name": "vkusvill_product_details",
+                "description": "Product details",
+                "parameters": {"type": "object", "properties": {"id": {"type": "integer"}}},
+            },
+            {
+                "name": "vkusvill_cart_link_create",
+                "description": "Create cart",
+                "parameters": {"type": "object", "properties": {"products": {"type": "array"}}},
+            },
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "recipe_ingredients":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": "картофель",
+                            "search_query": "картофель",
+                            "quantity": 4,
+                            "unit": "шт",
+                        },
+                        {"name": "яйцо", "search_query": "яйцо", "quantity": 4, "unit": "шт"},
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "recipe_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "results": [
+                        {
+                            "ingredient": "картофель",
+                            "best_match": {
+                                "xml_id": 1713,
+                                "name": "Картофель",
+                                "price": {"current": 89},
+                                "unit": "кг",
+                                "suggested_q": 1,
+                            },
+                        },
+                        {
+                            "ingredient": "яйцо",
+                            "best_match": {
+                                "xml_id": 605,
+                                "name": "Яйцо куриное С1",
+                                "price": {"current": 120},
+                                "unit": "шт",
+                                "suggested_q": 1,
+                            },
+                        },
+                    ],
+                    "not_found": [],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 1713,
+                                "name": "Картофель",
+                                "price": {"current": 89},
+                                "unit": "кг",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_product_details":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "xml_id": 1713,
+                        "name": "Картофель",
+                        "price": {"current": 89},
+                        "unit": "кг",
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "link": "https://shop.example/cart/recovered",
+                        "price_summary": {
+                            "total": 209.0,
+                            "total_text": "Итого: 209.00 руб",
+                            "items": [
+                                "- Картофель x 1 = 89.00 руб",
+                                "- Яйцо куриное С1 x 1 = 120.00 руб",
+                            ],
+                        },
+                    },
+                },
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _RecipeIngredientsOnlyMCPClient(_FakeMCPClient):
     def __init__(self, *, recipe_payload: str) -> None:
         super().__init__(tool_result='{"ok": true}')
@@ -1184,6 +1313,60 @@ async def test_max_tool_calls_recovery_returns_cart_when_cart_already_created() 
 
 
 @pytest.mark.asyncio
+async def test_max_tool_calls_recovery_creates_cart_from_recipe_search_history() -> None:
+    mcp = _RecipeLoopMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-1", "recipe_ingredients", '{"dish":"окрошка","servings":2}')
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-2", "recipe_search", '{"ingredients":[{"name":"картофель"}]}')
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-3", "vkusvill_products_search", '{"q":"картофель"}'),
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-4", "vkusvill_product_details", '{"id":1713}'),
+                ],
+            )
+        ),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp, max_tool_calls=4)
+
+    result = await agent.process_message(user_id=808, text="собери окрошку на двоих")
+    assert "в пределах лимита шагов" not in result
+    assert "Итого: 209.00 руб" in result
+    assert '<a href="https://shop.example/cart/recovered">Открыть корзину</a>' in result
+    assert any(name == "vkusvill_cart_link_create" for name, _args in mcp_client.calls)
+
+
+def test_preprocess_search_args_drops_page_parameter() -> None:
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_products_search",
+        {"q": "картофель", "page": 3},
+    )
+    assert args == {"q": "картофель"}
+
+
+@pytest.mark.asyncio
 async def test_injects_virtual_recipe_tools_for_qwen() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     tools = await agent._get_tools()
@@ -1909,6 +2092,39 @@ def test_trim_history_replaces_duplicate_tool_payload_with_cached_stub() -> None
     assert second_payload["cached"] is True
     assert second_payload["duplicate"] is True
     assert second_payload["meta"]["q"] == "молоко"
+
+
+def test_compact_recipe_search_is_idempotent_for_top_level_found_shape() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    payload = {
+        "ok": True,
+        "found": [
+            {
+                "ingredient": "картофель",
+                "suggested_q": 2,
+                "xml_id": 1713,
+                "name": "Картофель",
+                "price": 89.0,
+            },
+            {
+                "ingredient": "яйцо",
+                "suggested_q": 1,
+                "xml_id": 605,
+                "name": "Яйцо куриное С1",
+                "price": 120.0,
+            },
+        ],
+        "not_found": [],
+    }
+
+    compact_text = agent._prepare_tool_result_for_history(
+        "recipe_search",
+        json.dumps(payload, ensure_ascii=False),
+    )
+    compact = json.loads(compact_text)
+    assert len(compact.get("found", [])) == 2
+    assert compact["found"][0]["xml_id"] == 1713
+    assert compact["found"][1]["xml_id"] == 605
 
 
 def test_should_start_fresh_context_for_new_independent_cart_request() -> None:
