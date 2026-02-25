@@ -117,6 +117,32 @@ class CartProcessor:
     # Порог, выше которого q считается «перепутанными граммами/мл»
     _GRAM_CONFUSION_THRESHOLD = 3
 
+    @staticmethod
+    def _aggregate_products(products: list[dict]) -> tuple[dict[int, float], list[int]]:
+        """Собрать суммарные q по xml_id с сохранением порядка первого появления."""
+        totals: dict[int, float] = {}
+        order: list[int] = []
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xml_id_raw = item.get("xml_id")
+            if xml_id_raw is None:
+                continue
+            try:
+                xml_id = int(xml_id_raw)
+            except (TypeError, ValueError):
+                continue
+            q_raw = item.get("q", 1)
+            try:
+                q = float(q_raw)
+            except (TypeError, ValueError):
+                q = 1.0
+            if xml_id not in totals:
+                totals[xml_id] = 0.0
+                order.append(xml_id)
+            totals[xml_id] += q
+        return totals, order
+
     async def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров и ограничить max q.
 
@@ -269,35 +295,96 @@ class CartProcessor:
             return result_text
 
         products = args.get("products", [])
-        if not products:
+        if not isinstance(products, list) or not products:
+            return result_text
+        requested_products = args.get("_requested_products")
+        if not isinstance(requested_products, list):
+            requested_products = products
+
+        purchase_by_xml_id, purchase_order = self._aggregate_products(products)
+        recipe_by_xml_id, _recipe_order = self._aggregate_products(requested_products)
+        if not purchase_by_xml_id:
             return result_text
 
-        lines = []
-        total = 0.0
+        lines: list[str] = []
+        recipe_lines: list[str] = []
+        item_details: list[dict] = []
+        purchase_total = 0.0
+        recipe_total = 0.0
         all_found = True
+        dual_pricing = False
 
-        for item in products:
-            xml_id = item.get("xml_id")
-            q = item.get("q", 1)
+        for xml_id in purchase_order:
+            q_purchase = purchase_by_xml_id.get(xml_id, 0.0)
+            q_recipe = recipe_by_xml_id.get(xml_id, q_purchase)
+            if abs(q_purchase - q_recipe) > 1e-9:
+                dual_pricing = True
             cached = await self._price_cache.get(xml_id)
             if cached:
-                subtotal = cached.price * q
-                total += subtotal
+                purchase_subtotal = cached.price * q_purchase
+                recipe_subtotal = cached.price * q_recipe
+                purchase_total += purchase_subtotal
+                recipe_total += recipe_subtotal
                 # Очищаем HTML-сущности из названий товаров MCP-сервера
                 # (&nbsp; и пр.), чтобы JSON оставался чистым для GigaChat.
                 clean_name = cached.name.replace("&nbsp;", " ").replace("&amp;", "&")
                 lines.append(
-                    f"  - {clean_name}: {cached.price} руб/{cached.unit} x {q} = {subtotal:.2f} руб"
+                    "  - "
+                    f"{clean_name}: {cached.price} руб/{cached.unit} x {q_purchase:g} = "
+                    f"{purchase_subtotal:.2f} руб"
+                )
+                recipe_lines.append(
+                    "  - "
+                    f"{clean_name}: {cached.price} руб/{cached.unit} x {q_recipe:g} = "
+                    f"{recipe_subtotal:.2f} руб"
+                )
+                item_details.append(
+                    {
+                        "xml_id": xml_id,
+                        "name": clean_name,
+                        "unit": cached.unit,
+                        "unit_price": cached.price,
+                        "recipe_q": q_recipe,
+                        "purchase_q": q_purchase,
+                        "recipe_subtotal": round(recipe_subtotal, 2),
+                        "purchase_subtotal": round(purchase_subtotal, 2),
+                        "overbuy_subtotal": round(purchase_subtotal - recipe_subtotal, 2),
+                    }
                 )
             else:
                 all_found = False
                 lines.append(f"  - xml_id={xml_id}: цена неизвестна")
+                recipe_lines.append(f"  - xml_id={xml_id}: цена неизвестна")
+                item_details.append(
+                    {
+                        "xml_id": xml_id,
+                        "recipe_q": q_recipe,
+                        "purchase_q": q_purchase,
+                    }
+                )
 
         # Добавляем расчёт в JSON-результат
-        summary: dict = {"items": lines}
+        summary: dict = {
+            "items": lines,
+            "recipe_items": recipe_lines,
+            "item_details": item_details,
+            "dual_pricing": dual_pricing,
+        }
         if all_found:
-            summary["total"] = round(total, 2)
-            summary["total_text"] = f"Итого: {total:.2f} руб"
+            rounded_purchase_total = round(purchase_total, 2)
+            rounded_recipe_total = round(recipe_total, 2)
+            overbuy_total = round(rounded_purchase_total - rounded_recipe_total, 2)
+
+            summary["total"] = rounded_purchase_total
+            summary["total_text"] = f"Итого: {rounded_purchase_total:.2f} руб"
+            summary["purchase_total"] = rounded_purchase_total
+            summary["purchase_total_text"] = f"К покупке: {rounded_purchase_total:.2f} руб"
+            summary["recipe_total"] = rounded_recipe_total
+            summary["recipe_total_text"] = f"По рецепту: {rounded_recipe_total:.2f} руб"
+            summary["overbuy_total"] = overbuy_total
+            summary["overbuy_total_text"] = (
+                f"Переплата из-за упаковок: {overbuy_total:.2f} руб"
+            )
         else:
             summary["total_text"] = "Итого: не удалось рассчитать (не все цены известны)"
 

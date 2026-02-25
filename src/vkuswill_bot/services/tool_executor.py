@@ -196,6 +196,12 @@ class ToolExecutor:
         """
         if tool_name == "vkusvill_cart_link_create":
             args = self._cart_processor.fix_cart_args(args)
+            # Сохраняем запрошенные количества до коррекции под упаковки/дискретность.
+            products = args.get("products")
+            if isinstance(products, list):
+                args["_requested_products"] = [
+                    dict(item) for item in products if isinstance(item, dict)
+                ]
             # Проверяем, что xml_id были получены через поиск (есть в price_cache)
             unknown = await self._find_unknown_xml_ids(args)
             if unknown:

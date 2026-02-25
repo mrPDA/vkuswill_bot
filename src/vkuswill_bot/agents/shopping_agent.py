@@ -2795,12 +2795,34 @@ class ShoppingAgent:
             total = ShoppingAgent._safe_float(total_raw, default=-1.0)
             if total >= 0:
                 total_text = f"Итого: {total:.2f} руб"
+        purchase_total_text = ShoppingAgent._normalize_compact_text(
+            summary_dict.get("purchase_total_text")
+        )
+        recipe_total_text = ShoppingAgent._normalize_compact_text(
+            summary_dict.get("recipe_total_text")
+        )
+        overbuy_total_text = ShoppingAgent._normalize_compact_text(
+            summary_dict.get("overbuy_total_text")
+        )
+        dual_pricing = bool(summary_dict.get("dual_pricing"))
+        purchase_total = ShoppingAgent._safe_float(summary_dict.get("purchase_total"), default=-1.0)
+        recipe_total = ShoppingAgent._safe_float(summary_dict.get("recipe_total"), default=-1.0)
+        has_meaningful_dual = dual_pricing or (
+            purchase_total >= 0 and recipe_total >= 0 and abs(purchase_total - recipe_total) >= 0.01
+        )
 
         chunks = ["Собрала корзину по вашему запросу."]
         if lines:
             chunks.append("\n".join(lines))
         if total_text:
             chunks.append(f"<b>{total_text}</b>")
+        if has_meaningful_dual:
+            if recipe_total_text:
+                chunks.append(f"<b>{recipe_total_text}</b>")
+            if purchase_total_text:
+                chunks.append(f"<b>{purchase_total_text}</b>")
+            if overbuy_total_text:
+                chunks.append(overbuy_total_text)
         cleaned_safety_note = cls._normalize_compact_text(safety_note)
         if cleaned_safety_note:
             chunks.append(cleaned_safety_note)

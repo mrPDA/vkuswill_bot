@@ -209,6 +209,32 @@ class TestCalcCartTotal:
         # 135 * 0.5 = 67.5
         assert parsed["data"]["price_summary"]["total"] == 67.5
 
+    async def test_dual_pricing_when_requested_differs_from_purchase(self, processor, price_cache):
+        """Считает отдельно стоимость по рецепту и к покупке."""
+        price_cache[14526] = {"name": "Сметана 15%, 250 г", "price": 106, "unit": "шт"}
+        args = {
+            "_requested_products": [{"xml_id": 14526, "q": 0.2}],
+            "products": [{"xml_id": 14526, "q": 1}],
+        }
+        result_text = json.dumps(
+            {
+                "ok": True,
+                "data": {"link": "https://vkusvill.ru/?share_basket=dual"},
+            }
+        )
+
+        result = await processor.calc_total(args, result_text)
+        parsed = json.loads(result)
+        summary = parsed["data"]["price_summary"]
+        assert summary["recipe_total"] == 21.2
+        assert summary["purchase_total"] == 106.0
+        assert summary["overbuy_total"] == 84.8
+        assert summary["dual_pricing"] is True
+        assert summary["recipe_total_text"] == "По рецепту: 21.20 руб"
+        assert summary["purchase_total_text"] == "К покупке: 106.00 руб"
+        assert summary["item_details"][0]["recipe_q"] == 0.2
+        assert summary["item_details"][0]["purchase_q"] == 1.0
+
     async def test_unknown_price(self, processor):
         """Если цена неизвестна — total не вычисляется."""
         args = {"products": [{"xml_id": 999, "q": 1}]}
