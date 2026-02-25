@@ -1118,6 +1118,51 @@ async def test_stable_cart_output_keeps_allergy_safety_note_from_llm() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stable_cart_output_shows_recipe_and_purchase_totals() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/dual-1",
+                "price_summary": {
+                    "total": 106.0,
+                    "total_text": "Итого: 106.00 руб",
+                    "purchase_total": 106.0,
+                    "purchase_total_text": "К покупке: 106.00 руб",
+                    "recipe_total": 21.2,
+                    "recipe_total_text": "По рецепту: 21.20 руб",
+                    "overbuy_total": 84.8,
+                    "overbuy_total_text": "Переплата из-за упаковок: 84.80 руб",
+                    "dual_pricing": True,
+                    "items": [
+                        "- Сметана 15%, 250 г x 1 = 106.00 руб",
+                    ],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "vkusvill_cart_link_create",
+        '{"products":[{"xml_id":14526,"q":1}]}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="Готово.")),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=80, text="собери рецепт со сметаной")
+    assert "Итого: 106.00 руб" in result
+    assert "По рецепту: 21.20 руб" in result
+    assert "К покупке: 106.00 руб" in result
+    assert "Переплата из-за упаковок: 84.80 руб" in result
+    assert '<a href="https://shop.example/cart/dual-1">Открыть корзину</a>' in result
+
+
+@pytest.mark.asyncio
 async def test_tool_result_compacted_in_history_for_next_llm_call() -> None:
     large_items = [
         {

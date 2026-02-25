@@ -245,6 +245,7 @@ class TestPreprocessArgs:
             {},
         )
         assert result["products"][0]["q"] == 1
+        assert result["_requested_products"] == [{"xml_id": 100, "q": 0.5}]
 
     async def test_search_with_preferences(self, executor):
         prefs = {"молоко": "козье 3,2%"}
