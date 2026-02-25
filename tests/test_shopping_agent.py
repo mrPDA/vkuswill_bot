@@ -934,6 +934,53 @@ async def test_stabilize_when_final_reply_misses_item_prices() -> None:
 
 
 @pytest.mark.asyncio
+async def test_stable_cart_output_keeps_allergy_safety_note_from_llm() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/5",
+                "price_summary": {
+                    "total": 219.0,
+                    "total_text": "Итого: 219.00 руб",
+                    "items": [
+                        "- Молоко 3,2% x 1 = 99.00 руб",
+                        "- Батон белый x 1 = 45.00 руб",
+                        "- Сыр творожный x 1 = 75.00 руб",
+                    ],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "vkusvill_cart_link_create",
+        '{"products":[{"xml_id":1,"q":1},{"xml_id":2,"q":1},{"xml_id":3,"q":1}]}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(
+            _FakeMessage(
+                content=(
+                    "Собрала корзину.\n"
+                    "Перед приготовлением убедитесь, что проверили состав продуктов на упаковке, "
+                    "особенно при наличии аллергии."
+                )
+            )
+        ),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=79, text="собери продукты на завтрак")
+    assert "Итого: 219.00 руб" in result
+    assert "проверили состав продуктов на упаковке" in result
+    assert "наличии аллергии" in result
+    assert '<a href="https://shop.example/cart/5">Открыть корзину</a>' in result
+
+
+@pytest.mark.asyncio
 async def test_tool_result_compacted_in_history_for_next_llm_call() -> None:
     large_items = [
         {

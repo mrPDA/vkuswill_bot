@@ -495,7 +495,11 @@ class ShoppingAgent:
                     )
                     # При наличии фактической корзины всегда отдаём детерминированный
                     # формат из данных MCP (а не свободный рерайт LLM).
-                    final_text = self._render_stable_cart_output(cart_data_this_turn)
+                    safety_note = self._extract_cart_safety_note(final_text)
+                    final_text = self._render_stable_cart_output(
+                        cart_data_this_turn,
+                        safety_note=safety_note,
+                    )
 
                 self._history[user_id] = self._trim_history(
                     [*history, self._assistant_msg(message)],
@@ -2576,8 +2580,13 @@ class ShoppingAgent:
         # трактуем сообщение как новый запрос на новую корзину.
         return True
 
-    @staticmethod
-    def _render_stable_cart_output(cart_data: dict[str, Any]) -> str:
+    @classmethod
+    def _render_stable_cart_output(
+        cls,
+        cart_data: dict[str, Any],
+        *,
+        safety_note: str = "",
+    ) -> str:
         link = str(cart_data.get("link", "")).strip()
         summary = cart_data.get("price_summary")
         summary_dict = summary if isinstance(summary, dict) else {}
@@ -2610,6 +2619,9 @@ class ShoppingAgent:
             chunks.append("\n".join(lines))
         if total_text:
             chunks.append(f"<b>{total_text}</b>")
+        cleaned_safety_note = cls._normalize_compact_text(safety_note)
+        if cleaned_safety_note:
+            chunks.append(cleaned_safety_note)
         if link:
             chunks.append(f'<a href="{link}">Открыть корзину</a>')
         chunks.append(
@@ -2617,6 +2629,37 @@ class ShoppingAgent:
             "корзину. Цены и состав уточняйте на сайте.</i>"
         )
         return "\n\n".join(chunks)
+
+    @classmethod
+    def _extract_cart_safety_note(cls, text: str) -> str:
+        normalized_text = cls._normalize_compact_text(text)
+        if not normalized_text:
+            return ""
+
+        candidates = re.split(r"(?<=[.!?])\s+|\n+", normalized_text)
+        if not candidates:
+            candidates = [normalized_text]
+
+        keywords = (
+            "аллерг",
+            "состав",
+            "неперенос",
+            "индивидуал",
+            "чувствител",
+            "противопоказ",
+        )
+        for candidate in candidates:
+            line = cls._normalize_compact_text(candidate).strip(" -\t")
+            if not line:
+                continue
+            line_low = line.lower()
+            if "http://" in line_low or "https://" in line_low:
+                continue
+            if "открыть корзину" in line_low:
+                continue
+            if any(token in line_low for token in keywords):
+                return line
+        return ""
 
     def _stabilize_cart_output(self, *, final_text: str, cart_data: dict[str, Any]) -> str:
         items_count = 0
