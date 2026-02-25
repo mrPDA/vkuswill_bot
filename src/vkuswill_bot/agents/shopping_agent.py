@@ -78,6 +78,13 @@ _FORCE_CART_LINK_SOURCE_HINT = (
     "vkusvill_cart_link_create, затем выдай ответ. "
     "Ссылку бери только из data.link результата инструмента."
 )
+_FORCE_CART_FLOW_CONTINUATION_HINT = (
+    "[Системная корректировка] Ты начал сборку корзины, но преждевременно остановился "
+    "текстовым ответом. Сборка должна быть доведена до конца через инструменты. "
+    "Продолжи вызовы поиска (vkusvill_products_search / recipe_search) и затем "
+    "ОБЯЗАТЕЛЬНО вызови vkusvill_cart_link_create. Только после успешного "
+    "vkusvill_cart_link_create выдай финальный текст пользователю."
+)
 _FORCE_BATCH_SEARCH_HINT = (
     "[Системная корректировка] Ты слишком долго выполняешь одиночные поиски. "
     "Для независимых ингредиентов возвращай НЕСКОЛЬКО вызовов "
@@ -320,7 +327,10 @@ class ShoppingAgent:
         manual_recovery_used = False
         cart_creation_recovery_used = False
         search_batch_recovery_used = False
+        cart_flow_recovery_used = False
         single_search_steps_streak = 0
+        tools_called_this_turn = False
+        recipe_flow_started_this_turn = False
         cart_intent = self._is_cart_intent(text)
         explicit_pantry_requests = self._extract_explicit_pantry_requests(text)
         explicit_egg_pack_request = self._has_explicit_egg_pack_request(text)
@@ -434,6 +444,25 @@ class ShoppingAgent:
                 if (
                     cart_data_this_turn is None
                     and cart_intent
+                    and tools_called_this_turn
+                    and recipe_flow_started_this_turn
+                    and self._looks_like_partial_recipe_reply(final_text)
+                    and not cart_flow_recovery_used
+                    and step < self._max_tool_calls
+                ):
+                    cart_flow_recovery_used = True
+                    logger.info("Recipe flow recovery: continue tool-chain until cart_link_create")
+                    history.append(self._assistant_msg(message))
+                    history.append(
+                        {"role": "system", "content": _FORCE_CART_FLOW_CONTINUATION_HINT}
+                    )
+                    history = self._trim_history(history)
+                    history = self._trim_history_by_chars(history)
+                    continue
+
+                if (
+                    cart_data_this_turn is None
+                    and cart_intent
                     and manual_cart_reply
                     and not manual_recovery_used
                     and step < self._max_tool_calls
@@ -524,6 +553,9 @@ class ShoppingAgent:
                     tool_name=tool_name,
                     tool_result=tool_result,
                 )
+                tools_called_this_turn = True
+                if tool_name in {"recipe_ingredients", "recipe_search"}:
+                    recipe_flow_started_this_turn = True
                 cart_data = self._extract_cart_data(tool_name=tool_name, tool_result=tool_result)
                 if cart_data is not None:
                     products = tool_args.get("products")
@@ -2436,6 +2468,24 @@ class ShoppingAgent:
             "измени",
             "поменя",
             "объедин",
+        )
+        return any(marker in normalized for marker in markers)
+
+    @staticmethod
+    def _looks_like_partial_recipe_reply(text: str) -> bool:
+        normalized = text.lower()
+        if not normalized.strip():
+            return False
+        if "открыть корзину" in normalized or "share_basket" in normalized:
+            return False
+        markers = (
+            "ингредиент",
+            "подобрал",
+            "подобрала",
+            "рецепт",
+            "список продуктов",
+            "могу продолж",
+            "если нужно",
         )
         return any(marker in normalized for marker in markers)
 

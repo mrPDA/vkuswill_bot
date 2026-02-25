@@ -155,6 +155,63 @@ class _SearchAndLinkOnlyMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _RecipeFlowMCPClient(_FakeMCPClient):
+    async def get_tools(self) -> list[dict[str, Any]]:
+        return [
+            {
+                "name": "recipe_ingredients",
+                "description": "Extract recipe ingredients",
+                "parameters": {"type": "object", "properties": {"dish": {"type": "string"}}},
+            },
+            {
+                "name": "vkusvill_products_search",
+                "description": "Search products",
+                "parameters": {"type": "object", "properties": {"q": {"type": "string"}}},
+            },
+            {
+                "name": "vkusvill_cart_link_create",
+                "description": "Create cart",
+                "parameters": {"type": "object", "properties": {"products": {"type": "array"}}},
+            },
+        ]
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "recipe_ingredients":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "dish": "бутерброд",
+                    "servings": 1,
+                    "ingredients": [{"name": "батон", "search_query": "батон", "quantity": 1, "unit": "шт"}],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 45357,
+                                "name": "Батон белый",
+                                "price": {"current": 45},
+                                "unit": "шт",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/45357"}},
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _RecipeIngredientsOnlyMCPClient(_FakeMCPClient):
     def __init__(self, *, recipe_payload: str) -> None:
         super().__init__(tool_result='{"ok": true}')
@@ -462,6 +519,60 @@ async def test_stabilize_when_final_reply_contains_wrong_cart_link() -> None:
     assert "https://vkusvill.ru/cart" not in result
     assert '<a href="https://shop.example/cart/42">Открыть корзину</a>' in result
     assert "Итого: 310.00 руб" in result
+
+
+@pytest.mark.asyncio
+async def test_recovers_when_llm_stops_after_partial_cart_flow() -> None:
+    mcp = _RecipeFlowMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-1", "recipe_ingredients", '{"dish":"бутерброд","servings":1}')
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="Подобрала ингредиенты. Могу продолжить, если нужно.",
+                tool_calls=[],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-2", "vkusvill_products_search", '{"q":"батон","limit":5}'),
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-3",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":45357,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Готово.")),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=42, text="собери ингредиенты для бутерброда")
+
+    assert "Батон белый x 1 = 45.00 руб" in result
+    assert '<a href="https://shop.example/cart/45357">Открыть корзину</a>' in result
+    assert ("recipe_ingredients", {"dish": "бутерброд", "servings": 1}) in mcp_client.calls
+    assert ("vkusvill_products_search", {"q": "батон", "limit": 5}) in mcp_client.calls
+    assert (
+        "vkusvill_cart_link_create",
+        {"products": [{"xml_id": 45357, "q": 1}]},
+    ) in mcp_client.calls
 
 
 @pytest.mark.asyncio
