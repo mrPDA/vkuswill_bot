@@ -183,7 +183,9 @@ class _RecipeFlowMCPClient(_FakeMCPClient):
                     "ok": True,
                     "dish": "бутерброд",
                     "servings": 1,
-                    "ingredients": [{"name": "батон", "search_query": "батон", "quantity": 1, "unit": "шт"}],
+                    "ingredients": [
+                        {"name": "батон", "search_query": "батон", "quantity": 1, "unit": "шт"}
+                    ],
                 },
                 ensure_ascii=False,
             )
@@ -417,7 +419,10 @@ def test_build_product_index_from_history_supports_compact_tool_shapes() -> None
             "role": "tool",
             "name": "vkusvill_products_search",
             "content": json.dumps(
-                {"ok": True, "item": {"xml_id": 45357, "name": "Батон белый", "price": 45, "unit": "шт"}},
+                {
+                    "ok": True,
+                    "item": {"xml_id": 45357, "name": "Батон белый", "price": 45, "unit": "шт"},
+                },
                 ensure_ascii=False,
             ),
         },
@@ -425,7 +430,10 @@ def test_build_product_index_from_history_supports_compact_tool_shapes() -> None
             "role": "tool",
             "name": "vkusvill_product_details",
             "content": json.dumps(
-                {"ok": True, "data": {"xml_id": 50548, "name": "Кефир 3,2%", "price": 129, "unit": "шт"}},
+                {
+                    "ok": True,
+                    "data": {"xml_id": 50548, "name": "Кефир 3,2%", "price": 129, "unit": "шт"},
+                },
                 ensure_ascii=False,
             ),
         },
