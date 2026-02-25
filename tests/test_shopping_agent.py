@@ -155,6 +155,34 @@ class _SearchAndLinkOnlyMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _DualPricingMCPClient(_FakeMCPClient):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 14526,
+                                "name": "Сметана 15%, 250 г",
+                                "price": {"current": 106},
+                                "unit": "шт",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/dual-live"}},
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _RecipeFlowMCPClient(_FakeMCPClient):
     async def get_tools(self) -> list[dict[str, Any]]:
         return [
@@ -795,8 +823,11 @@ async def test_builds_price_summary_when_cart_response_has_only_link() -> None:
 
     result = await agent.process_message(user_id=200, text="собери яичницу")
     assert "Яйцо куриное С1 x 1 = 120.00 руб" in result
-    assert "Масло сливочное 82,5%, 200 г x 0.5 = 141.00 руб" in result
-    assert "Итого: 261.00 руб" in result
+    assert "Масло сливочное 82,5%, 200 г x 1 = 282.00 руб" in result
+    assert "Итого: 402.00 руб" in result
+    assert "По рецепту: 261.00 руб" in result
+    assert "К покупке: 402.00 руб" in result
+    assert "Переплата из-за упаковок: 141.00 руб" in result
     assert '<a href="https://vkusvill.ru/?share_basket=123456789">Открыть корзину</a>' in result
 
 
@@ -1163,6 +1194,44 @@ async def test_stable_cart_output_shows_recipe_and_purchase_totals() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cart_summary_builds_dual_pricing_in_shopping_agent_path() -> None:
+    mcp = _DualPricingMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[_FakeToolCall("tc-1", "vkusvill_products_search", '{"q":"сметана"}')],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-2",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":14526,"q":0.2}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Готово")),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=81, text="добавь сметану")
+
+    assert "Итого: 106.00 руб" in result
+    assert "По рецепту: 21.20 руб" in result
+    assert "К покупке: 106.00 руб" in result
+    assert "Переплата из-за упаковок: 84.80 руб" in result
+    assert '<a href="https://shop.example/cart/dual-live">Открыть корзину</a>' in result
+
+    cart_call = next(args for name, args in mcp_client.calls if name == "vkusvill_cart_link_create")
+    assert cart_call["products"] == [{"xml_id": 14526, "q": 1}]
+
+
+@pytest.mark.asyncio
 async def test_tool_result_compacted_in_history_for_next_llm_call() -> None:
     large_items = [
         {
@@ -1409,6 +1478,18 @@ def test_preprocess_search_args_drops_page_parameter() -> None:
         {"q": "картофель", "page": 3},
     )
     assert args == {"q": "картофель"}
+
+
+def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_cart_link_create",
+        {"products": [{"xml_id": 14526, "q": 0.2}, {"xml_id": 1713, "q": 4}]},
+        product_index={
+            14526: {"name": "Сметана 15%, 250 г", "unit": "шт"},
+            1713: {"name": "Яйцо куриное С0", "unit": "шт"},
+        },
+    )
+    assert args["products"] == [{"xml_id": 14526, "q": 1}, {"xml_id": 1713, "q": 1}]
 
 
 @pytest.mark.asyncio
