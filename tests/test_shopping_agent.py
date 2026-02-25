@@ -420,6 +420,37 @@ class _RecipeIngredientsOnlyMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _RecipeQuantityCalcMCPClient(_FakeMCPClient):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name != "vkusvill_products_search":
+            return self.tool_result
+        query = str(arguments.get("q", "")).lower()
+        if "картофель" in query:
+            item = {"xml_id": 1713, "name": "Картофель", "price": 58, "unit": "кг"}
+        elif "лук" in query:
+            item = {"xml_id": 605, "name": "Лук репчатый", "price": 58, "unit": "кг"}
+        elif "яйц" in query:
+            item = {"xml_id": 22658, "name": "Яйцо куриное С0", "price": 144, "unit": "шт"}
+        elif "мук" in query:
+            item = {
+                "xml_id": 43204,
+                "name": "Мука пшеничная в/с 1 кг",
+                "price": 78,
+                "unit": "шт",
+            }
+        elif "масло" in query:
+            item = {
+                "xml_id": 37147,
+                "name": "Масло подсолнечное рафинированное 1 л",
+                "price": 165,
+                "unit": "шт",
+            }
+        else:
+            item = {"xml_id": 999, "name": "Товар", "price": 100, "unit": "шт"}
+        return json.dumps({"ok": True, "data": {"items": [item]}}, ensure_ascii=False)
+
+
 class _FakeFunction:
     def __init__(self, name: str, arguments: str) -> None:
         self.name = name
@@ -1799,6 +1830,74 @@ async def test_recipe_search_fallback_accepts_string_ingredients() -> None:
     assert len(payload["results"]) >= 1
     assert payload["results"][0]["best_match"]["xml_id"] == 111
     assert payload["data"]["found"][0]["item"]["xml_id"] == 111
+
+
+@pytest.mark.asyncio
+async def test_recipe_search_fallback_uses_deterministic_quantity_calculator() -> None:
+    mcp = _RecipeQuantityCalcMCPClient(tool_result='{"ok": true}')
+    llm_adapter = _FakeLLMAdapter(text="ok")
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": llm_adapter},
+    )
+
+    raw = await agent._call_mcp_tool(
+        name="recipe_search",
+        arguments={
+            "ingredients": [
+                {"name": "картофель", "quantity": 6, "unit": "шт", "search_query": "картофель"},
+                {"name": "лук репчатый", "quantity": 1, "unit": "шт", "search_query": "лук"},
+                {"name": "яйцо", "quantity": 2, "unit": "шт", "search_query": "яйцо"},
+                {"name": "мука", "quantity": 3, "unit": "ст.л.", "search_query": "мука"},
+                {
+                    "name": "масло растительное",
+                    "quantity": 4,
+                    "unit": "ст.л.",
+                    "search_query": "масло растительное",
+                },
+            ]
+        },
+        llm_provider="qwen_openai",
+    )
+    payload = json.loads(raw)
+    found = {row["ingredient"]: row for row in payload["results"]}
+
+    assert found["картофель"]["best_match"]["suggested_q"] == pytest.approx(0.9, abs=0.001)
+    assert found["лук репчатый"]["best_match"]["suggested_q"] == pytest.approx(0.1, abs=0.001)
+    assert found["яйцо"]["best_match"]["suggested_q"] == 1
+    assert found["мука"]["best_match"]["suggested_q"] == 1
+    assert found["масло растительное"]["best_match"]["suggested_q"] == 1
+
+
+@pytest.mark.asyncio
+async def test_recipe_search_fallback_parses_quantity_from_string_ingredient() -> None:
+    mcp = _FallbackMCPClient()
+    llm_adapter = _FakeLLMAdapter(text="ok")
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": llm_adapter},
+    )
+
+    raw = await agent._call_mcp_tool(
+        name="recipe_search",
+        arguments={"ingredients": ["говядина 300 г"]},
+        llm_provider="qwen_openai",
+    )
+    payload = json.loads(raw)
+    assert payload["results"][0]["ingredient"] == "говядина"
+    assert payload["results"][0]["best_match"]["suggested_q"] == pytest.approx(0.3, abs=0.001)
 
 
 @pytest.mark.asyncio
