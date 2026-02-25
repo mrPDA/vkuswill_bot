@@ -310,11 +310,13 @@ class ShoppingAgent:
             mode="start",
         )
 
+        product_index_this_turn: dict[int, dict[str, Any]] = self._build_product_index_from_history(
+            history
+        )
         history.append({"role": "user", "content": text})
         history = self._trim_history(history)
         history = self._trim_history_by_chars(history)
         cart_data_this_turn: dict[str, Any] | None = None
-        product_index_this_turn: dict[int, dict[str, Any]] = {}
         manual_recovery_used = False
         cart_creation_recovery_used = False
         search_batch_recovery_used = False
@@ -1310,13 +1312,45 @@ class ShoppingAgent:
             return []
         data = payload.get("data")
         if isinstance(data, dict):
+            data_products = data.get("products")
+            if isinstance(data_products, list):
+                return [item for item in data_products if isinstance(item, dict)]
             items = data.get("items")
             if isinstance(items, list):
                 return [item for item in items if isinstance(item, dict)]
+            if isinstance(data.get("xml_id"), int | str):
+                return [data]
+        item = payload.get("item")
+        if isinstance(item, dict):
+            return [item]
+        items = payload.get("items")
+        if isinstance(items, list):
+            return [entry for entry in items if isinstance(entry, dict)]
         products = payload.get("products")
         if isinstance(products, list):
             return [item for item in products if isinstance(item, dict)]
         return []
+
+    def _build_product_index_from_history(
+        self,
+        history: list[dict[str, Any]] | None,
+    ) -> dict[int, dict[str, Any]]:
+        if not history:
+            return {}
+        product_index: dict[int, dict[str, Any]] = {}
+        for msg in history[-20:]:
+            if msg.get("role") != "tool":
+                continue
+            tool_name = str(msg.get("name", "")).strip()
+            content = msg.get("content")
+            if not tool_name or not isinstance(content, str) or not content.strip():
+                continue
+            self._update_product_index_from_tool_result(
+                product_index=product_index,
+                tool_name=tool_name,
+                tool_result=content,
+            )
+        return product_index
 
     @staticmethod
     def _safe_float(value: Any, *, default: float = 0.0) -> float:
@@ -2241,13 +2275,23 @@ class ShoppingAgent:
         tool_name: str,
         tool_result: str,
     ) -> None:
-        if tool_name not in {"vkusvill_products_search", "vkusvill_product_details"}:
+        if tool_name not in {
+            "vkusvill_products_search",
+            "vkusvill_product_details",
+            "get_previous_cart",
+            "vkusvill_cart_link_create",
+        }:
             return
         with contextlib.suppress(Exception):
             payload = json.loads(tool_result)
             for item in self._extract_search_items(payload):
                 normalized = self._normalize_product_row(item)
                 if normalized is None:
+                    continue
+                if (
+                    normalized.get("name") == f"Товар {normalized['xml_id']}"
+                    and "price" not in normalized
+                ):
                     continue
                 product_index[normalized["xml_id"]] = normalized
 
@@ -2323,6 +2367,8 @@ class ShoppingAgent:
                 quantity = 1.0
 
             normalized = product_index.get(xml_id_int) if isinstance(xml_id_int, int) else None
+            if normalized is None:
+                normalized = self._normalize_product_row(item)
             raw_name = (
                 str(normalized.get("name", f"Товар {xml_id}")).strip()
                 if normalized

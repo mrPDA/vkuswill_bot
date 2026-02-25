@@ -127,6 +127,34 @@ class _CartLinkOnlyMCPClient(_FakeMCPClient):
         return self.tool_result
 
 
+class _SearchAndLinkOnlyMCPClient(_FakeMCPClient):
+    async def call_tool(self, name: str, arguments: dict[str, Any]) -> str:
+        self.calls.append((name, arguments))
+        if name == "vkusvill_products_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {
+                                "xml_id": 45357,
+                                "name": "Батон белый",
+                                "price": {"current": 45},
+                                "unit": "шт",
+                            }
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/45357"}},
+                ensure_ascii=False,
+            )
+        return self.tool_result
+
+
 class _RecipeIngredientsOnlyMCPClient(_FakeMCPClient):
     def __init__(self, *, recipe_payload: str) -> None:
         super().__init__(tool_result='{"ok": true}')
@@ -324,6 +352,35 @@ async def test_text_only_response() -> None:
     assert result == "Готово"
 
 
+def test_build_product_index_from_history_supports_compact_tool_shapes() -> None:
+    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    history = [
+        {"role": "system", "content": "sys"},
+        {
+            "role": "tool",
+            "name": "vkusvill_products_search",
+            "content": json.dumps(
+                {"ok": True, "item": {"xml_id": 45357, "name": "Батон белый", "price": 45, "unit": "шт"}},
+                ensure_ascii=False,
+            ),
+        },
+        {
+            "role": "tool",
+            "name": "vkusvill_product_details",
+            "content": json.dumps(
+                {"ok": True, "data": {"xml_id": 50548, "name": "Кефир 3,2%", "price": 129, "unit": "шт"}},
+                ensure_ascii=False,
+            ),
+        },
+    ]
+
+    product_index = agent._build_product_index_from_history(history)
+    assert product_index[45357]["name"] == "Батон белый"
+    assert product_index[45357]["price"] == 45
+    assert product_index[50548]["name"] == "Кефир 3,2%"
+    assert product_index[50548]["price"] == 129
+
+
 @pytest.mark.asyncio
 async def test_tool_call_then_final_text_and_snapshot() -> None:
     cart_payload = json.dumps(
@@ -405,6 +462,55 @@ async def test_stabilize_when_final_reply_contains_wrong_cart_link() -> None:
     assert "https://vkusvill.ru/cart" not in result
     assert '<a href="https://shop.example/cart/42">Открыть корзину</a>' in result
     assert "Итого: 310.00 руб" in result
+
+
+@pytest.mark.asyncio
+async def test_reuses_product_metadata_from_history_when_cart_called_without_search() -> None:
+    mcp = _SearchAndLinkOnlyMCPClient(tool_result='{"ok": true}')
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall("tc-1", "vkusvill_products_search", '{"query":"батон"}'),
+                ],
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-2",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":45357,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="готово")),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-3",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":45357,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="готово повторно")),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    await agent.process_message(user_id=42, text="добавь батон")
+    second_result = await agent.process_message(user_id=42, text="еще раз тот же батон")
+
+    assert "Товар 45357" not in second_result
+    assert "Батон белый x 1 = 45.00 руб" in second_result
+    assert "Итого: 45.00 руб" in second_result
 
 
 @pytest.mark.asyncio
