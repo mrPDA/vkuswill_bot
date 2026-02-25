@@ -382,9 +382,7 @@ class CartProcessor:
             summary["recipe_total"] = rounded_recipe_total
             summary["recipe_total_text"] = f"По рецепту: {rounded_recipe_total:.2f} руб"
             summary["overbuy_total"] = overbuy_total
-            summary["overbuy_total_text"] = (
-                f"Переплата из-за упаковок: {overbuy_total:.2f} руб"
-            )
+            summary["overbuy_total_text"] = f"Переплата из-за упаковок: {overbuy_total:.2f} руб"
         else:
             summary["total_text"] = "Итого: не удалось рассчитать (не все цены известны)"
 
