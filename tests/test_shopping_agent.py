@@ -1802,6 +1802,47 @@ def test_preprocess_cart_args_converts_bay_leaves_to_single_pack() -> None:
     assert args["products"] == [{"xml_id": 14551, "q": 1}]
 
 
+def test_restore_previous_quantities_for_additive_update_keeps_existing_q() -> None:
+    restored = ShoppingAgent._restore_previous_quantities_for_additive_update(
+        tool_name="vkusvill_cart_link_create",
+        tool_args={
+            "products": [
+                {"xml_id": 605, "q": 1},
+                {"xml_id": 606, "q": 1},
+                {"xml_id": 1713, "q": 1},
+                {"xml_id": 14551, "q": 1},
+                {"xml_id": 20341, "q": 1},
+            ]
+        },
+        user_text="добавь мускатный орех и лавровый лист",
+        previous_products=[
+            {"xml_id": 605, "q": 0.1},
+            {"xml_id": 606, "q": 0.1},
+            {"xml_id": 1713, "q": 0.3},
+            {"xml_id": 14551, "q": 1},
+        ],
+        requested_quantity_overrides={},
+    )
+    assert restored["products"] == [
+        {"xml_id": 605, "q": 0.1},
+        {"xml_id": 606, "q": 0.1},
+        {"xml_id": 1713, "q": 0.3},
+        {"xml_id": 14551, "q": 1},
+        {"xml_id": 20341, "q": 1},
+    ]
+
+
+def test_restore_previous_quantities_for_additive_update_respects_explicit_override() -> None:
+    restored = ShoppingAgent._restore_previous_quantities_for_additive_update(
+        tool_name="vkusvill_cart_link_create",
+        tool_args={"products": [{"xml_id": 605, "q": 1}]},
+        user_text="добавь лук 1 кг",
+        previous_products=[{"xml_id": 605, "q": 0.1}],
+        requested_quantity_overrides={605: 1.0},
+    )
+    assert restored["products"] == [{"xml_id": 605, "q": 1}]
+
+
 @pytest.mark.asyncio
 async def test_injects_virtual_recipe_tools_for_qwen() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
