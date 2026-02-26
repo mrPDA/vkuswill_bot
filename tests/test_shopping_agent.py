@@ -1766,6 +1766,42 @@ def test_preprocess_cart_args_recalculates_quantities_from_inline_structured_req
     assert args["products"][4] == {"xml_id": 605, "q": 0.2}
 
 
+def test_preprocess_cart_args_converts_garlic_cloves_to_single_pack() -> None:
+    requested = ShoppingAgent._extract_structured_ingredient_requests("Чеснок - 4 зубчика")
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_cart_link_create",
+        {"products": [{"xml_id": 35065, "q": 4}]},
+        product_index={
+            35065: {
+                "name": "Чеснок, 100 г",
+                "unit": "шт",
+                "weight": {"value": 0.1, "unit": "кг"},
+            }
+        },
+        requested_ingredients=requested,
+        search_query_by_xml_id={35065: "чеснок"},
+    )
+    assert args["products"] == [{"xml_id": 35065, "q": 1}]
+
+
+def test_preprocess_cart_args_converts_bay_leaves_to_single_pack() -> None:
+    requested = ShoppingAgent._extract_structured_ingredient_requests("Лавровый лист - 2 шт")
+    args = ShoppingAgent._preprocess_tool_args(
+        "vkusvill_cart_link_create",
+        {"products": [{"xml_id": 14551, "q": 2}]},
+        product_index={
+            14551: {
+                "name": "Лавровый лист, 10 г",
+                "unit": "шт",
+                "weight": {"value": 0.01, "unit": "кг"},
+            }
+        },
+        requested_ingredients=requested,
+        search_query_by_xml_id={14551: "лавровый лист"},
+    )
+    assert args["products"] == [{"xml_id": 14551, "q": 1}]
+
+
 @pytest.mark.asyncio
 async def test_injects_virtual_recipe_tools_for_qwen() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
