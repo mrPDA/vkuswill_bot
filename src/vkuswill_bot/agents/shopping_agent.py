@@ -124,6 +124,16 @@ _MODIFY_EXISTING_CART_MARKERS = (
     "поменя",
     "исключ",
 )
+_ADDITIVE_CART_MARKERS = (
+    "добав",
+    "ещё",
+    "еще",
+    "дополни",
+    "и еще",
+    "плюс",
+    "к этой корзин",
+    "к предыдущ",
+)
 _EXPLICIT_NEW_CART_MARKERS = (
     "новая корзин",
     "новый заказ",
@@ -775,6 +785,13 @@ class ShoppingAgent:
         llm_provider: str,
     ) -> str:
         history = self._history.get(user_id)
+        previous_cart_snapshot = self._last_cart_snapshot.get(user_id)
+        previous_cart_products = (
+            previous_cart_snapshot.get("products")
+            if isinstance(previous_cart_snapshot, dict)
+            and isinstance(previous_cart_snapshot.get("products"), list)
+            else []
+        )
         if self._should_start_fresh_context(text=text, history=history):
             history = None
         prompt_profile = self._resolve_prompt_profile(text=text, history=history)
@@ -1011,6 +1028,13 @@ class ShoppingAgent:
                     explicit_egg_pack_request=explicit_egg_pack_request,
                     requested_ingredients=requested_ingredients,
                     search_query_by_xml_id=search_query_by_xml_id_this_turn,
+                    requested_quantity_overrides=requested_quantity_overrides,
+                )
+                tool_args = self._restore_previous_quantities_for_additive_update(
+                    tool_name=tool_name,
+                    tool_args=tool_args,
+                    user_text=text,
+                    previous_products=previous_cart_products,
                     requested_quantity_overrides=requested_quantity_overrides,
                 )
                 requested_products_snapshot = (
@@ -2419,6 +2443,73 @@ class ShoppingAgent:
             normalized_snapshot.append(row)
         return normalized_snapshot
 
+    @classmethod
+    def _restore_previous_quantities_for_additive_update(
+        cls,
+        *,
+        tool_name: str,
+        tool_args: dict[str, Any],
+        user_text: str,
+        previous_products: list[dict[str, Any]],
+        requested_quantity_overrides: dict[int, float] | None = None,
+    ) -> dict[str, Any]:
+        if tool_name != "vkusvill_cart_link_create":
+            return tool_args
+        if not cls._is_additive_cart_intent(user_text):
+            return tool_args
+        products = tool_args.get("products")
+        if not isinstance(products, list) or not products or not previous_products:
+            return tool_args
+
+        prev_by_xml_id: dict[int, float] = {}
+        for row in previous_products:
+            if not isinstance(row, dict):
+                continue
+            xml_id_raw = row.get("xml_id")
+            if isinstance(xml_id_raw, bool):
+                continue
+            xml_id: int | None = None
+            with contextlib.suppress(TypeError, ValueError):
+                xml_id = int(xml_id_raw)
+            if not isinstance(xml_id, int):
+                continue
+            prev_q = cls._safe_float(row.get("q"), default=1.0)
+            if prev_q <= 0:
+                prev_q = 1.0
+            prev_by_xml_id[xml_id] = prev_q
+
+        if not prev_by_xml_id:
+            return tool_args
+        explicit_xml_ids = set(requested_quantity_overrides or {})
+        updated = False
+        for row in products:
+            if not isinstance(row, dict):
+                continue
+            xml_id_raw = row.get("xml_id")
+            if isinstance(xml_id_raw, bool):
+                continue
+            xml_id: int | None = None
+            with contextlib.suppress(TypeError, ValueError):
+                xml_id = int(xml_id_raw)
+            if not isinstance(xml_id, int) or xml_id not in prev_by_xml_id:
+                continue
+            if xml_id in explicit_xml_ids:
+                continue
+            current_q = cls._safe_float(row.get("q"), default=1.0)
+            if current_q <= 0:
+                current_q = 1.0
+            previous_q = prev_by_xml_id[xml_id]
+            if abs(current_q - 1.0) > 1e-9:
+                continue
+            if abs(previous_q - 1.0) <= 1e-9:
+                continue
+            row["q"] = previous_q
+            updated = True
+
+        if updated:
+            return CartProcessor.fix_cart_args({"products": products})
+        return tool_args
+
     @staticmethod
     def _normalize_recipe_search_args(tool_args: dict[str, Any]) -> dict[str, Any]:
         ingredients = tool_args.get("ingredients")
@@ -3505,6 +3596,11 @@ class ShoppingAgent:
         safe_quantity = quantity if quantity > 0 else 0.1
         rounded = math.ceil(safe_quantity * 10) / 10
         return round(max(0.1, rounded), 1)
+
+    @staticmethod
+    def _is_additive_cart_intent(user_text: str) -> bool:
+        normalized = user_text.lower()
+        return any(marker in normalized for marker in _ADDITIVE_CART_MARKERS)
 
     @staticmethod
     def _is_cart_intent(user_text: str) -> bool:
