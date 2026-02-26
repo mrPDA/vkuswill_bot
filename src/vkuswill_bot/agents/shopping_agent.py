@@ -152,6 +152,9 @@ class _RecipeQuantityCalculator:
     _PIECE_UNITS = frozenset({"шт", "штука", "штук", "piece", "pieces"})
     _TABLESPOON_UNITS = frozenset({"ст.л.", "ст.л", "ст л", "столовая ложка", "столовые ложки"})
     _TEASPOON_UNITS = frozenset({"ч.л.", "ч.л", "ч л", "чайная ложка", "чайные ложки"})
+    _GARLIC_CLOVE_UNITS = frozenset({"зубчик", "clove", "cloves"})
+    _GARLIC_HEAD_UNITS = frozenset({"головка"})
+    _LEAF_UNITS = frozenset({"лист"})
     _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
     _MASSY_MARKERS = (
         "мук",
@@ -254,7 +257,9 @@ class _RecipeQuantityCalculator:
         if not text:
             return None, None, ""
         patterns = (
-            r"(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?)",
+            r"(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
+            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
+            r"ст\.?\s*л\.?|ч\.?\s*л\.?)",
             r"(\d+(?:[.,]\d+)?)\s*(столов(?:ая|ые)\s+ложк[аи]|чайн(?:ая|ые)\s+ложк[аи])",
         )
         for pattern in patterns:
@@ -281,6 +286,17 @@ class _RecipeQuantityCalculator:
         product_name: str,
     ) -> float:
         if ingredient_unit in cls._PIECE_UNITS:
+            # Для "лавровый лист 2 шт" нужен 1 пакет специй, а не 2 пакета.
+            special_piece_grams = cls._required_grams(
+                quantity=quantity,
+                ingredient_unit=ingredient_unit,
+                ingredient_name=ingredient_name,
+            )
+            if special_piece_grams > 0:
+                pack_grams = cls._infer_pack_grams(item=item)
+                if pack_grams > 0:
+                    return special_piece_grams / pack_grams
+                return 1.0
             pack_pieces = cls._infer_pack_pieces(item=item, product_name=product_name)
             return quantity / max(pack_pieces, 1)
 
@@ -369,6 +385,15 @@ class _RecipeQuantityCalculator:
             return quantity
         if ingredient_unit in cls._KILOGRAM_UNITS:
             return quantity * 1000
+        if cls._is_garlic_ingredient(ingredient_name):
+            if ingredient_unit in cls._GARLIC_CLOVE_UNITS:
+                return quantity * 5.0
+            if ingredient_unit in cls._GARLIC_HEAD_UNITS:
+                return quantity * 30.0
+        if cls._is_bay_leaf_ingredient(ingredient_name) and (
+            ingredient_unit in cls._PIECE_UNITS or ingredient_unit in cls._LEAF_UNITS
+        ):
+            return quantity * 0.2
         if ingredient_unit in cls._TABLESPOON_UNITS:
             grams_per_tbsp = 10.0
             if cls._is_massy_ingredient(ingredient_name):
@@ -494,6 +519,16 @@ class _RecipeQuantityCalculator:
         normalized = cls._normalize_text(ingredient_name)
         return any(marker in normalized for marker in cls._LIQUID_MARKERS)
 
+    @classmethod
+    def _is_garlic_ingredient(cls, ingredient_name: str) -> bool:
+        normalized = cls._normalize_text(ingredient_name)
+        return "чеснок" in normalized
+
+    @classmethod
+    def _is_bay_leaf_ingredient(cls, ingredient_name: str) -> bool:
+        normalized = cls._normalize_text(ingredient_name)
+        return "лавров" in normalized or "лавруш" in normalized
+
     @staticmethod
     def _round_up_step(value: float, *, step: float, minimum: float) -> float:
         if value <= 0:
@@ -542,6 +577,15 @@ class _RecipeQuantityCalculator:
             "ч. л": "ч.л.",
             "чайная ложка": "ч.л.",
             "чайные ложки": "ч.л.",
+            "зубчик": "зубчик",
+            "зубчика": "зубчик",
+            "зубчиков": "зубчик",
+            "головка": "головка",
+            "головки": "головка",
+            "головок": "головка",
+            "лист": "лист",
+            "листа": "лист",
+            "листов": "лист",
         }
         return aliases.get(text, text)
 
@@ -1682,6 +1726,7 @@ class ShoppingAgent:
 
         unit_pattern = (
             r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
+            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
             r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
             r"чайн(?:ая|ые)\s+ложк[аи]"
         )
@@ -1751,7 +1796,9 @@ class ShoppingAgent:
             return None
         range_pattern = (
             r"(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)\s*"
-            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
+            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
+            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
+            r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
             r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
             r"чайн(?:ая|ые)\s+ложк[аи])"
         )
@@ -1766,7 +1813,9 @@ class ShoppingAgent:
 
         single_pattern = (
             r"(\d+(?:[.,]\d+)?)\s*"
-            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
+            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
+            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
+            r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
             r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
             r"чайн(?:ая|ые)\s+ложк[аи])"
         )
