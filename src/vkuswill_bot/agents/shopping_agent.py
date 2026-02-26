@@ -3,13 +3,11 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import contextlib
+import copy
 import datetime as dt
 import json
 import logging
-import math
-import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
@@ -29,6 +27,46 @@ from vkuswill_bot.agents.history_manager import (
     sanitize_tool_history,
     trim_history,
     trim_history_by_chars,
+)
+from vkuswill_bot.agents.recipe_helpers import (
+    apply_requested_quantity_overrides,
+    clean_structured_ingredient_name,
+    detect_pantry_tag_for_ingredient,
+    enrich_recipe_equivalents,
+    extract_explicit_pantry_requests,
+    extract_structured_ingredient_requests,
+    fallback_borscht_ingredients,
+    filter_recipe_ingredients_list,
+    has_explicit_egg_pack_request,
+    is_explicit_seasoning_pepper_request,
+    is_recipe_followup,
+    looks_like_pepper_vegetable,
+    match_requested_ingredient,
+    normalize_recipe_ingredient_row,
+    normalize_text,
+    parse_quantity_hint,
+)
+from vkuswill_bot.agents.cart_price_builder import (
+    aggregate_products_by_xml_id,
+    ensure_cart_price_summary,
+    format_quantity_text,
+    normalize_product_row,
+    round_kilogram_quantity,
+)
+from vkuswill_bot.agents.llm_helpers import (
+    assistant_msg,
+    estimate_usage_details,
+    extract_message,
+    extract_text,
+    extract_tool_calls,
+    parse_tool_args,
+)
+from vkuswill_bot.agents.tool_preprocessor import (
+    apply_preferences_to_query,
+    collect_requested_products_snapshot,
+    normalize_recipe_search_args,
+    preprocess_tool_args,
+    restore_previous_quantities_for_additive_update,
 )
 from vkuswill_bot.agents.cart_output_renderer import (
     extract_cart_safety_note,
@@ -63,7 +101,6 @@ from vkuswill_bot.services.llm_adapters import (
     normalize_llm_provider,
 )
 from vkuswill_bot.services.cart_processor import CartProcessor
-from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.prompts import (
     RECIPE_EXTRACTION_PROMPT,
     RECIPE_SEARCH_TOOL,
@@ -121,8 +158,6 @@ _MODIFY_EXISTING_CART_MARKERS = MODIFY_EXISTING_CART_MARKERS
 _ADDITIVE_CART_MARKERS = ADDITIVE_CART_MARKERS
 _EXPLICIT_NEW_CART_MARKERS = EXPLICIT_NEW_CART_MARKERS
 _STATUS_QUERY_MARKERS = STATUS_QUERY_MARKERS
-_EGG_PACK_SIZE = 10
-_DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
 
 
 # Backward-compatible alias used throughout this module.
@@ -1186,265 +1221,14 @@ class ShoppingAgent:
             ensure_ascii=False,
         )
 
-    @staticmethod
-    def _normalize_recipe_ingredient_row(row_raw: Any) -> dict[str, Any]:
-        if isinstance(row_raw, dict):
-            row = dict(row_raw)
-            quantity = ShoppingAgent._safe_float(row.get("quantity"), default=1.0)
-            if quantity <= 0:
-                quantity = 1.0
-            unit = _RecipeQuantityCalculator._normalize_unit(row.get("unit")) or "шт"
-            row["quantity"] = quantity
-            row["unit"] = unit
-            search_query = str(row.get("search_query", "")).strip()
-            if not search_query:
-                search_query = SearchProcessor.clean_search_query(str(row.get("name", "")).strip())
-            if search_query:
-                row["search_query"] = search_query
-            return row
-        if not isinstance(row_raw, str):
-            return {}
-
-        text = row_raw.strip()
-        if not text:
-            return {}
-        cleaned = text.replace("по вкусу", "").strip(" ,.-")
-        parsed = ShoppingAgent._parse_quantity_hint(cleaned)
-        if parsed is not None:
-            parsed_q, parsed_unit, fragment = parsed
-        else:
-            parsed_q, parsed_unit, fragment = _RecipeQuantityCalculator.parse_quantity_and_unit(
-                cleaned
-            )
-        if fragment:
-            name = re.sub(re.escape(fragment), " ", cleaned, flags=re.IGNORECASE).strip(" ,.-")
-        else:
-            name = cleaned
-        if not name:
-            name = cleaned
-        query = SearchProcessor.clean_search_query(name) or name
-        return {
-            "name": name or text,
-            "search_query": query,
-            "quantity": parsed_q if parsed_q is not None else 1.0,
-            "unit": parsed_unit or "шт",
-        }
-
-    @classmethod
-    def _extract_explicit_pantry_requests(cls, user_text: str) -> set[str]:
-        normalized = cls._normalize_text(user_text)
-        requested: set[str] = set()
-        if "соль" in normalized:
-            requested.add(_PANTRY_TAG_SALT)
-        if "сахар" in normalized:
-            requested.add(_PANTRY_TAG_SUGAR)
-        if cls._is_explicit_seasoning_pepper_request(normalized):
-            requested.add(_PANTRY_TAG_PEPPER)
-        return requested
-
-    @classmethod
-    def _extract_structured_ingredient_requests(cls, user_text: str) -> list[dict[str, Any]]:
-        if not user_text.strip():
-            return []
-        rows: list[dict[str, Any]] = []
-        seen_keys: set[tuple[str, float, str]] = set()
-
-        def _append_row(name_raw: str, quantity: float, unit: str) -> None:
-            cleaned_name = cls._clean_structured_ingredient_name(name_raw)
-            if not cleaned_name:
-                return
-            search_query = SearchProcessor.clean_search_query(cleaned_name) or cleaned_name
-            key = (search_query.lower(), round(quantity, 4), unit)
-            if key in seen_keys:
-                return
-            seen_keys.add(key)
-            rows.append(
-                {
-                    "name": cleaned_name,
-                    "quantity": quantity,
-                    "unit": unit,
-                    "search_query": search_query,
-                }
-            )
-
-        unit_pattern = (
-            r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
-            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-            r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-            r"чайн(?:ая|ые)\s+ложк[аи]"
-        )
-        inline_pattern = re.compile(
-            rf"(?:^|[\n,;])\s*(?P<name>[^\n,;]+?)\s*[-–—:]\s*"
-            rf"(?P<qty>\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?\s*(?:{unit_pattern}))"
-            r"(?=$|[\n,;])",
-            flags=re.IGNORECASE,
-        )
-        normalized_text = user_text.replace("\r", "\n")
-        for match in inline_pattern.finditer(normalized_text):
-            name_part = str(match.group("name") or "").strip()
-            qty_part = str(match.group("qty") or "").strip()
-            parsed = cls._parse_quantity_hint(qty_part)
-            if parsed is None:
-                continue
-            quantity, unit, _fragment = parsed
-            _append_row(name_part, quantity, unit)
-
-        for raw_line in normalized_text.splitlines():
-            line = raw_line.strip()
-            if not line:
-                continue
-            if inline_pattern.search(line):
-                continue
-            line = re.sub(r"^\s*\d+[.)]\s*", "", line).strip()
-            line = line.lstrip("-• ").strip()
-            if not line:
-                continue
-            name_part = line
-            quantity_part = line
-            split_match = re.match(r"^(.*?)(?:\s*[-–—:]\s*)(.+)$", line)
-            if split_match is not None:
-                left = split_match.group(1).strip()
-                right = split_match.group(2).strip()
-                if left and right:
-                    name_part = left
-                    quantity_part = right
-            parsed = cls._parse_quantity_hint(quantity_part)
-            if parsed is None and quantity_part != line:
-                parsed = cls._parse_quantity_hint(line)
-            if parsed is None:
-                continue
-            quantity, unit, _fragment = parsed
-            _append_row(name_part, quantity, unit)
-        return rows[:30]
-
-    @staticmethod
-    def _clean_structured_ingredient_name(name_raw: str) -> str:
-        name = name_raw.strip(" ,.;:").strip()
-        if not name:
-            return ""
-        prefixes = (
-            r"^\s*собери(?:\s+мне)?\s+корзин[ауые]?\s+",
-            r"^\s*добав(?:ь|ьте)(?:\s+в\s+корзин[ауые]?)?\s+",
-            r"^\s*закаж(?:и|ите)\s+",
-        )
-        for pattern in prefixes:
-            name = re.sub(pattern, "", name, flags=re.IGNORECASE).strip()
-        name = re.sub(r"^\s*и\s+", "", name, flags=re.IGNORECASE).strip()
-        return name
-
-    @classmethod
-    def _parse_quantity_hint(cls, text: str) -> tuple[float, str, str] | None:
-        normalized = cls._normalize_text(text)
-        if not normalized:
-            return None
-        range_pattern = (
-            r"(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)\s*"
-            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
-            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-            r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
-            r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-            r"чайн(?:ая|ые)\s+ложк[аи])"
-        )
-        match = re.search(range_pattern, normalized, flags=re.IGNORECASE)
-        if match is not None:
-            low = cls._safe_float(match.group(1), default=-1.0)
-            high = cls._safe_float(match.group(2), default=-1.0)
-            if low > 0 and high > 0:
-                unit = _RecipeQuantityCalculator._normalize_unit(match.group(3))
-                if unit:
-                    return max(low, high), unit, match.group(0)
-
-        single_pattern = (
-            r"(\d+(?:[.,]\d+)?)\s*"
-            r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
-            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-            r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
-            r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-            r"чайн(?:ая|ые)\s+ложк[аи])"
-        )
-        match = re.search(single_pattern, normalized, flags=re.IGNORECASE)
-        if match is None:
-            return None
-        quantity = cls._safe_float(match.group(1), default=-1.0)
-        if quantity <= 0:
-            return None
-        unit = _RecipeQuantityCalculator._normalize_unit(match.group(2))
-        if not unit:
-            return None
-        return quantity, unit, match.group(0)
-
-    @classmethod
-    def _match_requested_ingredient(
-        cls,
-        *,
-        product: dict[str, Any],
-        xml_id: int,
-        requested_ingredients: list[dict[str, Any]],
-        search_query_by_xml_id: dict[int, str] | None,
-    ) -> dict[str, Any] | None:
-        if not requested_ingredients:
-            return None
-
-        def _score_pair(left: str, right: str) -> float:
-            left_tokens = cls._tokenize_query_terms(left)
-            right_tokens = cls._tokenize_query_terms(right)
-            if not left_tokens or not right_tokens:
-                return 0.0
-            left_set = set(left_tokens)
-            right_set = set(right_tokens)
-            inter = len(left_set & right_set)
-            if inter <= 0:
-                return 0.0
-            return inter / max(len(left_set), len(right_set))
-
-        best_score = 0.0
-        best_row: dict[str, Any] | None = None
-        product_name = str(product.get("name", "")).strip()
-        query_hint = ""
-        if search_query_by_xml_id is not None:
-            query_hint = str(search_query_by_xml_id.get(xml_id, "")).strip()
-
-        for row in requested_ingredients:
-            if not isinstance(row, dict):
-                continue
-            row_name = str(row.get("name", "")).strip()
-            row_query = str(row.get("search_query", "")).strip()
-            score = max(
-                _score_pair(row_query, query_hint),
-                _score_pair(row_name, query_hint),
-                _score_pair(row_query, product_name),
-                _score_pair(row_name, product_name),
-            )
-            if score > best_score:
-                best_score = score
-                best_row = row
-
-        if best_row is None or best_score < 0.2:
-            return None
-        return best_row
-
-    @staticmethod
-    def _apply_requested_quantity_overrides(
-        snapshot: list[dict[str, Any]],
-        overrides: dict[int, float],
-    ) -> list[dict[str, Any]]:
-        if not snapshot or not overrides:
-            return snapshot
-        updated: list[dict[str, Any]] = []
-        for row in snapshot:
-            if not isinstance(row, dict):
-                continue
-            current = dict(row)
-            xml_id_raw = current.get("xml_id")
-            if isinstance(xml_id_raw, bool):
-                updated.append(current)
-                continue
-            with contextlib.suppress(TypeError, ValueError):
-                xml_id = int(xml_id_raw)
-                if xml_id in overrides:
-                    current["q"] = overrides[xml_id]
-            updated.append(current)
-        return updated
+    # Backward-compatible aliases delegating to recipe_helpers module.
+    _normalize_recipe_ingredient_row = staticmethod(normalize_recipe_ingredient_row)
+    _extract_explicit_pantry_requests = staticmethod(extract_explicit_pantry_requests)  # type: ignore[assignment]
+    _extract_structured_ingredient_requests = staticmethod(extract_structured_ingredient_requests)  # type: ignore[assignment]
+    _clean_structured_ingredient_name = staticmethod(clean_structured_ingredient_name)
+    _parse_quantity_hint = staticmethod(parse_quantity_hint)  # type: ignore[assignment]
+    _match_requested_ingredient = staticmethod(match_requested_ingredient)  # type: ignore[assignment]
+    _apply_requested_quantity_overrides = staticmethod(apply_requested_quantity_overrides)
 
     def _sanitize_recipe_ingredients_tool_result(
         self,
@@ -1461,7 +1245,7 @@ class ShoppingAgent:
 
         ingredients = payload.get("ingredients")
         if isinstance(ingredients, list):
-            filtered, removed = self._filter_recipe_ingredients_list(
+            filtered, removed = filter_recipe_ingredients_list(
                 ingredients=ingredients,
                 explicit_pantry_requests=explicit_pantry_requests,
             )
@@ -1474,7 +1258,7 @@ class ShoppingAgent:
         if isinstance(data, dict):
             nested = data.get("ingredients")
             if isinstance(nested, list):
-                filtered, removed = self._filter_recipe_ingredients_list(
+                filtered, removed = filter_recipe_ingredients_list(
                     ingredients=nested,
                     explicit_pantry_requests=explicit_pantry_requests,
                 )
@@ -1493,127 +1277,13 @@ class ShoppingAgent:
 
         return json.dumps(payload, ensure_ascii=False)
 
-    @classmethod
-    def _filter_recipe_ingredients_list(
-        cls,
-        *,
-        ingredients: list[Any],
-        explicit_pantry_requests: set[str],
-    ) -> tuple[list[Any], list[str]]:
-        filtered: list[Any] = []
-        removed: list[str] = []
-        for row in ingredients:
-            if not isinstance(row, dict):
-                filtered.append(row)
-                continue
-            pantry_tag = cls._detect_pantry_tag_for_ingredient(row)
-            if pantry_tag and pantry_tag not in explicit_pantry_requests:
-                removed.append(str(row.get("name", "")).strip())
-                continue
-            filtered.append(row)
-        return filtered, removed
-
-    @classmethod
-    def _detect_pantry_tag_for_ingredient(cls, row: dict[str, Any]) -> str | None:
-        name = cls._normalize_text(str(row.get("name", "")))
-        query = cls._normalize_text(str(row.get("search_query", "")))
-        text = f"{name} {query}".strip()
-        if not text:
-            return None
-        if "соль" in text:
-            return _PANTRY_TAG_SALT
-        if "сахар" in text:
-            return _PANTRY_TAG_SUGAR
-        if "перец" in text and not cls._looks_like_pepper_vegetable(text):
-            return _PANTRY_TAG_PEPPER
-        return None
-
-    @staticmethod
-    def _normalize_text(text: str) -> str:
-        return text.strip().lower().replace("ё", "е")
-
-    @classmethod
-    def _looks_like_pepper_vegetable(cls, text: str) -> bool:
-        normalized = cls._normalize_text(text)
-        vegetable_markers = (
-            "болгар",
-            "сладк",
-            "чили",
-            "халапень",
-            "пепперони",
-            "перец овощ",
-            "фаршированн",
-        )
-        return any(marker in normalized for marker in vegetable_markers)
-
-    @classmethod
-    def _is_explicit_seasoning_pepper_request(cls, text: str) -> bool:
-        normalized = cls._normalize_text(text)
-        if "перец" not in normalized:
-            return False
-        spice_markers = (
-            "черн",
-            "красн",
-            "бел",
-            "молот",
-            "горош",
-            "душист",
-            "приправ",
-        )
-        if any(marker in normalized for marker in spice_markers):
-            return True
-        if cls._looks_like_pepper_vegetable(normalized):
-            return False
-        return "соль" in normalized or "сахар" in normalized
-
-    @classmethod
-    def _has_explicit_egg_pack_request(cls, text: str) -> bool:
-        normalized = cls._normalize_text(text)
-        if not any(stem in normalized for stem in ("яйц", "яиц", "яйк")):
-            return False
-        pack_markers = ("упаков", "десят", "дюжин")
-        return any(marker in normalized for marker in pack_markers)
-
-    @classmethod
-    def _is_recipe_followup(cls, *, text: str, history: list[dict[str, Any]] | None) -> bool:
-        if not history:
-            return False
-        normalized = cls._normalize_text(text)
-        if not normalized or len(normalized) > 120:
-            return False
-        if any(marker in normalized for marker in ("привяз", "алис", "код", "статус", "отвяз")):
-            return False
-
-        recent_user_messages = [
-            str(msg.get("content", "")).strip()
-            for msg in reversed(history)
-            if msg.get("role") == "user" and isinstance(msg.get("content"), str)
-        ]
-        for prev_text in recent_user_messages[:3]:
-            if detect_prompt_profile(prev_text) == "recipe":
-                return True
-
-        for msg in reversed(history[-8:]):
-            if msg.get("role") == "tool" and msg.get("name") in {
-                "recipe_ingredients",
-                "recipe_search",
-            }:
-                return True
-            if msg.get("role") != "assistant":
-                continue
-            tool_calls = msg.get("tool_calls")
-            if not isinstance(tool_calls, list):
-                continue
-            for call in tool_calls:
-                if not isinstance(call, dict):
-                    continue
-                function_data = call.get("function")
-                if not isinstance(function_data, dict):
-                    continue
-                name = str(function_data.get("name", "")).strip()
-                if name in {"recipe_ingredients", "recipe_search"}:
-                    return True
-        return False
+    _filter_recipe_ingredients_list = staticmethod(filter_recipe_ingredients_list)  # type: ignore[assignment]
+    _detect_pantry_tag_for_ingredient = staticmethod(detect_pantry_tag_for_ingredient)  # type: ignore[assignment]
+    _normalize_text = staticmethod(normalize_text)
+    _looks_like_pepper_vegetable = staticmethod(looks_like_pepper_vegetable)  # type: ignore[assignment]
+    _is_explicit_seasoning_pepper_request = staticmethod(is_explicit_seasoning_pepper_request)  # type: ignore[assignment]
+    _has_explicit_egg_pack_request = staticmethod(has_explicit_egg_pack_request)  # type: ignore[assignment]
+    _is_recipe_followup = staticmethod(is_recipe_followup)  # type: ignore[assignment]
 
     async def _search_products_for_recipe(self, query: str) -> str:
         last_error: Exception | None = None
@@ -1739,328 +1409,19 @@ class ShoppingAgent:
             return json.loads(text)
         return {}
 
-    @staticmethod
-    def _enrich_recipe_equivalents(ingredient: dict[str, Any]) -> None:
-        unit = str(ingredient.get("unit", "")).lower().strip()
-        quantity = ShoppingAgent._safe_float(ingredient.get("quantity"), default=0.0)
-        name = str(ingredient.get("name", "")).lower()
-        if quantity <= 0:
-            return
-        if unit == "г":
-            ingredient["kg_equivalent"] = round(quantity / 1000, 3)
-            return
-        if unit == "мл":
-            ingredient["l_equivalent"] = round(quantity / 1000, 3)
-            return
-        if "яйц" in name and unit in {"шт", "штука", "штук"}:
-            ingredient["pack_equivalent"] = max(1, math.ceil(quantity / 10))
+    _enrich_recipe_equivalents = staticmethod(enrich_recipe_equivalents)
+    _fallback_borscht_ingredients = staticmethod(fallback_borscht_ingredients)
 
-    @staticmethod
-    def _fallback_borscht_ingredients(servings: int) -> list[dict[str, Any]]:
-        base_servings = 2
-        factor = servings / base_servings if servings > 0 else 1.0
-        base = [
-            {"name": "свёкла", "quantity": 0.67, "unit": "шт", "search_query": "свекла"},
-            {
-                "name": "капуста белокочанная",
-                "quantity": 0.17,
-                "unit": "кг",
-                "search_query": "капуста белокочанная",
-            },
-            {"name": "картофель", "quantity": 0.2, "unit": "кг", "search_query": "картофель"},
-            {"name": "морковь", "quantity": 0.05, "unit": "кг", "search_query": "морковь"},
-            {
-                "name": "лук репчатый",
-                "quantity": 0.03,
-                "unit": "кг",
-                "search_query": "лук репчатый",
-            },
-            {"name": "помидоры", "quantity": 0.1, "unit": "кг", "search_query": "помидоры свежие"},
-            {"name": "говядина", "quantity": 0.4, "unit": "кг", "search_query": "говядина"},
-            {"name": "чеснок", "quantity": 10, "unit": "г", "search_query": "чеснок"},
-            {
-                "name": "масло растительное",
-                "quantity": 30,
-                "unit": "мл",
-                "search_query": "масло растительное",
-            },
-            {
-                "name": "томатная паста",
-                "quantity": 60,
-                "unit": "г",
-                "search_query": "томатная паста",
-            },
-        ]
-        result: list[dict[str, Any]] = []
-        for row in base:
-            item = dict(row)
-            base_quantity = ShoppingAgent._safe_float(row.get("quantity"), default=1.0)
-            item["quantity"] = round(base_quantity * factor, 3)
-            ShoppingAgent._enrich_recipe_equivalents(item)
-            result.append(item)
-        return result
+    _extract_message = staticmethod(extract_message)
 
-    @staticmethod
-    def _extract_message(response: Any) -> Any:
-        choices = getattr(response, "choices", None)
-        if isinstance(choices, list) and choices:
-            first = choices[0]
-            if hasattr(first, "message"):
-                return first.message
-            if isinstance(first, dict):
-                return first.get("message", {})
-            return {}
-        if isinstance(response, dict):
-            choices_dict = response.get("choices")
-            if isinstance(choices_dict, list) and choices_dict:
-                first = choices_dict[0]
-                if isinstance(first, dict):
-                    return first.get("message", {})
-        return {}
-
-    @staticmethod
-    def _preprocess_tool_args(
-        tool_name: str,
-        tool_args: dict[str, Any],
-        *,
-        user_preferences: dict[str, str] | None = None,
-        product_index: dict[int, dict[str, Any]] | None = None,
-        explicit_egg_pack_request: bool = False,
-        requested_ingredients: list[dict[str, Any]] | None = None,
-        search_query_by_xml_id: dict[int, str] | None = None,
-        requested_quantity_overrides: dict[int, float] | None = None,
-    ) -> dict[str, Any]:
-        if tool_name == "vkusvill_cart_link_create":
-            # MCP cart-link expects explicit quantities for each item.
-            normalized = CartProcessor.fix_cart_args(tool_args)
-            products = normalized.get("products")
-            if not isinstance(products, list) or explicit_egg_pack_request:
-                return normalized
-            product_lookup = product_index or {}
-            for item in products:
-                if not isinstance(item, dict):
-                    continue
-                xml_id_raw = item.get("xml_id")
-                if isinstance(xml_id_raw, bool):
-                    continue
-                try:
-                    xml_id = int(xml_id_raw)
-                except (TypeError, ValueError):
-                    continue
-                product = product_lookup.get(xml_id)
-                if not isinstance(product, dict):
-                    continue
-                if requested_ingredients:
-                    matched_ingredient = ShoppingAgent._match_requested_ingredient(
-                        product=product,
-                        xml_id=xml_id,
-                        requested_ingredients=requested_ingredients,
-                        search_query_by_xml_id=search_query_by_xml_id,
-                    )
-                    if matched_ingredient is not None:
-                        requested_q, purchase_q = (
-                            _RecipeQuantityCalculator.calculate_requested_and_purchase_q(
-                                ingredient=matched_ingredient,
-                                item=product,
-                            )
-                        )
-                        if requested_quantity_overrides is not None and requested_q > 0:
-                            requested_quantity_overrides[xml_id] = requested_q
-                        item["q"] = purchase_q
-                        continue
-                name = str(product.get("name", "")).strip().lower()
-                q = ShoppingAgent._safe_float(item.get("q"), default=1.0)
-                if q <= 0:
-                    q = 1
-                unit = str(product.get("unit", "")).strip().lower()
-                if any(stem in name for stem in ("яйц", "яиц", "яйк")):
-                    if q <= 1:
-                        item["q"] = 1
-                        continue
-                    item["q"] = max(1, math.ceil(q / _EGG_PACK_SIZE))
-                    continue
-                if unit in _DISCRETE_UNITS:
-                    item["q"] = max(1, math.ceil(q))
-                    continue
-                if unit in {"кг", "kg"}:
-                    item["q"] = ShoppingAgent._round_kilogram_quantity(q)
-            return normalized
-        if tool_name == "vkusvill_products_search":
-            normalized_search_args = dict(tool_args)
-            # Для сборки корзины достаточно первой страницы; pagination page>1
-            # часто создаёт лишние шаги без улучшения результата.
-            if "page" in normalized_search_args:
-                normalized_search_args.pop("page", None)
-            prefs = user_preferences or {}
-            if not prefs:
-                return normalized_search_args
-            query_key = None
-            if isinstance(normalized_search_args.get("q"), str):
-                query_key = "q"
-            elif isinstance(normalized_search_args.get("query"), str):
-                query_key = "query"
-            if query_key is None:
-                return normalized_search_args
-            original_query = str(normalized_search_args.get(query_key, "")).strip()
-            if not original_query:
-                return normalized_search_args
-            enhanced_query = ShoppingAgent._apply_preferences_to_query(original_query, prefs)
-            if enhanced_query == original_query:
-                return normalized_search_args
-            return {**normalized_search_args, query_key: enhanced_query}
-        if tool_name == "recipe_search":
-            return ShoppingAgent._normalize_recipe_search_args(tool_args)
-        return tool_args
-
-    @staticmethod
-    def _collect_requested_products_snapshot(
-        tool_args: dict[str, Any],
-        *,
-        product_index: dict[int, dict[str, Any]] | None = None,
-        explicit_egg_pack_request: bool = False,
-    ) -> list[dict[str, Any]]:
-        products = tool_args.get("products")
-        if not isinstance(products, list):
-            return []
-        normalized = CartProcessor.fix_cart_args({"products": copy.deepcopy(products)})
-        snapshot = normalized.get("products")
-        if not isinstance(snapshot, list):
-            return []
-        if explicit_egg_pack_request:
-            return [item for item in snapshot if isinstance(item, dict)]
-
-        lookup = product_index or {}
-        normalized_snapshot: list[dict[str, Any]] = []
-        for item in snapshot:
-            if not isinstance(item, dict):
-                continue
-            row = dict(item)
-            xml_id_raw = row.get("xml_id")
-            if isinstance(xml_id_raw, bool):
-                normalized_snapshot.append(row)
-                continue
-            xml_id: int | None = None
-            with contextlib.suppress(TypeError, ValueError):
-                xml_id = int(xml_id_raw)
-            product = lookup.get(xml_id) if isinstance(xml_id, int) else None
-            if not isinstance(product, dict):
-                normalized_snapshot.append(row)
-                continue
-            name = str(product.get("name", "")).strip().lower()
-            if not any(stem in name for stem in ("яйц", "яиц", "яйк")):
-                unit = str(product.get("unit", "")).strip().lower()
-                if unit in {"кг", "kg"}:
-                    quantity = ShoppingAgent._safe_float(row.get("q"), default=0.1)
-                    row["q"] = ShoppingAgent._round_kilogram_quantity(quantity)
-                normalized_snapshot.append(row)
-                continue
-            quantity = ShoppingAgent._safe_float(row.get("q"), default=1.0)
-            if quantity <= 1:
-                row["q"] = 1
-            else:
-                row["q"] = max(1, math.ceil(quantity / _EGG_PACK_SIZE))
-            normalized_snapshot.append(row)
-        return normalized_snapshot
-
-    @classmethod
-    def _restore_previous_quantities_for_additive_update(
-        cls,
-        *,
-        tool_name: str,
-        tool_args: dict[str, Any],
-        user_text: str,
-        previous_products: list[dict[str, Any]],
-        requested_quantity_overrides: dict[int, float] | None = None,
-    ) -> dict[str, Any]:
-        if tool_name != "vkusvill_cart_link_create":
-            return tool_args
-        if not cls._is_additive_cart_intent(user_text):
-            return tool_args
-        products = tool_args.get("products")
-        if not isinstance(products, list) or not products or not previous_products:
-            return tool_args
-
-        prev_by_xml_id: dict[int, float] = {}
-        for row in previous_products:
-            if not isinstance(row, dict):
-                continue
-            xml_id_raw = row.get("xml_id")
-            if isinstance(xml_id_raw, bool):
-                continue
-            xml_id: int | None = None
-            with contextlib.suppress(TypeError, ValueError):
-                xml_id = int(xml_id_raw)
-            if not isinstance(xml_id, int):
-                continue
-            prev_q = cls._safe_float(row.get("q"), default=1.0)
-            if prev_q <= 0:
-                prev_q = 1.0
-            prev_by_xml_id[xml_id] = prev_q
-
-        if not prev_by_xml_id:
-            return tool_args
-        explicit_xml_ids = set(requested_quantity_overrides or {})
-        updated = False
-        for row in products:
-            if not isinstance(row, dict):
-                continue
-            xml_id_raw = row.get("xml_id")
-            if isinstance(xml_id_raw, bool):
-                continue
-            xml_id: int | None = None
-            with contextlib.suppress(TypeError, ValueError):
-                xml_id = int(xml_id_raw)
-            if not isinstance(xml_id, int) or xml_id not in prev_by_xml_id:
-                continue
-            if xml_id in explicit_xml_ids:
-                continue
-            current_q = cls._safe_float(row.get("q"), default=1.0)
-            if current_q <= 0:
-                current_q = 1.0
-            previous_q = prev_by_xml_id[xml_id]
-            if abs(current_q - 1.0) > 1e-9:
-                continue
-            if abs(previous_q - 1.0) <= 1e-9:
-                continue
-            row["q"] = previous_q
-            updated = True
-
-        if updated:
-            return CartProcessor.fix_cart_args({"products": products})
-        return tool_args
-
-    @staticmethod
-    def _normalize_recipe_search_args(tool_args: dict[str, Any]) -> dict[str, Any]:
-        ingredients = tool_args.get("ingredients")
-        if not isinstance(ingredients, list):
-            return tool_args
-
-        normalized_rows: list[Any] = []
-        changed = False
-        for row in ingredients:
-            if not isinstance(row, dict):
-                normalized_rows.append(row)
-                continue
-
-            normalized = dict(row)
-            raw_query = normalized.get("search_query", "")
-            query = str(raw_query).strip() if raw_query is not None else ""
-            if query:
-                cleaned_query = SearchProcessor.clean_search_query(query)
-                if cleaned_query and cleaned_query != query:
-                    normalized["search_query"] = cleaned_query
-                    changed = True
-            else:
-                name = str(normalized.get("name", "")).strip()
-                if name:
-                    normalized["search_query"] = SearchProcessor.clean_search_query(name)
-                    changed = True
-
-            normalized_rows.append(normalized)
-
-        if not changed:
-            return tool_args
-        return {**tool_args, "ingredients": normalized_rows}
+    _preprocess_tool_args = staticmethod(preprocess_tool_args)  # type: ignore[assignment]
+    _collect_requested_products_snapshot = staticmethod(  # type: ignore[assignment]
+        collect_requested_products_snapshot
+    )
+    _restore_previous_quantities_for_additive_update = staticmethod(  # type: ignore[assignment]
+        restore_previous_quantities_for_additive_update
+    )
+    _normalize_recipe_search_args = staticmethod(normalize_recipe_search_args)
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]:
         if self._preferences_store is None:
@@ -2091,98 +1452,12 @@ class ShoppingAgent:
                 result[category] = preference
         return result
 
-    @staticmethod
-    def _apply_preferences_to_query(query: str, user_prefs: dict[str, str]) -> str:
-        if not user_prefs or not query:
-            return query
-        query_lower = query.strip().lower()
-        preference = user_prefs.get(query_lower)
-        if preference is None:
-            return query
-        if query_lower in preference.lower():
-            return preference
-        return f"{query} {preference}"
+    _apply_preferences_to_query = staticmethod(apply_preferences_to_query)
 
-    @staticmethod
-    def _extract_text(message: Any) -> str:
-        if isinstance(message, dict):
-            content = message.get("content")
-        else:
-            content = getattr(message, "content", None)
-        if isinstance(content, str):
-            return content
-        if isinstance(content, list):
-            parts: list[str] = []
-            for item in content:
-                if isinstance(item, dict) and item.get("type") == "text":
-                    text = item.get("text")
-                    if isinstance(text, str):
-                        parts.append(text)
-            return "\n".join(parts).strip()
-        return ""
-
-    @staticmethod
-    def _extract_tool_calls(message: Any) -> list[dict[str, Any]]:
-        if isinstance(message, dict):
-            raw_calls = message.get("tool_calls")
-        else:
-            raw_calls = getattr(message, "tool_calls", None)
-        if not raw_calls:
-            return []
-
-        result: list[dict[str, Any]] = []
-        for call in raw_calls:
-            if isinstance(call, dict):
-                fn = call.get("function", {})
-                result.append(
-                    {
-                        "id": str(call.get("id", "")),
-                        "name": str(fn.get("name", "")),
-                        "arguments": fn.get("arguments", "{}"),
-                    }
-                )
-                continue
-
-            function_obj = getattr(call, "function", None)
-            result.append(
-                {
-                    "id": str(getattr(call, "id", "")),
-                    "name": str(getattr(function_obj, "name", "")),
-                    "arguments": getattr(function_obj, "arguments", "{}"),
-                }
-            )
-        return result
-
-    @staticmethod
-    def _assistant_msg(message: Any) -> dict[str, Any]:
-        content = ShoppingAgent._extract_text(message)
-        tool_calls = []
-        for call in ShoppingAgent._extract_tool_calls(message):
-            tool_calls.append(
-                {
-                    "id": call["id"],
-                    "type": "function",
-                    "function": {
-                        "name": call["name"],
-                        "arguments": call["arguments"],
-                    },
-                }
-            )
-        payload: dict[str, Any] = {"role": "assistant", "content": content}
-        if tool_calls:
-            payload["tool_calls"] = tool_calls
-        return payload
-
-    @staticmethod
-    def _parse_tool_args(raw_args: Any) -> dict[str, Any]:
-        if isinstance(raw_args, dict):
-            return raw_args
-        if isinstance(raw_args, str):
-            with contextlib.suppress(json.JSONDecodeError):
-                parsed = json.loads(raw_args)
-                if isinstance(parsed, dict):
-                    return parsed
-        return {}
+    _extract_text = staticmethod(extract_text)
+    _extract_tool_calls = staticmethod(extract_tool_calls)
+    _assistant_msg = staticmethod(assistant_msg)
+    _parse_tool_args = staticmethod(parse_tool_args)
 
     def _capture_cart_snapshot(
         self,
@@ -2275,34 +1550,7 @@ class ShoppingAgent:
         """Извлечь usage-details из ответа LLM (OpenAI-compatible / normalized dict)."""
         return extract_usage_details(response)
 
-    @staticmethod
-    def _estimate_usage_details(
-        *,
-        messages: list[dict[str, Any]],
-        message: dict[str, Any],
-    ) -> dict[str, int]:
-        """Fallback-оценка токенов, если провайдер не вернул usage.
-
-        Используем грубую эвристику ~4 символа на токен для кириллицы/латиницы.
-        Это лучше, чем пустое usage в Langfuse для cost-контроля.
-        """
-        input_chars = 0
-        for item in messages:
-            with contextlib.suppress(Exception):
-                input_chars += len(json.dumps(item, ensure_ascii=False))
-
-        output_chars = 0
-        with contextlib.suppress(Exception):
-            output_chars = len(json.dumps(message, ensure_ascii=False))
-
-        input_tokens = max(1, math.ceil(input_chars / 4)) if input_chars > 0 else 0
-        output_tokens = max(1, math.ceil(output_chars / 4)) if output_chars > 0 else 0
-        total_tokens = input_tokens + output_tokens
-        return {
-            "input": input_tokens,
-            "output": output_tokens,
-            "total": total_tokens,
-        }
+    _estimate_usage_details = staticmethod(estimate_usage_details)  # type: ignore[assignment]
 
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._compactor.compact_tool_result(tool_name, payload)
@@ -2484,35 +1732,7 @@ class ShoppingAgent:
         return cart_data, cart_args, cart_result
 
     def _normalize_product_row(self, item: dict[str, Any]) -> dict[str, Any] | None:
-        xml_id_raw = item.get("xml_id", item.get("id"))
-        if isinstance(xml_id_raw, bool):
-            return None
-        with contextlib.suppress(TypeError, ValueError):
-            xml_id = int(xml_id_raw)
-        if not isinstance(xml_id, int):
-            return None
-        name = str(item.get("name", f"Товар {xml_id}")).strip() or f"Товар {xml_id}"
-        unit = str(item.get("unit", "шт")).strip() or "шт"
-        price = self._extract_price_value(item.get("price"))
-        result: dict[str, Any] = {
-            "xml_id": xml_id,
-            "name": name,
-            "unit": unit,
-        }
-        if price is not None:
-            result["price"] = price
-        return result
-
-    def _extract_price_value(self, raw_price: Any) -> float | None:
-        if isinstance(raw_price, dict):
-            for key in ("current", "value", "amount", "price"):
-                if key in raw_price:
-                    price = self._safe_float(raw_price.get(key), default=-1.0)
-                    if price >= 0:
-                        return price
-            return None
-        price = self._safe_float(raw_price, default=-1.0)
-        return price if price >= 0 else None
+        return normalize_product_row(item)
 
     def _ensure_cart_price_summary(
         self,
@@ -2520,178 +1740,11 @@ class ShoppingAgent:
         cart_data: dict[str, Any],
         product_index: dict[int, dict[str, Any]],
     ) -> None:
-        summary = cart_data.get("price_summary")
-        if isinstance(summary, dict):
-            items = summary.get("items")
-            total_text = summary.get("total_text")
-            has_total_text = isinstance(total_text, str) and bool(total_text.strip())
-            if isinstance(items, list) and items and has_total_text:
-                return
+        ensure_cart_price_summary(cart_data=cart_data, product_index=product_index)
 
-        products = cart_data.get("products")
-        if not isinstance(products, list) or not products:
-            return
-        requested_products = cart_data.get("requested_products")
-        if not isinstance(requested_products, list) or not requested_products:
-            requested_products = products
-
-        lines: list[str] = []
-        recipe_lines: list[str] = []
-        item_details: list[dict[str, Any]] = []
-        total = 0.0
-        recipe_total = 0.0
-        dual_pricing = False
-        all_priced = True
-        original_total_text = ""
-        original_total_value = -1.0
-        if isinstance(summary, dict):
-            total_text_raw = summary.get("total_text")
-            if isinstance(total_text_raw, str) and total_text_raw.strip():
-                original_total_text = total_text_raw.strip()
-            original_total_value = self._safe_float(summary.get("total"), default=-1.0)
-
-        purchase_by_xml_id, purchase_order = self._aggregate_products_by_xml_id(products)
-        recipe_by_xml_id, _recipe_order = self._aggregate_products_by_xml_id(requested_products)
-        for xml_id_int in purchase_order:
-            quantity = purchase_by_xml_id.get(xml_id_int, 1.0)
-            if quantity <= 0:
-                quantity = 1.0
-            recipe_quantity = recipe_by_xml_id.get(xml_id_int, quantity)
-            if recipe_quantity <= 0:
-                recipe_quantity = quantity
-            if abs(quantity - recipe_quantity) >= 1e-9:
-                dual_pricing = True
-
-            normalized = product_index.get(xml_id_int)
-            if normalized is None:
-                normalized = self._normalize_product_row({"xml_id": xml_id_int, "q": quantity})
-            raw_name = (
-                str(normalized.get("name", f"Товар {xml_id_int}")).strip()
-                if normalized
-                else f"Товар {xml_id_int}"
-            )
-            name = self._normalize_compact_text(raw_name) or f"Товар {xml_id_int}"
-            price = (
-                self._safe_float(normalized.get("price"), default=-1.0)
-                if isinstance(normalized, dict)
-                else -1.0
-            )
-            unit = str(normalized.get("unit", "")).strip() if isinstance(normalized, dict) else ""
-            quantity_text = self._format_quantity_text(quantity, unit=unit)
-
-            if price >= 0:
-                subtotal = price * quantity
-                recipe_subtotal = price * recipe_quantity
-                total += subtotal
-                recipe_total += recipe_subtotal
-                lines.append(f"- {name} x {quantity_text} = {subtotal:.2f} руб")
-                recipe_lines.append(
-                    f"- {name} x {self._format_quantity_text(recipe_quantity, unit=unit)} = "
-                    f"{recipe_subtotal:.2f} руб"
-                )
-                item_details.append(
-                    {
-                        "xml_id": xml_id_int,
-                        "name": name,
-                        "unit": normalized.get("unit") if isinstance(normalized, dict) else None,
-                        "unit_price": price,
-                        "recipe_q": recipe_quantity,
-                        "purchase_q": quantity,
-                        "recipe_subtotal": round(recipe_subtotal, 2),
-                        "purchase_subtotal": round(subtotal, 2),
-                        "overbuy_subtotal": round(subtotal - recipe_subtotal, 2),
-                    }
-                )
-            else:
-                all_priced = False
-                lines.append(f"- {name} x {quantity_text} = цена уточняется")
-                recipe_lines.append(
-                    "- "
-                    f"{name} x {self._format_quantity_text(recipe_quantity, unit=unit)} = "
-                    "цена уточняется"
-                )
-                item_details.append(
-                    {
-                        "xml_id": xml_id_int,
-                        "name": name,
-                        "recipe_q": recipe_quantity,
-                        "purchase_q": quantity,
-                    }
-                )
-
-        if not lines:
-            return
-
-        synthesized: dict[str, Any] = {
-            "items": lines,
-            "recipe_items": recipe_lines,
-            "item_details": item_details,
-            "dual_pricing": dual_pricing,
-            "count": len(lines),
-        }
-        if all_priced:
-            rounded_total = round(total, 2)
-            rounded_recipe_total = round(recipe_total, 2)
-            overbuy_total = round(rounded_total - rounded_recipe_total, 2)
-            synthesized["total"] = rounded_total
-            synthesized["total_text"] = f"Итого: {rounded_total:.2f} руб"
-            synthesized["purchase_total"] = rounded_total
-            synthesized["purchase_total_text"] = f"К покупке: {rounded_total:.2f} руб"
-            synthesized["recipe_total"] = rounded_recipe_total
-            synthesized["recipe_total_text"] = f"По рецепту: {rounded_recipe_total:.2f} руб"
-            synthesized["overbuy_total"] = overbuy_total
-            synthesized["overbuy_total_text"] = f"Переплата из-за упаковок: {overbuy_total:.2f} руб"
-        elif original_total_text:
-            synthesized["total_text"] = original_total_text
-        elif original_total_value >= 0:
-            synthesized["total"] = round(original_total_value, 2)
-            synthesized["total_text"] = f"Итого: {original_total_value:.2f} руб"
-        else:
-            synthesized["total_text"] = "Итого: будет рассчитано при открытии корзины"
-
-        cart_data["price_summary"] = synthesized
-
-    @staticmethod
-    def _aggregate_products_by_xml_id(
-        products: list[dict[str, Any]],
-    ) -> tuple[dict[int, float], list[int]]:
-        totals: dict[int, float] = {}
-        order: list[int] = []
-        for item in products:
-            if not isinstance(item, dict):
-                continue
-            xml_id_raw = item.get("xml_id")
-            if isinstance(xml_id_raw, bool):
-                continue
-            with contextlib.suppress(TypeError, ValueError):
-                xml_id = int(xml_id_raw)
-            if not isinstance(xml_id, int):
-                continue
-            quantity = ShoppingAgent._safe_float(item.get("q"), default=1.0)
-            if quantity <= 0:
-                quantity = 1.0
-            if xml_id not in totals:
-                totals[xml_id] = 0.0
-                order.append(xml_id)
-            totals[xml_id] += quantity
-        return totals, order
-
-    @staticmethod
-    def _format_quantity_text(quantity: float, *, unit: str = "") -> str:
-        normalized_unit = unit.strip().lower()
-        if normalized_unit in _DISCRETE_UNITS:
-            return str(max(1, math.ceil(quantity)))
-        if normalized_unit in {"кг", "kg"}:
-            return f"{ShoppingAgent._round_kilogram_quantity(quantity):.1f}"
-        if float(quantity).is_integer():
-            return str(int(quantity))
-        return f"{quantity:.3f}".rstrip("0").rstrip(".")
-
-    @staticmethod
-    def _round_kilogram_quantity(quantity: float) -> float:
-        safe_quantity = quantity if quantity > 0 else 0.1
-        rounded = math.ceil(safe_quantity * 10) / 10
-        return round(max(0.1, rounded), 1)
+    _aggregate_products_by_xml_id = staticmethod(aggregate_products_by_xml_id)
+    _format_quantity_text = staticmethod(format_quantity_text)
+    _round_kilogram_quantity = staticmethod(round_kilogram_quantity)
 
     @staticmethod
     def _is_additive_cart_intent(user_text: str) -> bool:
