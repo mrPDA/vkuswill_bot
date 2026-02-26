@@ -69,3 +69,6 @@ infra/backend.conf
 infra/*.json
 infra/tfplan
 infra/*.tfplan
+
+assets/
+assets/*

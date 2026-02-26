@@ -6,7 +6,6 @@ import asyncio
 import copy
 import contextlib
 import datetime as dt
-import html
 import json
 import logging
 import math
@@ -14,6 +13,48 @@ import re
 from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING, Any
 
+from vkuswill_bot.agents.intent_markers import (
+    ADDITIVE_CART_MARKERS,
+    CART_INTENT_MARKERS,
+    EXPLICIT_NEW_CART_MARKERS,
+    MODIFY_EXISTING_CART_MARKERS,
+    PANTRY_TAG_PEPPER,
+    PANTRY_TAG_SALT,
+    PANTRY_TAG_SUGAR,
+    STATUS_QUERY_MARKERS,
+)
+from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
+from vkuswill_bot.agents.history_manager import (
+    history_char_count,
+    sanitize_tool_history,
+    trim_history,
+    trim_history_by_chars,
+)
+from vkuswill_bot.agents.cart_output_renderer import (
+    extract_cart_safety_note,
+    extract_first_url,
+    looks_like_cart_ready_reply,
+    looks_like_manual_cart_reply,
+    looks_like_missing_cart_prices,
+    looks_like_wrong_cart_link,
+    looks_like_wrong_cart_summary,
+    render_stable_cart_output,
+    stabilize_cart_output,
+)
+from vkuswill_bot.agents.recovery_hints import (
+    FORCE_BATCH_SEARCH_HINT,
+    FORCE_CART_FLOW_CONTINUATION_HINT,
+    FORCE_CART_LINK_SOURCE_HINT,
+    FORCE_CART_RECOVERY_HINT,
+    FORCE_RECIPE_TO_CART_HINT,
+)
+from vkuswill_bot.agents.tool_result_compactor import (
+    ToolResultCompactor,
+    extract_price_value,
+    normalize_compact_text,
+    score_search_candidate,
+    tokenize_query_terms,
+)
 from vkuswill_bot.services.llm_adapters import (
     LLMAdapterProtocol,
     OpenAICompatibleLLMAdapter,
@@ -67,548 +108,25 @@ _MCP_CACHEABLE_TOOLS = frozenset(
         "recipe_search",
     }
 )
-_FORCE_CART_RECOVERY_HINT = (
-    "[Системная корректировка] Пользователь ожидает готовую корзину. "
-    "Запрещено предлагать ручную сборку или отправлять пользователя собирать корзину самому. "
-    "Используй доступные инструменты и обязательно создай корзину через "
-    "vkusvill_cart_link_create. После успешного создания дай финальный ответ."
-)
-_FORCE_CART_LINK_SOURCE_HINT = (
-    "[Системная корректировка] Ты сообщил итог/ссылку корзины без фактического "
-    "результата vkusvill_cart_link_create. Сначала ОБЯЗАТЕЛЬНО вызови "
-    "vkusvill_cart_link_create, затем выдай ответ. "
-    "Ссылку бери только из data.link результата инструмента."
-)
-_FORCE_CART_FLOW_CONTINUATION_HINT = (
-    "[Системная корректировка] Ты начал сборку корзины, но преждевременно остановился "
-    "текстовым ответом. Сборка должна быть доведена до конца через инструменты. "
-    "Продолжи вызовы поиска (vkusvill_products_search / recipe_search) и затем "
-    "ОБЯЗАТЕЛЬНО вызови vkusvill_cart_link_create. Только после успешного "
-    "vkusvill_cart_link_create выдай финальный текст пользователю."
-)
-_FORCE_BATCH_SEARCH_HINT = (
-    "[Системная корректировка] Ты слишком долго выполняешь одиночные поиски. "
-    "Для независимых ингредиентов возвращай НЕСКОЛЬКО вызовов "
-    "vkusvill_products_search в одном ответе (batch tool-calls). "
-    "Цель: уложиться в лимит шагов. "
-    "Как только подобраны товары по ингредиентам — сразу вызывай "
-    "vkusvill_cart_link_create и завершай сборку корзины."
-)
-_FORCE_RECIPE_TO_CART_HINT = (
-    "[Системная корректировка] Результаты recipe_search уже получены. "
-    "Не делай дополнительную пагинацию и не вызывай vkusvill_product_details "
-    "для каждого ингредиента. Используй найденные xml_id и suggested_q из recipe_search, "
-    "вызови vkusvill_cart_link_create и завершай сборку корзины."
-)
-_PANTRY_TAG_SALT = "salt"
-_PANTRY_TAG_SUGAR = "sugar"
-_PANTRY_TAG_PEPPER = "pepper"
+# Backward-compatible aliases for constants moved to dedicated modules.
+_FORCE_CART_RECOVERY_HINT = FORCE_CART_RECOVERY_HINT
+_FORCE_CART_LINK_SOURCE_HINT = FORCE_CART_LINK_SOURCE_HINT
+_FORCE_CART_FLOW_CONTINUATION_HINT = FORCE_CART_FLOW_CONTINUATION_HINT
+_FORCE_BATCH_SEARCH_HINT = FORCE_BATCH_SEARCH_HINT
+_FORCE_RECIPE_TO_CART_HINT = FORCE_RECIPE_TO_CART_HINT
+_PANTRY_TAG_SALT = PANTRY_TAG_SALT
+_PANTRY_TAG_SUGAR = PANTRY_TAG_SUGAR
+_PANTRY_TAG_PEPPER = PANTRY_TAG_PEPPER
+_MODIFY_EXISTING_CART_MARKERS = MODIFY_EXISTING_CART_MARKERS
+_ADDITIVE_CART_MARKERS = ADDITIVE_CART_MARKERS
+_EXPLICIT_NEW_CART_MARKERS = EXPLICIT_NEW_CART_MARKERS
+_STATUS_QUERY_MARKERS = STATUS_QUERY_MARKERS
 _EGG_PACK_SIZE = 10
 _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
-_MODIFY_EXISTING_CART_MARKERS = (
-    "добав",
-    "ещё",
-    "еще",
-    "объедин",
-    "к предыдущ",
-    "к прошл",
-    "ту же корзин",
-    "к этой корзин",
-    "дополни",
-    "продолж",
-    "и еще",
-    "убер",
-    "удал",
-    "замен",
-    "измени",
-    "поменя",
-    "исключ",
-)
-_ADDITIVE_CART_MARKERS = (
-    "добав",
-    "ещё",
-    "еще",
-    "дополни",
-    "и еще",
-    "плюс",
-    "к этой корзин",
-    "к предыдущ",
-)
-_EXPLICIT_NEW_CART_MARKERS = (
-    "новая корзин",
-    "новый заказ",
-    "с нуля",
-    "заново",
-    "собери заново",
-    "отдельную корзин",
-    "другую корзин",
-    "не в эту корзин",
-)
-_STATUS_QUERY_MARKERS = (
-    "статус",
-    "что с корзин",
-    "где корзин",
-    "проверь корзин",
-)
 
 
-class _RecipeQuantityCalculator:
-    """Детерминированный расчет purchase-количества по рецептурной дозировке."""
-
-    _KILOGRAM_UNITS = frozenset({"кг", "kg"})
-    _GRAM_UNITS = frozenset({"г", "гр", "gram", "grams"})
-    _LITER_UNITS = frozenset({"л", "l"})
-    _MILLILITER_UNITS = frozenset({"мл", "ml"})
-    _PIECE_UNITS = frozenset({"шт", "штука", "штук", "piece", "pieces"})
-    _TABLESPOON_UNITS = frozenset({"ст.л.", "ст.л", "ст л", "столовая ложка", "столовые ложки"})
-    _TEASPOON_UNITS = frozenset({"ч.л.", "ч.л", "ч л", "чайная ложка", "чайные ложки"})
-    _GARLIC_CLOVE_UNITS = frozenset({"зубчик", "clove", "cloves"})
-    _GARLIC_HEAD_UNITS = frozenset({"головка"})
-    _LEAF_UNITS = frozenset({"лист"})
-    _DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
-    _MASSY_MARKERS = (
-        "мук",
-        "сахар",
-        "соль",
-        "круп",
-        "рис",
-        "греч",
-        "спец",
-        "какао",
-        "крахмал",
-    )
-    _LIQUID_MARKERS = (
-        "масл",
-        "молок",
-        "сливк",
-        "вода",
-        "кефир",
-        "йогурт",
-        "соус",
-        "уксус",
-        "сок",
-    )
-    _AVG_PIECE_KG_BY_STEM: tuple[tuple[str, float], ...] = (
-        ("картоф", 0.15),
-        ("лук", 0.10),
-        ("морков", 0.08),
-        ("свекл", 0.20),
-        ("помидор", 0.12),
-        ("огур", 0.12),
-        ("яблок", 0.18),
-        ("банан", 0.13),
-        ("перец", 0.15),
-        ("кабач", 0.25),
-        ("баклаж", 0.25),
-        ("чеснок", 0.03),
-    )
-
-    @classmethod
-    def calculate_purchase_q(cls, ingredient: dict[str, Any], item: dict[str, Any]) -> int | float:
-        _requested_q, purchase_q = cls.calculate_requested_and_purchase_q(
-            ingredient=ingredient,
-            item=item,
-        )
-        return purchase_q
-
-    @classmethod
-    def calculate_requested_and_purchase_q(
-        cls,
-        *,
-        ingredient: dict[str, Any],
-        item: dict[str, Any],
-    ) -> tuple[float, int | float]:
-        quantity = cls._safe_float(ingredient.get("quantity"), default=1.0)
-        if quantity <= 0:
-            quantity = 1.0
-        ingredient_name = cls._normalize_text(ingredient.get("name"))
-        ingredient_unit = cls._normalize_unit(ingredient.get("unit"))
-        product_name = cls._normalize_text(item.get("name"))
-        product_unit = cls._normalize_unit(item.get("unit")) or "шт"
-
-        if product_unit in cls._KILOGRAM_UNITS:
-            required_kg = cls._required_kilograms(
-                quantity=quantity,
-                ingredient_unit=ingredient_unit,
-                ingredient_name=ingredient_name or product_name,
-            )
-            if required_kg <= 0:
-                required_kg = 0.1
-            return required_kg, cls._round_up_step(required_kg, step=0.1, minimum=0.1)
-
-        if product_unit in cls._LITER_UNITS:
-            required_l = cls._required_liters(
-                quantity=quantity,
-                ingredient_unit=ingredient_unit,
-                ingredient_name=ingredient_name,
-            )
-            if required_l <= 0:
-                required_l = 0.1
-            return required_l, cls._round_up_step(required_l, step=0.1, minimum=0.1)
-
-        if product_unit in cls._DISCRETE_UNITS:
-            purchase_units = cls._required_discrete_units(
-                quantity=quantity,
-                ingredient_unit=ingredient_unit,
-                ingredient_name=ingredient_name,
-                item=item,
-                product_name=product_name,
-            )
-            requested_units = purchase_units if purchase_units > 0 else 1.0
-            return requested_units, max(1, math.ceil(requested_units))
-
-        # Фолбэк для нестандартных unit.
-        requested = quantity if quantity > 0 else 1.0
-        return requested, max(1, math.ceil(requested))
-
-    @classmethod
-    def parse_quantity_and_unit(cls, raw_text: str) -> tuple[float | None, str | None, str]:
-        text = cls._normalize_text(raw_text)
-        if not text:
-            return None, None, ""
-        patterns = (
-            r"(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
-            r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-            r"ст\.?\s*л\.?|ч\.?\s*л\.?)",
-            r"(\d+(?:[.,]\d+)?)\s*(столов(?:ая|ые)\s+ложк[аи]|чайн(?:ая|ые)\s+ложк[аи])",
-        )
-        for pattern in patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if match is None:
-                continue
-            quantity = cls._safe_float(match.group(1), default=-1.0)
-            if quantity <= 0:
-                continue
-            unit = cls._normalize_unit(match.group(2))
-            if not unit:
-                continue
-            return quantity, unit, match.group(0)
-        return None, None, ""
-
-    @classmethod
-    def _required_discrete_units(
-        cls,
-        *,
-        quantity: float,
-        ingredient_unit: str,
-        ingredient_name: str,
-        item: dict[str, Any],
-        product_name: str,
-    ) -> float:
-        if ingredient_unit in cls._PIECE_UNITS:
-            # Для "лавровый лист 2 шт" нужен 1 пакет специй, а не 2 пакета.
-            special_piece_grams = cls._required_grams(
-                quantity=quantity,
-                ingredient_unit=ingredient_unit,
-                ingredient_name=ingredient_name,
-            )
-            if special_piece_grams > 0:
-                pack_grams = cls._infer_pack_grams(item=item)
-                if pack_grams > 0:
-                    return special_piece_grams / pack_grams
-                return 1.0
-            pack_pieces = cls._infer_pack_pieces(item=item, product_name=product_name)
-            return quantity / max(pack_pieces, 1)
-
-        required_grams = cls._required_grams(
-            quantity=quantity,
-            ingredient_unit=ingredient_unit,
-            ingredient_name=ingredient_name,
-        )
-        if required_grams > 0:
-            pack_grams = cls._infer_pack_grams(item=item)
-            if pack_grams > 0:
-                return required_grams / pack_grams
-            return 1.0
-
-        required_ml = cls._required_milliliters(
-            quantity=quantity,
-            ingredient_unit=ingredient_unit,
-            ingredient_name=ingredient_name,
-        )
-        if required_ml > 0:
-            pack_ml = cls._infer_pack_milliliters(item=item)
-            if pack_ml > 0:
-                return required_ml / pack_ml
-            return 1.0
-
-        return max(1.0, quantity)
-
-    @classmethod
-    def _required_kilograms(
-        cls,
-        *,
-        quantity: float,
-        ingredient_unit: str,
-        ingredient_name: str,
-    ) -> float:
-        if ingredient_unit in cls._KILOGRAM_UNITS:
-            return quantity
-        if ingredient_unit in cls._GRAM_UNITS:
-            return quantity / 1000
-        if ingredient_unit in cls._PIECE_UNITS:
-            return quantity * cls._avg_piece_kg(ingredient_name)
-        grams = cls._required_grams(
-            quantity=quantity,
-            ingredient_unit=ingredient_unit,
-            ingredient_name=ingredient_name,
-        )
-        if grams > 0:
-            return grams / 1000
-        ml = cls._required_milliliters(
-            quantity=quantity,
-            ingredient_unit=ingredient_unit,
-            ingredient_name=ingredient_name,
-        )
-        if ml > 0:
-            return ml / 1000
-        return 0.0
-
-    @classmethod
-    def _required_liters(
-        cls,
-        *,
-        quantity: float,
-        ingredient_unit: str,
-        ingredient_name: str,
-    ) -> float:
-        if ingredient_unit in cls._LITER_UNITS:
-            return quantity
-        ml = cls._required_milliliters(
-            quantity=quantity,
-            ingredient_unit=ingredient_unit,
-            ingredient_name=ingredient_name,
-        )
-        if ml > 0:
-            return ml / 1000
-        return 0.0
-
-    @classmethod
-    def _required_grams(
-        cls,
-        *,
-        quantity: float,
-        ingredient_unit: str,
-        ingredient_name: str,
-    ) -> float:
-        if ingredient_unit in cls._GRAM_UNITS:
-            return quantity
-        if ingredient_unit in cls._KILOGRAM_UNITS:
-            return quantity * 1000
-        if cls._is_garlic_ingredient(ingredient_name):
-            if ingredient_unit in cls._GARLIC_CLOVE_UNITS:
-                return quantity * 5.0
-            if ingredient_unit in cls._GARLIC_HEAD_UNITS:
-                return quantity * 30.0
-        if cls._is_bay_leaf_ingredient(ingredient_name) and (
-            ingredient_unit in cls._PIECE_UNITS or ingredient_unit in cls._LEAF_UNITS
-        ):
-            return quantity * 0.2
-        if ingredient_unit in cls._TABLESPOON_UNITS:
-            grams_per_tbsp = 10.0
-            if cls._is_massy_ingredient(ingredient_name):
-                if "мук" in ingredient_name:
-                    grams_per_tbsp = 8.0
-                elif "сахар" in ingredient_name:
-                    grams_per_tbsp = 12.0
-                elif "соль" in ingredient_name:
-                    grams_per_tbsp = 15.0
-            return quantity * grams_per_tbsp
-        if ingredient_unit in cls._TEASPOON_UNITS:
-            grams_per_tsp = 3.0
-            if cls._is_massy_ingredient(ingredient_name):
-                if "мук" in ingredient_name:
-                    grams_per_tsp = 2.5
-                elif "сахар" in ingredient_name:
-                    grams_per_tsp = 4.0
-                elif "соль" in ingredient_name:
-                    grams_per_tsp = 5.0
-            return quantity * grams_per_tsp
-        return 0.0
-
-    @classmethod
-    def _required_milliliters(
-        cls,
-        *,
-        quantity: float,
-        ingredient_unit: str,
-        ingredient_name: str,
-    ) -> float:
-        if ingredient_unit in cls._MILLILITER_UNITS:
-            return quantity
-        if ingredient_unit in cls._LITER_UNITS:
-            return quantity * 1000
-        if ingredient_unit in cls._TABLESPOON_UNITS:
-            return quantity * 15.0
-        if ingredient_unit in cls._TEASPOON_UNITS:
-            return quantity * 5.0
-        # Для жидкостей без unit (редко) лучше fallback в 0.
-        if cls._is_liquid_ingredient(ingredient_name):
-            return quantity
-        return 0.0
-
-    @classmethod
-    def _infer_pack_pieces(cls, *, item: dict[str, Any], product_name: str) -> int:
-        if any(stem in product_name for stem in ("яйц", "яиц", "яйк")):
-            parsed = cls._extract_pack_number(product_name)
-            return parsed if parsed > 0 else _EGG_PACK_SIZE
-        parsed = cls._extract_pack_number(cls._searchable_product_text(item))
-        return max(1, parsed)
-
-    @classmethod
-    def _infer_pack_grams(cls, *, item: dict[str, Any]) -> float:
-        weight = item.get("weight")
-        if isinstance(weight, dict):
-            value = cls._safe_float(weight.get("value"), default=-1.0)
-            unit = cls._normalize_unit(weight.get("unit"))
-            if value > 0:
-                if unit in cls._KILOGRAM_UNITS:
-                    return value * 1000
-                if unit in cls._GRAM_UNITS:
-                    return value
-        text = cls._searchable_product_text(item)
-        match = re.search(r"(\d+(?:[.,]\d+)?)\s*(кг|kg|г|гр)\b", text, flags=re.IGNORECASE)
-        if match is None:
-            return 0.0
-        value = cls._safe_float(match.group(1), default=-1.0)
-        if value <= 0:
-            return 0.0
-        unit = cls._normalize_unit(match.group(2))
-        if unit in cls._KILOGRAM_UNITS:
-            return value * 1000
-        return value
-
-    @classmethod
-    def _infer_pack_milliliters(cls, *, item: dict[str, Any]) -> float:
-        weight = item.get("weight")
-        if isinstance(weight, dict):
-            value = cls._safe_float(weight.get("value"), default=-1.0)
-            unit = cls._normalize_unit(weight.get("unit"))
-            if value > 0:
-                if unit in cls._LITER_UNITS:
-                    return value * 1000
-                if unit in cls._MILLILITER_UNITS:
-                    return value
-        text = cls._searchable_product_text(item)
-        match = re.search(r"(\d+(?:[.,]\d+)?)\s*(л|l|мл|ml)\b", text, flags=re.IGNORECASE)
-        if match is None:
-            return 0.0
-        value = cls._safe_float(match.group(1), default=-1.0)
-        if value <= 0:
-            return 0.0
-        unit = cls._normalize_unit(match.group(2))
-        if unit in cls._LITER_UNITS:
-            return value * 1000
-        return value
-
-    @classmethod
-    def _extract_pack_number(cls, text: str) -> int:
-        normalized = cls._normalize_text(text)
-        if "десят" in normalized:
-            return 10
-        match = re.search(r"(\d+)\s*(?:шт|штук|шт\.)\b", normalized, flags=re.IGNORECASE)
-        if match is None:
-            return 0
-        return max(0, int(match.group(1)))
-
-    @classmethod
-    def _avg_piece_kg(cls, ingredient_name: str) -> float:
-        normalized = cls._normalize_text(ingredient_name)
-        for stem, weight in cls._AVG_PIECE_KG_BY_STEM:
-            if stem in normalized:
-                return weight
-        return 0.15
-
-    @classmethod
-    def _is_massy_ingredient(cls, ingredient_name: str) -> bool:
-        normalized = cls._normalize_text(ingredient_name)
-        return any(marker in normalized for marker in cls._MASSY_MARKERS)
-
-    @classmethod
-    def _is_liquid_ingredient(cls, ingredient_name: str) -> bool:
-        normalized = cls._normalize_text(ingredient_name)
-        return any(marker in normalized for marker in cls._LIQUID_MARKERS)
-
-    @classmethod
-    def _is_garlic_ingredient(cls, ingredient_name: str) -> bool:
-        normalized = cls._normalize_text(ingredient_name)
-        return "чеснок" in normalized
-
-    @classmethod
-    def _is_bay_leaf_ingredient(cls, ingredient_name: str) -> bool:
-        normalized = cls._normalize_text(ingredient_name)
-        return "лавров" in normalized or "лавруш" in normalized
-
-    @staticmethod
-    def _round_up_step(value: float, *, step: float, minimum: float) -> float:
-        if value <= 0:
-            value = minimum
-        rounded = math.ceil(value / step) * step
-        return round(max(minimum, rounded), 3)
-
-    @staticmethod
-    def _safe_float(value: Any, *, default: float) -> float:
-        if isinstance(value, (int, float)) and not isinstance(value, bool):
-            return float(value)
-        if isinstance(value, str):
-            with contextlib.suppress(ValueError):
-                return float(value.replace(",", "."))
-        return default
-
-    @classmethod
-    def _normalize_unit(cls, raw_unit: Any) -> str:
-        text = cls._normalize_text(raw_unit)
-        aliases = {
-            "кг": "кг",
-            "kg": "kg",
-            "г": "г",
-            "гр": "г",
-            "gram": "г",
-            "grams": "г",
-            "л": "л",
-            "l": "l",
-            "мл": "мл",
-            "ml": "ml",
-            "шт": "шт",
-            "шт.": "шт",
-            "штук": "шт",
-            "штука": "шт",
-            "piece": "шт",
-            "pieces": "шт",
-            "ст.л": "ст.л.",
-            "ст.л.": "ст.л.",
-            "ст л": "ст.л.",
-            "ст. л": "ст.л.",
-            "столовая ложка": "ст.л.",
-            "столовые ложки": "ст.л.",
-            "ч.л": "ч.л.",
-            "ч.л.": "ч.л.",
-            "ч л": "ч.л.",
-            "ч. л": "ч.л.",
-            "чайная ложка": "ч.л.",
-            "чайные ложки": "ч.л.",
-            "зубчик": "зубчик",
-            "зубчика": "зубчик",
-            "зубчиков": "зубчик",
-            "головка": "головка",
-            "головки": "головка",
-            "головок": "головка",
-            "лист": "лист",
-            "листа": "лист",
-            "листов": "лист",
-        }
-        return aliases.get(text, text)
-
-    @staticmethod
-    def _normalize_text(raw_text: Any) -> str:
-        text = html.unescape(str(raw_text or "")).strip().lower().replace("ё", "е")
-        return re.sub(r"\s+", " ", text)
-
-    @classmethod
-    def _searchable_product_text(cls, item: dict[str, Any]) -> str:
-        name = cls._normalize_text(item.get("name"))
-        description = cls._normalize_text(item.get("description"))
-        return f"{name} {description}".strip()
+# Backward-compatible alias used throughout this module.
+_RecipeQuantityCalculator = RecipeQuantityCalculator
 
 
 class ShoppingAgent:
@@ -670,6 +188,7 @@ class ShoppingAgent:
         self._mcp_timeout_seconds = max(1.0, mcp_timeout_seconds)
         self._mcp_retries = max(0, mcp_retries)
         self._max_tool_result_chars = max(300, max_tool_result_chars)
+        self._compactor = ToolResultCompactor(max_tool_result_chars=self._max_tool_result_chars)
         self._max_history_chars = max(10000, max_history_chars)
         self._max_input_chars_per_turn = max(10000, max_input_chars_per_turn)
         self._preferences_store = preferences_store
@@ -2713,169 +2232,43 @@ class ShoppingAgent:
             }
 
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(history) <= self._max_history:
-            return history
-        system_msg = history[0]
-        tail = history[-(self._max_history - 1) :]
-        return [system_msg, *tail]
+        return trim_history(history, max_history=self._max_history)
 
     def _trim_history_by_chars(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Обрезать историю по символьному бюджету с сохранением system-первым."""
-        if not history:
-            return history
+        self._sync_compactor_limit()
+        return trim_history_by_chars(
+            history,
+            max_history_chars=self._max_history_chars,
+            compactor=self._compactor,
+        )
 
-        trimmed = self._recompact_tool_history(list(history))
-        while self._history_char_count(trimmed) > self._max_history_chars and len(trimmed) > 2:
-            del trimmed[1]
-            trimmed = self._sanitize_tool_history(trimmed)
-        return trimmed
+    # Backward-compatible aliases for history helpers.
+    _sanitize_tool_history = staticmethod(sanitize_tool_history)
+    _history_char_count = staticmethod(history_char_count)
 
-    def _recompact_tool_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        """Повторно сжать старые tool-сообщения в истории, чтобы убрать раздувшийся контекст."""
-        if len(history) <= 2:
-            return history
-
-        compacted = [history[0]]
-        seen_tool_signatures: set[str] = set()
-        for message in history[1:]:
-            if message.get("role") != "tool":
-                compacted.append(message)
-                continue
-
-            name = str(message.get("name", "")).strip()
-            content = message.get("content")
-            if not name or not isinstance(content, str):
-                compacted.append(message)
-                continue
-
-            compact_content = self._prepare_tool_result_for_history(name, content)
-            signature = f"{name}:{compact_content}"
-            if signature in seen_tool_signatures:
-                compact_content = self._build_cached_tool_stub(
-                    tool_name=name,
-                    compact_content=compact_content,
-                )
-            else:
-                seen_tool_signatures.add(signature)
-
-            compacted.append({**message, "content": compact_content})
-        return compacted
-
-    @staticmethod
-    def _sanitize_tool_history(history: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        if len(history) <= 2:
-            return history
-
-        sanitized = [history[0]]
-        for msg in history[1:]:
-            if msg.get("role") != "tool":
-                sanitized.append(msg)
-                continue
-
-            prev = sanitized[-1] if sanitized else None
-            if not isinstance(prev, dict):
-                continue
-            tool_calls = prev.get("tool_calls")
-            if prev.get("role") == "assistant" and isinstance(tool_calls, list) and tool_calls:
-                sanitized.append(msg)
-        return sanitized
-
-    @staticmethod
-    def _history_char_count(history: list[dict[str, Any]]) -> int:
-        total = 0
-        for message in history:
-            with contextlib.suppress(Exception):
-                total += len(json.dumps(message, ensure_ascii=False))
-        return total
+    def _sync_compactor_limit(self) -> None:
+        """Sync compactor limit if _max_tool_result_chars was changed post-init."""
+        if self._compactor._max_tool_result_chars != self._max_tool_result_chars:
+            self._compactor._max_tool_result_chars = self._max_tool_result_chars
 
     def _prepare_tool_result_for_history(self, tool_name: str, tool_result: str) -> str:
         """Сжать tool-result для history, чтобы не переполнять контекст LLM."""
-        with contextlib.suppress(Exception):
-            parsed = json.loads(tool_result)
-            if isinstance(parsed, dict):
-                compact = self._compact_tool_result(tool_name, parsed)
-                return self._fit_payload_to_limit(compact)
-        return tool_result[: self._max_tool_result_chars]
+        self._sync_compactor_limit()
+        return self._compactor.prepare_tool_result_for_history(tool_name, tool_result)
 
     def _build_cached_tool_stub(self, *, tool_name: str, compact_content: str) -> str:
         """Построить сверх-компактный stub для повторного tool-результата в history."""
-        base: dict[str, Any] = {"ok": True, "cached": True, "duplicate": True}
-        with contextlib.suppress(Exception):
-            parsed = json.loads(compact_content)
-            if isinstance(parsed, dict):
-                if "ok" in parsed:
-                    base["ok"] = bool(parsed.get("ok"))
-                if tool_name == "vkusvill_products_search":
-                    meta = parsed.get("meta")
-                    if isinstance(meta, dict):
-                        q = str(meta.get("q", "")).strip()
-                        if q:
-                            base["meta"] = {"q": q}
-                    items = parsed.get("items")
-                    if isinstance(items, list) and items:
-                        first = items[0]
-                        if isinstance(first, dict):
-                            base["item"] = {
-                                key: first.get(key)
-                                for key in ("xml_id", "name", "price", "unit")
-                                if first.get(key) is not None
-                            }
-                elif tool_name == "vkusvill_product_details":
-                    data = parsed.get("data")
-                    if isinstance(data, dict):
-                        base["data"] = {
-                            key: data.get(key)
-                            for key in ("xml_id", "name", "price", "unit")
-                            if data.get(key) is not None
-                        }
-                elif tool_name == "recipe_ingredients":
-                    dish = str(parsed.get("dish", "")).strip()
-                    if dish:
-                        base["dish"] = dish
-                    servings = parsed.get("servings")
-                    if isinstance(servings, int | float) and not isinstance(servings, bool):
-                        base["servings"] = servings
-                elif tool_name == "recipe_search":
-                    found = parsed.get("found")
-                    if isinstance(found, list):
-                        base["found_count"] = len(found)
-                    not_found = parsed.get("not_found")
-                    if isinstance(not_found, list):
-                        base["not_found_count"] = len(not_found)
-        return self._fit_payload_to_limit(base)
+        self._sync_compactor_limit()
+        return self._compactor.build_cached_tool_stub(
+            tool_name=tool_name,
+            compact_content=compact_content,
+        )
 
     def _fit_payload_to_limit(self, payload: dict[str, Any]) -> str:
         """Уместить JSON-пейлоад в лимит, сохранив валидный JSON."""
-        compact = dict(payload)
-        encoded = json.dumps(compact, ensure_ascii=False)
-        if len(encoded) <= self._max_tool_result_chars:
-            return encoded
-
-        def _trim_list(key: str, keep: int) -> None:
-            value = compact.get(key)
-            if isinstance(value, list):
-                compact[key] = value[:keep]
-
-        for key in ("items", "found", "ingredients", "not_found"):
-            _trim_list(key, 1)
-            encoded = json.dumps(compact, ensure_ascii=False)
-            if len(encoded) <= self._max_tool_result_chars:
-                return encoded
-
-        for key in ("relevance_warning", "message"):
-            value = compact.get(key)
-            if isinstance(value, str) and len(value) > 160:
-                compact[key] = value[:160]
-            encoded = json.dumps(compact, ensure_ascii=False)
-            if len(encoded) <= self._max_tool_result_chars:
-                return encoded
-
-        tiny = {
-            "ok": payload.get("ok"),
-            "error": payload.get("error"),
-            "message": "tool_result_truncated",
-        }
-        return json.dumps(tiny, ensure_ascii=False)
+        self._sync_compactor_limit()
+        return self._compactor.fit_payload_to_limit(payload)
 
     @staticmethod
     def _extract_usage_details(response: Any) -> dict[str, int] | None:
@@ -2912,319 +2305,22 @@ class ShoppingAgent:
         }
 
     def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        if tool_name == "vkusvill_products_search":
-            return self._compact_products_search(payload)
-        if tool_name == "vkusvill_product_details":
-            return self._compact_product_details(payload)
-        if tool_name == "recipe_ingredients":
-            return self._compact_recipe_ingredients(payload)
-        if tool_name == "recipe_search":
-            return self._compact_recipe_search(payload)
-        if tool_name == "vkusvill_cart_link_create":
-            return self._compact_cart_link(payload)
-        return self._compact_generic(payload)
+        return self._compactor.compact_tool_result(tool_name, payload)
 
     def _compact_products_search(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {"ok": payload.get("ok")}
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            # Идемпотентность компактизации: поддержать уже-compact shape
-            # {"ok":true,"meta":...,"items":[...]}.
-            has_compact_shape = any(
-                key in payload for key in ("meta", "items", "relevance_warning")
-            )
-            if not has_compact_shape:
-                return result
-            data = payload
-
-        query_text = ""
-        meta = data.get("meta", {})
-        if isinstance(meta, dict):
-            compact_meta: dict[str, Any] = {}
-            for key in ("q", "total", "has_more"):
-                if key in meta:
-                    compact_meta[key] = meta.get(key)
-            if compact_meta:
-                result["meta"] = compact_meta
-                query_text = str(compact_meta.get("q", "")).strip()
-
-        items = data.get("items", [])
-        if isinstance(items, list):
-            scored_items: list[dict[str, Any]] = []
-            query_terms = self._tokenize_query_terms(query_text)
-            for item in items[:10]:
-                if not isinstance(item, dict):
-                    continue
-                xml_id_raw = item.get("xml_id")
-                if isinstance(xml_id_raw, bool):
-                    continue
-                xml_id: int | None = None
-                with contextlib.suppress(TypeError, ValueError):
-                    xml_id = int(xml_id_raw)
-                if not isinstance(xml_id, int):
-                    continue
-
-                name = self._normalize_compact_text(item.get("name"))
-                if not name:
-                    continue
-                rating = item.get("rating")
-                rating_avg = rating.get("average") if isinstance(rating, dict) else rating
-                if not isinstance(rating_avg, int | float) or isinstance(rating_avg, bool):
-                    rating_avg = None
-                price = item.get("price")
-                if isinstance(price, dict):
-                    price = price.get("current")
-                price_value = self._safe_float(price, default=-1.0)
-                unit = str(item.get("unit", "")).strip()
-                score, confidence = self._score_search_candidate(
-                    query_terms=query_terms,
-                    product_name=name,
-                    rating=rating_avg,
-                )
-                scored_items.append(
-                    {
-                        "xml_id": xml_id,
-                        "name": name,
-                        "price": price_value if price_value >= 0 else None,
-                        "unit": unit or None,
-                        "rating": rating_avg,
-                        "confidence": confidence,
-                        "_score": score,
-                    }
-                )
-
-            scored_items.sort(key=lambda row: row.get("_score", 0.0), reverse=True)
-            top_items = []
-            for row in scored_items[:3]:
-                top_items.append({k: v for k, v in row.items() if k != "_score" and v is not None})
-            result["items"] = top_items
-
-        relevance_warning = data.get("relevance_warning")
-        if relevance_warning:
-            result["relevance_warning"] = relevance_warning
-        return result
-
-    @classmethod
-    def _compact_product_details(cls, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {"ok": payload.get("ok")}
-        data = payload.get("data")
-        if isinstance(data, dict):
-            price = data.get("price")
-            if isinstance(price, dict):
-                price = price.get("current")
-            rating = data.get("rating")
-            rating_value = rating.get("average") if isinstance(rating, dict) else rating
-            weight = data.get("weight")
-            compact_weight: dict[str, Any] | None = None
-            if isinstance(weight, dict):
-                compact_weight = {}
-                if "value" in weight:
-                    compact_weight["value"] = weight.get("value")
-                if "unit" in weight:
-                    compact_weight["unit"] = weight.get("unit")
-                if not compact_weight:
-                    compact_weight = None
-
-            compact_data: dict[str, Any] = {
-                "xml_id": data.get("xml_id", data.get("id")),
-                "name": cls._normalize_compact_text(data.get("name")),
-                "brand": cls._normalize_compact_text(data.get("brand")),
-                "price": price,
-                "unit": cls._normalize_compact_text(data.get("unit")),
-                "weight": compact_weight,
-                "rating": rating_value,
-            }
-            result["data"] = {
-                key: value
-                for key, value in compact_data.items()
-                if value is not None and value != ""
-            }
-
-        if "error" in payload:
-            result["error"] = payload.get("error")
-        if "message" in payload:
-            result["message"] = payload.get("message")
-        return result
+        return self._compactor._compact_products_search(payload)
 
     def _compact_recipe_ingredients(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {"ok": payload.get("ok")}
-        data = payload.get("data")
-        if not isinstance(data, dict):
-            # Идемпотентность компактизации: поддержать уже-compact shape.
-            has_compact_shape = any(key in payload for key in ("dish", "servings", "ingredients"))
-            if not has_compact_shape:
-                return result
-            data = payload
-
-        result["dish"] = data.get("dish", payload.get("dish"))
-        result["servings"] = data.get("servings", payload.get("servings"))
-        ingredients = data.get("ingredients")
-        if not isinstance(ingredients, list):
-            ingredients = payload.get("ingredients", [])
-        if isinstance(ingredients, list):
-            compact_ingredients: list[dict[str, Any]] = []
-            for row in ingredients[:30]:
-                if not isinstance(row, dict):
-                    continue
-
-                compact_row: dict[str, Any] = {
-                    "name": row.get("name"),
-                    "quantity": row.get("quantity"),
-                    "unit": row.get("unit"),
-                }
-                if row.get("optional") is True:
-                    compact_row["optional"] = True
-                for field in ("search_query", "kg_equivalent", "l_equivalent", "pack_equivalent"):
-                    value = row.get(field)
-                    if value is not None and value != "":
-                        compact_row[field] = value
-                compact_ingredients.append(compact_row)
-
-            result["ingredients"] = compact_ingredients
-        return result
+        return self._compactor._compact_recipe_ingredients(payload)
 
     def _compact_recipe_search(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {"ok": payload.get("ok")}
-        data = payload.get("data")
-        compact_found: list[dict[str, Any]] = []
-        not_found: list[Any] = []
+        return self._compactor._compact_recipe_search(payload)
 
-        if isinstance(data, dict):
-            found = data.get("found", [])
-            if isinstance(found, list):
-                for row in found[:40]:
-                    if not isinstance(row, dict):
-                        continue
-                    item = row.get("item")
-                    compact_found.append(
-                        {
-                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
-                            "suggested_q": row.get("suggested_q"),
-                            "xml_id": item.get("xml_id") if isinstance(item, dict) else None,
-                            "name": (
-                                self._normalize_compact_text(item.get("name"))
-                                if isinstance(item, dict)
-                                else None
-                            ),
-                            "price": (
-                                self._extract_price_value(item.get("price"))
-                                if isinstance(item, dict)
-                                else None
-                            ),
-                        }
-                    )
-            raw_not_found = data.get("not_found", [])
-            if isinstance(raw_not_found, list):
-                not_found = raw_not_found
-
-        # Идемпотентность компактизации: поддержать уже-compact shape
-        # {"ok":true,"found":[...],"not_found":[...]}.
-        if not compact_found:
-            raw_found = payload.get("found", [])
-            if isinstance(raw_found, list):
-                for row in raw_found[:40]:
-                    if not isinstance(row, dict):
-                        continue
-                    compact_found.append(
-                        {
-                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
-                            "suggested_q": row.get("suggested_q"),
-                            "xml_id": row.get("xml_id"),
-                            "name": self._normalize_compact_text(row.get("name")),
-                            "price": self._extract_price_value(row.get("price")),
-                        }
-                    )
-            if not not_found:
-                raw_not_found = payload.get("not_found", [])
-                if isinstance(raw_not_found, list):
-                    not_found = raw_not_found
-
-        # Совместимость с fallback-форматом: top-level results/best_match.
-        if not compact_found:
-            results = payload.get("results", [])
-            if isinstance(results, list):
-                for row in results[:40]:
-                    if not isinstance(row, dict):
-                        continue
-                    best_match = row.get("best_match")
-                    if not isinstance(best_match, dict):
-                        continue
-                    compact_found.append(
-                        {
-                            "ingredient": self._normalize_compact_text(row.get("ingredient")),
-                            "suggested_q": best_match.get("suggested_q"),
-                            "xml_id": best_match.get("xml_id"),
-                            "name": self._normalize_compact_text(best_match.get("name")),
-                            "price": self._extract_price_value(best_match.get("price")),
-                        }
-                    )
-            if not not_found:
-                raw_not_found = payload.get("not_found", [])
-                if isinstance(raw_not_found, list):
-                    not_found = raw_not_found
-
-        result["found"] = compact_found
-        if isinstance(not_found, list):
-            result["not_found"] = not_found[:40]
-        return result
-
-    @staticmethod
-    def _normalize_compact_text(value: Any) -> str:
-        text = str(value or "")
-        if not text:
-            return ""
-        text = html.unescape(text)
-        text = re.sub(r"<[^>]+>", " ", text)
-        return re.sub(r"\s+", " ", text).strip()
-
-    @classmethod
-    def _tokenize_query_terms(cls, query: str) -> list[str]:
-        normalized = cls._normalize_compact_text(query).lower().replace("ё", "е")
-        tokens = re.findall(r"[a-zа-я0-9]+", normalized, flags=re.IGNORECASE)
-        return [token for token in tokens if len(token) >= 2][:6]
-
-    @classmethod
-    def _score_search_candidate(
-        cls,
-        *,
-        query_terms: list[str],
-        product_name: str,
-        rating: float | None,
-    ) -> tuple[float, float]:
-        normalized_name = cls._normalize_compact_text(product_name).lower().replace("ё", "е")
-        if not query_terms:
-            rating_bonus = (rating or 0.0) / 10 if rating is not None else 0.0
-            return rating_bonus, 0.5
-
-        matched = sum(1 for token in query_terms if token in normalized_name)
-        coverage = matched / max(1, len(query_terms))
-        prefix_bonus = 0.2 if normalized_name.startswith(query_terms[0]) else 0.0
-        rating_bonus = (rating or 0.0) / 10 if rating is not None else 0.0
-        score = coverage * 2.5 + prefix_bonus + rating_bonus
-        confidence = min(0.99, max(0.0, 0.3 + coverage * 0.7))
-        return score, round(confidence, 2)
-
-    def _compact_cart_link(self, payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {"ok": payload.get("ok")}
-        data = payload.get("data")
-        if isinstance(data, dict):
-            result["link"] = data.get("link")
-            price_summary = data.get("price_summary")
-            if isinstance(price_summary, dict):
-                result["price_summary"] = price_summary
-        if "error" in payload:
-            result["error"] = payload.get("error")
-        if "message" in payload:
-            result["message"] = payload.get("message")
-        return result
-
-    @staticmethod
-    def _compact_generic(payload: dict[str, Any]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key in ("ok", "error", "message", "data"):
-            if key in payload:
-                result[key] = payload[key]
-        return result or payload
+    # Backward-compatible aliases delegating to module-level functions.
+    _normalize_compact_text = staticmethod(normalize_compact_text)
+    _tokenize_query_terms = staticmethod(tokenize_query_terms)  # type: ignore[assignment]
+    _score_search_candidate = staticmethod(score_search_candidate)  # type: ignore[assignment]
+    _extract_price_value = staticmethod(extract_price_value)  # type: ignore[assignment]
 
     @staticmethod
     def _tool_progress_text(tool_name: str) -> str:
@@ -3605,28 +2701,7 @@ class ShoppingAgent:
     @staticmethod
     def _is_cart_intent(user_text: str) -> bool:
         normalized = user_text.lower()
-        markers = (
-            "собери",
-            "корзин",
-            "закаж",
-            "добав",
-            "купить",
-            "заказ",
-            "ингредиент",
-            "ингридиент",
-            "рецепт",
-            "приготов",
-            "сдела",
-            "свари",
-            "испеч",
-            "убер",
-            "удал",
-            "замен",
-            "измени",
-            "поменя",
-            "объедин",
-        )
-        return any(marker in normalized for marker in markers)
+        return any(marker in normalized for marker in CART_INTENT_MARKERS)
 
     @staticmethod
     def _looks_like_partial_recipe_reply(text: str) -> bool:
@@ -3733,175 +2808,15 @@ class ShoppingAgent:
         # трактуем сообщение как новый запрос на новую корзину.
         return True
 
-    @classmethod
-    def _render_stable_cart_output(
-        cls,
-        cart_data: dict[str, Any],
-        *,
-        safety_note: str = "",
-    ) -> str:
-        link = str(cart_data.get("link", "")).strip()
-        summary = cart_data.get("price_summary")
-        summary_dict = summary if isinstance(summary, dict) else {}
-        items = summary_dict.get("items")
-
-        lines: list[str] = []
-        if isinstance(items, list):
-            for index, row in enumerate(items[:20], start=1):
-                if not isinstance(row, str):
-                    continue
-                normalized = ShoppingAgent._normalize_compact_text(row)
-                if not normalized:
-                    continue
-                if normalized.startswith("-"):
-                    normalized = normalized.lstrip("-").strip()
-                lines.append(f"{index}. {normalized}")
-
-        total_text = ""
-        total_text_raw = summary_dict.get("total_text")
-        if isinstance(total_text_raw, str) and total_text_raw.strip():
-            total_text = ShoppingAgent._normalize_compact_text(total_text_raw)
-        else:
-            total_raw = summary_dict.get("total")
-            total = ShoppingAgent._safe_float(total_raw, default=-1.0)
-            if total >= 0:
-                total_text = f"Итого: {total:.2f} руб"
-        purchase_total_text = ShoppingAgent._normalize_compact_text(
-            summary_dict.get("purchase_total_text")
-        )
-        recipe_total_text = ShoppingAgent._normalize_compact_text(
-            summary_dict.get("recipe_total_text")
-        )
-        overbuy_total_text = ShoppingAgent._normalize_compact_text(
-            summary_dict.get("overbuy_total_text")
-        )
-        dual_pricing = bool(summary_dict.get("dual_pricing"))
-        purchase_total = ShoppingAgent._safe_float(summary_dict.get("purchase_total"), default=-1.0)
-        recipe_total = ShoppingAgent._safe_float(summary_dict.get("recipe_total"), default=-1.0)
-        has_meaningful_dual = dual_pricing or (
-            purchase_total >= 0 and recipe_total >= 0 and abs(purchase_total - recipe_total) >= 0.01
-        )
-
-        chunks = ["Собрала корзину по вашему запросу."]
-        if lines:
-            chunks.append("\n".join(lines))
-        if total_text:
-            chunks.append(f"<b>{total_text}</b>")
-        if has_meaningful_dual:
-            if recipe_total_text:
-                chunks.append(f"<b>{recipe_total_text}</b>")
-            if purchase_total_text:
-                chunks.append(f"<b>{purchase_total_text}</b>")
-            if overbuy_total_text:
-                chunks.append(overbuy_total_text)
-        cleaned_safety_note = cls._normalize_compact_text(safety_note)
-        if cleaned_safety_note:
-            chunks.append(cleaned_safety_note)
-        if link:
-            chunks.append(f'<a href="{link}">Открыть корзину</a>')
-        chunks.append(
-            "<i>Наличие и точное количество товаров будет проверено при открытии ссылки на "
-            "корзину. Цены и состав уточняйте на сайте.</i>"
-        )
-        return "\n\n".join(chunks)
-
-    @classmethod
-    def _extract_cart_safety_note(cls, text: str) -> str:
-        normalized_text = cls._normalize_compact_text(text)
-        if not normalized_text:
-            return ""
-
-        candidates = re.split(r"(?<=[.!?])\s+|\n+", normalized_text)
-        if not candidates:
-            candidates = [normalized_text]
-
-        keywords = (
-            "аллерг",
-            "состав",
-            "неперенос",
-            "индивидуал",
-            "чувствител",
-            "противопоказ",
-        )
-        for candidate in candidates:
-            line = cls._normalize_compact_text(candidate).strip(" -\t")
-            if not line:
-                continue
-            line_low = line.lower()
-            if "http://" in line_low or "https://" in line_low:
-                continue
-            if "открыть корзину" in line_low:
-                continue
-            if any(token in line_low for token in keywords):
-                return line
-        return ""
+    # Backward-compatible aliases delegating to cart_output_renderer module.
+    _render_stable_cart_output = staticmethod(render_stable_cart_output)  # type: ignore[assignment]
+    _extract_cart_safety_note = staticmethod(extract_cart_safety_note)  # type: ignore[assignment]
+    _extract_first_url = staticmethod(extract_first_url)
+    _looks_like_manual_cart_reply = staticmethod(looks_like_manual_cart_reply)
+    _looks_like_cart_ready_reply = staticmethod(looks_like_cart_ready_reply)
+    _looks_like_wrong_cart_summary = staticmethod(looks_like_wrong_cart_summary)
+    _looks_like_wrong_cart_link = staticmethod(looks_like_wrong_cart_link)  # type: ignore[assignment]
+    _looks_like_missing_cart_prices = staticmethod(looks_like_missing_cart_prices)
 
     def _stabilize_cart_output(self, *, final_text: str, cart_data: dict[str, Any]) -> str:
-        items_count = 0
-        summary_dict: dict[str, Any] = {}
-        summary = cart_data.get("price_summary")
-        if isinstance(summary, dict):
-            summary_dict = summary
-            count_raw = summary.get("count")
-            if isinstance(count_raw, int) and count_raw > 0:
-                items_count = count_raw
-            elif isinstance(count_raw, float) and count_raw.is_integer() and count_raw > 0:
-                items_count = int(count_raw)
-            else:
-                items = summary.get("items")
-                if isinstance(items, list):
-                    items_count = len(items)
-
-        if self._looks_like_manual_cart_reply(final_text):
-            return self._render_stable_cart_output(cart_data)
-        if self._looks_like_wrong_cart_summary(final_text, items_count=items_count):
-            return self._render_stable_cart_output(cart_data)
-        if self._looks_like_wrong_cart_link(final_text, cart_data=cart_data):
-            return self._render_stable_cart_output(cart_data)
-        if self._looks_like_missing_cart_prices(final_text, summary=summary_dict):
-            return self._render_stable_cart_output(cart_data)
-        return final_text
-
-    @staticmethod
-    def _extract_first_url(text: str) -> str:
-        match = re.search(r"https?://[^\s\"<>]+", text)
-        if not match:
-            return ""
-        return match.group(0).strip().rstrip("\\).,;:!?]")
-
-    @classmethod
-    def _looks_like_wrong_cart_link(cls, text: str, *, cart_data: dict[str, Any]) -> bool:
-        expected_link = str(cart_data.get("link", "")).strip()
-        if not expected_link:
-            return False
-        actual_link = cls._extract_first_url(text)
-        if not actual_link:
-            return True
-        return actual_link != expected_link
-
-    @staticmethod
-    def _looks_like_missing_cart_prices(text: str, *, summary: dict[str, Any]) -> bool:
-        """Определить, что финальный ответ не содержит цен по позициям корзины."""
-        items = summary.get("items")
-        if not isinstance(items, list) or not any(isinstance(row, str) for row in items):
-            return False
-
-        normalized = text.strip()
-        if not normalized:
-            return True
-
-        # Ищем строки формата:
-        # 1. Товар ... x 2 = 198 ₽
-        # 2. Товар ... × 2 шт = 198 руб
-        priced_row = re.compile(
-            r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)"
-        )
-        has_priced_rows = bool(priced_row.search(normalized))
-
-        # Минимальная проверка: если есть total_text в summary, он тоже должен быть в ответе.
-        total_text_raw = summary.get("total_text")
-        has_total_text = isinstance(total_text_raw, str) and bool(total_text_raw.strip())
-        total_text = total_text_raw.strip().lower() if has_total_text else ""
-        has_total_in_text = total_text in normalized.lower() if total_text else True
-
-        return not (has_priced_rows and has_total_in_text)
+        return stabilize_cart_output(final_text=final_text, cart_data=cart_data)
