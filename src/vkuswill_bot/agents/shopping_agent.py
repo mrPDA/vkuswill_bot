@@ -13,7 +13,6 @@ from typing import TYPE_CHECKING, Any
 
 from vkuswill_bot.agents.intent_markers import (
     ADDITIVE_CART_MARKERS,
-    CART_INTENT_MARKERS,
     EXPLICIT_NEW_CART_MARKERS,
     MODIFY_EXISTING_CART_MARKERS,
     PANTRY_TAG_PEPPER,
@@ -52,6 +51,19 @@ from vkuswill_bot.agents.cart_price_builder import (
     format_quantity_text,
     normalize_product_row,
     round_kilogram_quantity,
+)
+from vkuswill_bot.agents.mcp_response_parser import (
+    extract_cart_data,
+    extract_recipe_products_from_history,
+    extract_search_items,
+    has_recipe_search_candidates,
+    parse_json_payload,
+)
+from vkuswill_bot.agents.response_analysis import (
+    is_additive_cart_intent,
+    is_cart_intent,
+    looks_like_partial_recipe_reply,
+    should_start_fresh_context,
 )
 from vkuswill_bot.agents.llm_helpers import (
     assistant_msg,
@@ -1308,60 +1320,7 @@ class ShoppingAgent:
             ensure_ascii=False,
         )
 
-    @staticmethod
-    def _extract_search_items(payload: Any) -> list[dict[str, Any]]:
-        if not isinstance(payload, dict):
-            return []
-        data = payload.get("data")
-        if isinstance(data, dict):
-            data_products = data.get("products")
-            if isinstance(data_products, list):
-                return [item for item in data_products if isinstance(item, dict)]
-            items = data.get("items")
-            if isinstance(items, list):
-                return [item for item in items if isinstance(item, dict)]
-            if isinstance(data.get("xml_id"), int | str):
-                return [data]
-        item = payload.get("item")
-        if isinstance(item, dict):
-            return [item]
-        items = payload.get("items")
-        if isinstance(items, list):
-            return [entry for entry in items if isinstance(entry, dict)]
-        products = payload.get("products")
-        if isinstance(products, list):
-            return [item for item in products if isinstance(item, dict)]
-        found = payload.get("found")
-        if isinstance(found, list):
-            result: list[dict[str, Any]] = []
-            for row in found:
-                if not isinstance(row, dict):
-                    continue
-                xml_id = row.get("xml_id")
-                if xml_id is None:
-                    continue
-                result.append(
-                    {
-                        "xml_id": xml_id,
-                        "name": row.get("name"),
-                        "price": row.get("price"),
-                        "unit": row.get("unit", "шт"),
-                    }
-                )
-            if result:
-                return result
-        results = payload.get("results")
-        if isinstance(results, list):
-            expanded: list[dict[str, Any]] = []
-            for row in results:
-                if not isinstance(row, dict):
-                    continue
-                best_match = row.get("best_match")
-                if isinstance(best_match, dict):
-                    expanded.append(best_match)
-            if expanded:
-                return expanded
-        return []
+    _extract_search_items = staticmethod(extract_search_items)
 
     def _build_product_index_from_history(
         self,
@@ -1393,21 +1352,7 @@ class ShoppingAgent:
                 return float(value.replace(",", "."))
         return default
 
-    @staticmethod
-    def _parse_json_payload(content: Any) -> Any:
-        if not isinstance(content, str):
-            return content
-        text = content.strip()
-        if text.startswith("```"):
-            lines = text.splitlines()
-            if lines and lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-        with contextlib.suppress(json.JSONDecodeError):
-            return json.loads(text)
-        return {}
+    _parse_json_payload = staticmethod(parse_json_payload)
 
     _enrich_recipe_equivalents = staticmethod(enrich_recipe_equivalents)
     _fallback_borscht_ingredients = staticmethod(fallback_borscht_ingredients)
@@ -1580,22 +1525,7 @@ class ShoppingAgent:
         }
         return mapping.get(tool_name, "\u2699\ufe0f Обрабатываю запрос...")
 
-    @staticmethod
-    def _extract_cart_data(*, tool_name: str, tool_result: str) -> dict[str, Any] | None:
-        if tool_name != "vkusvill_cart_link_create":
-            return None
-        with contextlib.suppress(Exception):
-            payload = json.loads(tool_result)
-            if not isinstance(payload, dict) or not payload.get("ok"):
-                return None
-            data = payload.get("data")
-            if not isinstance(data, dict):
-                return None
-            link = data.get("link")
-            if not isinstance(link, str) or not link.strip():
-                return None
-            return data
-        return None
+    _extract_cart_data = staticmethod(extract_cart_data)  # type: ignore[assignment]
 
     def _update_product_index_from_tool_result(
         self,
@@ -1642,64 +1572,10 @@ class ShoppingAgent:
                 continue
             search_query_by_xml_id[normalized["xml_id"]] = query
 
-    @staticmethod
-    def _has_recipe_search_candidates(history: list[dict[str, Any]]) -> bool:
-        products, _not_found_count = ShoppingAgent._extract_recipe_products_from_history(history)
-        return bool(products)
-
-    @staticmethod
-    def _extract_recipe_products_from_history(
-        history: list[dict[str, Any]],
-    ) -> tuple[list[dict[str, Any]], int]:
-        for msg in reversed(history):
-            if msg.get("role") != "tool" or msg.get("name") != "recipe_search":
-                continue
-            payload = ShoppingAgent._parse_json_payload(msg.get("content"))
-            if not isinstance(payload, dict):
-                continue
-            found_raw = payload.get("found")
-            if not isinstance(found_raw, list):
-                results_raw = payload.get("results")
-                if isinstance(results_raw, list):
-                    found_raw = []
-                    for row in results_raw:
-                        if not isinstance(row, dict):
-                            continue
-                        best_match = row.get("best_match")
-                        if not isinstance(best_match, dict):
-                            continue
-                        found_raw.append(
-                            {
-                                "xml_id": best_match.get("xml_id"),
-                                "suggested_q": best_match.get("suggested_q"),
-                            }
-                        )
-                if not isinstance(found_raw, list):
-                    continue
-
-            not_found_raw = payload.get("not_found")
-            not_found_count = len(not_found_raw) if isinstance(not_found_raw, list) else 0
-            quantities_by_xml_id: dict[int, float] = {}
-            for row in found_raw:
-                if not isinstance(row, dict):
-                    continue
-                xml_id_raw = row.get("xml_id")
-                if isinstance(xml_id_raw, bool):
-                    continue
-                try:
-                    xml_id = int(xml_id_raw)
-                except (TypeError, ValueError):
-                    continue
-                suggested_q = ShoppingAgent._safe_float(row.get("suggested_q"), default=1.0)
-                if suggested_q <= 0:
-                    suggested_q = 1.0
-                quantities_by_xml_id[xml_id] = quantities_by_xml_id.get(xml_id, 0.0) + suggested_q
-
-            products: list[dict[str, Any]] = [
-                {"xml_id": xml_id, "q": q} for xml_id, q in quantities_by_xml_id.items()
-            ]
-            return products, not_found_count
-        return [], 0
+    _has_recipe_search_candidates = staticmethod(has_recipe_search_candidates)
+    _extract_recipe_products_from_history = staticmethod(  # type: ignore[assignment]
+        extract_recipe_products_from_history
+    )
 
     async def _recover_cart_from_recipe_search_history(
         self,
@@ -1746,75 +1622,9 @@ class ShoppingAgent:
     _format_quantity_text = staticmethod(format_quantity_text)
     _round_kilogram_quantity = staticmethod(round_kilogram_quantity)
 
-    @staticmethod
-    def _is_additive_cart_intent(user_text: str) -> bool:
-        normalized = user_text.lower()
-        return any(marker in normalized for marker in _ADDITIVE_CART_MARKERS)
-
-    @staticmethod
-    def _is_cart_intent(user_text: str) -> bool:
-        normalized = user_text.lower()
-        return any(marker in normalized for marker in CART_INTENT_MARKERS)
-
-    @staticmethod
-    def _looks_like_partial_recipe_reply(text: str) -> bool:
-        normalized = text.lower()
-        if not normalized.strip():
-            return False
-        if "открыть корзину" in normalized or "share_basket" in normalized:
-            return False
-        markers = (
-            "ингредиент",
-            "подобрал",
-            "подобрала",
-            "рецепт",
-            "список продуктов",
-            "могу продолж",
-            "если нужно",
-        )
-        return any(marker in normalized for marker in markers)
-
-    @staticmethod
-    def _looks_like_manual_cart_reply(text: str) -> bool:
-        normalized = text.lower()
-        markers = (
-            "вручн",
-            "самостоятель",
-            "соберите корзину сами",
-            "оформите заказ сами",
-            "собрать корзину самому",
-            "добавьте товары сами",
-            "перейдите на сайт",
-            "в приложении соберите",
-        )
-        return any(marker in normalized for marker in markers)
-
-    @staticmethod
-    def _looks_like_cart_ready_reply(text: str) -> bool:
-        normalized = text.lower()
-        if "открыть корзину" in normalized:
-            return True
-        if "итого" in normalized and any(
-            word in normalized for word in ("корзин", "собрал", "собрала")
-        ):
-            return True
-        if "корзин" in normalized and any(
-            word in normalized for word in ("собрал", "собрала", "собрано", "готова", "готово")
-        ):
-            return True
-        return "share_basket" in normalized
-
-    @staticmethod
-    def _looks_like_wrong_cart_summary(text: str, *, items_count: int) -> bool:
-        normalized = text.lower()
-        if items_count > 0 and (
-            "0 товар" in normalized
-            or "0 пози" in normalized
-            or "ноль товар" in normalized
-            or "ноль пози" in normalized
-        ):
-            return True
-        return "не удалось создать корзину" in normalized or "не могу создать корзину" in normalized
+    _is_additive_cart_intent = staticmethod(is_additive_cart_intent)
+    _is_cart_intent = staticmethod(is_cart_intent)
+    _looks_like_partial_recipe_reply = staticmethod(looks_like_partial_recipe_reply)
 
     def _should_start_fresh_context(
         self,
@@ -1822,44 +1632,7 @@ class ShoppingAgent:
         text: str,
         history: list[dict[str, Any]] | None,
     ) -> bool:
-        if not history or len(history) < 3:
-            return False
-
-        normalized = text.lower()
-        if any(marker in normalized for marker in _MODIFY_EXISTING_CART_MARKERS):
-            return False
-
-        if not self._is_cart_intent(text):
-            return False
-
-        last_assistant_text = ""
-        for msg in reversed(history):
-            if msg.get("role") != "assistant":
-                continue
-            content = msg.get("content")
-            if isinstance(content, str) and content.strip():
-                last_assistant_text = content
-                break
-        if not last_assistant_text:
-            return False
-
-        response_low = last_assistant_text.lower()
-        has_last_cart = self._looks_like_cart_ready_reply(last_assistant_text) or (
-            "<a href=" in response_low and "vkusvill.ru" in response_low
-        )
-        if not has_last_cart:
-            return False
-
-        # Статус/проверка не должны запускать новую корзину.
-        if any(marker in normalized for marker in _STATUS_QUERY_MARKERS):
-            return False
-
-        if any(marker in normalized for marker in _EXPLICIT_NEW_CART_MARKERS):
-            return True
-
-        # Если корзина уже собрана и пользователь не просит явную модификацию,
-        # трактуем сообщение как новый запрос на новую корзину.
-        return True
+        return should_start_fresh_context(text=text, history=history)
 
     # Backward-compatible aliases delegating to cart_output_renderer module.
     _render_stable_cart_output = staticmethod(render_stable_cart_output)  # type: ignore[assignment]
