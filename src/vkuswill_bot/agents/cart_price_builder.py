@@ -6,13 +6,14 @@ import contextlib
 import math
 from typing import Any
 
+from vkuswill_bot.agents.quantity_utils import DISCRETE_UNITS, round_kilogram_quantity
 from vkuswill_bot.agents.tool_result_compactor import (
     _safe_float,
     extract_price_value,
     normalize_compact_text,
 )
 
-_DISCRETE_UNITS = frozenset({"шт", "уп", "пач", "бут", "бан", "пак"})
+_DISCRETE_UNITS = DISCRETE_UNITS
 
 
 def normalize_product_row(item: dict[str, Any]) -> dict[str, Any] | None:
@@ -63,13 +64,6 @@ def aggregate_products_by_xml_id(
             order.append(xml_id)
         totals[xml_id] += quantity
     return totals, order
-
-
-def round_kilogram_quantity(quantity: float) -> float:
-    """Округлить количество в кг вверх до 0.1."""
-    safe_quantity = quantity if quantity > 0 else 0.1
-    rounded = math.ceil(safe_quantity * 10) / 10
-    return round(max(0.1, rounded), 1)
 
 
 def format_quantity_text(quantity: float, *, unit: str = "") -> str:

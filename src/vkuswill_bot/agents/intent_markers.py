@@ -1,5 +1,7 @@
 """Маркеры для детекции намерений пользователя."""
 
+from vkuswill_bot.agents import pantry_tags
+
 MODIFY_EXISTING_CART_MARKERS = (
     "добав",
     "ещё",
@@ -67,7 +69,6 @@ CART_INTENT_MARKERS = (
     "объедин",
 )
 
-# Pantry ingredient tags — used to filter common pantry items from recipe results.
-PANTRY_TAG_SALT = "salt"
-PANTRY_TAG_SUGAR = "sugar"
-PANTRY_TAG_PEPPER = "pepper"
+PANTRY_TAG_SALT = pantry_tags.PANTRY_TAG_SALT
+PANTRY_TAG_SUGAR = pantry_tags.PANTRY_TAG_SUGAR
+PANTRY_TAG_PEPPER = pantry_tags.PANTRY_TAG_PEPPER

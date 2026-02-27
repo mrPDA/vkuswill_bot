@@ -9,7 +9,7 @@ import math
 import re
 from typing import Any
 
-from vkuswill_bot.agents.intent_markers import (
+from vkuswill_bot.agents.pantry_tags import (
     PANTRY_TAG_PEPPER,
     PANTRY_TAG_SALT,
     PANTRY_TAG_SUGAR,

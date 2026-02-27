@@ -7,17 +7,24 @@ import copy
 import math
 from typing import Any
 
-from vkuswill_bot.agents.cart_price_builder import (
-    _DISCRETE_UNITS,
+from vkuswill_bot.agents.quantity_utils import (
+    DISCRETE_UNITS,
     round_kilogram_quantity,
 )
-from vkuswill_bot.agents.intent_markers import ADDITIVE_CART_MARKERS
-from vkuswill_bot.agents.recipe_helpers import match_requested_ingredient
-from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.search_processor import SearchProcessor
 
 _EGG_PACK_SIZE = 10
+_ADDITIVE_CART_MARKERS = (
+    "добав",
+    "ещё",
+    "еще",
+    "дополни",
+    "и еще",
+    "плюс",
+    "к этой корзин",
+    "к предыдущ",
+)
 
 
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
@@ -32,7 +39,7 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
 
 def _is_additive_cart_intent(user_text: str) -> bool:
     normalized = user_text.lower()
-    return any(marker in normalized for marker in ADDITIVE_CART_MARKERS)
+    return any(marker in normalized for marker in _ADDITIVE_CART_MARKERS)
 
 
 # ------------------------------------------------------------------
@@ -84,24 +91,6 @@ def preprocess_tool_args(
             product = product_lookup.get(xml_id)
             if not isinstance(product, dict):
                 continue
-            if requested_ingredients:
-                matched_ingredient = match_requested_ingredient(
-                    product=product,
-                    xml_id=xml_id,
-                    requested_ingredients=requested_ingredients,
-                    search_query_by_xml_id=search_query_by_xml_id,
-                )
-                if matched_ingredient is not None:
-                    requested_q, purchase_q = (
-                        RecipeQuantityCalculator.calculate_requested_and_purchase_q(
-                            ingredient=matched_ingredient,
-                            item=product,
-                        )
-                    )
-                    if requested_quantity_overrides is not None and requested_q > 0:
-                        requested_quantity_overrides[xml_id] = requested_q
-                    item["q"] = purchase_q
-                    continue
             name = str(product.get("name", "")).strip().lower()
             q = _safe_float(item.get("q"), default=1.0)
             if q <= 0:
@@ -113,7 +102,7 @@ def preprocess_tool_args(
                     continue
                 item["q"] = max(1, math.ceil(q / _EGG_PACK_SIZE))
                 continue
-            if unit in _DISCRETE_UNITS:
+            if unit in DISCRETE_UNITS:
                 item["q"] = max(1, math.ceil(q))
                 continue
             if unit in {"кг", "kg"}:

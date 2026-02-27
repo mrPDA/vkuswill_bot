@@ -1,0 +1,141 @@
+"""Архитектурные guard-тесты для `vkuswill_bot.agents`."""
+
+from __future__ import annotations
+
+import ast
+from functools import lru_cache
+from pathlib import Path
+
+
+AGENTS_DIR = Path(__file__).resolve().parents[1] / "src" / "vkuswill_bot" / "agents"
+
+LAYER_BY_MODULE: dict[str, str] = {
+    # Runtime
+    "shopping_agent": "runtime",
+    "shopping_turn_executor": "runtime",
+    "shopping_turn_components": "runtime",
+    "mcp_tool_gateway": "runtime",
+    # Policy
+    "prompt_helpers": "policy",
+    "response_analysis": "policy",
+    "recovery_policy": "policy",
+    "recovery_hints": "policy",
+    "intent_markers": "policy",
+    # Domain
+    "recipe_helpers": "domain",
+    "recipe_quantity_calculator": "domain",
+    "recipe_fallback": "domain",
+    "product_index_manager": "domain",
+    "cart_price_builder": "domain",
+    "cart_output_renderer": "domain",
+    # IO
+    "tool_preprocessor": "io",
+    "mcp_response_parser": "io",
+    "mcp_helpers": "io",
+    # Shared
+    "pantry_tags": "shared",
+    "quantity_utils": "shared",
+    "tool_result_compactor": "shared",
+    "history_manager": "shared",
+    "llm_helpers": "shared",
+}
+
+_LAYER_ORDER: dict[str, int] = {
+    "runtime": 4,
+    "policy": 3,
+    "domain": 2,
+    "io": 1,
+    "shared": 0,
+}
+
+EXPECTED_LAYER_VIOLATIONS: set[tuple[str, str]] = set()
+
+
+@lru_cache(maxsize=1)
+def _agent_modules() -> dict[str, Path]:
+    return {path.stem: path for path in AGENTS_DIR.glob("*.py") if path.name != "__init__.py"}
+
+
+def _extract_internal_imports(module_name: str, module_path: Path) -> set[str]:
+    tree = ast.parse(module_path.read_text(encoding="utf-8"))
+    internal_modules = set(_agent_modules())
+    imports: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                dotted = alias.name
+                if dotted.startswith("vkuswill_bot.agents."):
+                    target = dotted.split(".")[-1]
+                    if target in internal_modules and target != module_name:
+                        imports.add(target)
+        if isinstance(node, ast.ImportFrom):
+            module = node.module
+            if module and module.startswith("vkuswill_bot.agents."):
+                target = module.split(".")[-1]
+                if target in internal_modules and target != module_name:
+                    imports.add(target)
+                continue
+            if module == "vkuswill_bot.agents":
+                for alias in node.names:
+                    target = alias.name.split(".")[0]
+                    if target in internal_modules and target != module_name:
+                        imports.add(target)
+                continue
+            if node.level >= 1:
+                if module:
+                    target = module.split(".")[-1]
+                    if target in internal_modules and target != module_name:
+                        imports.add(target)
+                else:
+                    for alias in node.names:
+                        target = alias.name.split(".")[0]
+                        if target in internal_modules and target != module_name:
+                            imports.add(target)
+
+    return imports
+
+
+@lru_cache(maxsize=1)
+def _collect_import_graph() -> dict[str, set[str]]:
+    graph: dict[str, set[str]] = {}
+    for module_name, module_path in _agent_modules().items():
+        graph[module_name] = _extract_internal_imports(module_name, module_path)
+    return graph
+
+
+def _collect_layer_violations() -> set[tuple[str, str]]:
+    violations: set[tuple[str, str]] = set()
+    graph = _collect_import_graph()
+    for source, targets in graph.items():
+        src_layer = LAYER_BY_MODULE[source]
+        src_rank = _LAYER_ORDER[src_layer]
+        for target in targets:
+            target_layer = LAYER_BY_MODULE[target]
+            target_rank = _LAYER_ORDER[target_layer]
+            if src_rank < target_rank:
+                violations.add((source, target))
+    return violations
+
+
+def test_layer_mapping_covers_all_agent_modules() -> None:
+    modules = set(_agent_modules())
+    mapping_modules = set(LAYER_BY_MODULE)
+    assert mapping_modules == modules
+
+
+def test_layer_violations_match_baseline() -> None:
+    actual = _collect_layer_violations()
+    assert actual == EXPECTED_LAYER_VIOLATIONS
+
+
+def test_max_module_outdegree_does_not_regress() -> None:
+    graph = _collect_import_graph()
+    max_outdegree = max(len(targets) for targets in graph.values())
+    assert max_outdegree <= 10
+
+
+def test_max_module_loc_does_not_regress() -> None:
+    modules = _agent_modules()
+    max_loc = max(sum(1 for _ in path.open("r", encoding="utf-8")) for path in modules.values())
+    assert max_loc <= 556

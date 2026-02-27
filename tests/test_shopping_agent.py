@@ -10,6 +10,7 @@ import pytest
 
 from vkuswill_bot.agents.recipe_helpers import extract_structured_ingredient_requests
 from vkuswill_bot.agents.shopping_agent import ShoppingAgent
+from vkuswill_bot.agents.shopping_turn_components import apply_requested_ingredient_overrides
 from vkuswill_bot.agents.tool_preprocessor import (
     preprocess_tool_args,
     restore_previous_quantities_for_additive_update,
@@ -1743,6 +1744,51 @@ def test_preprocess_cart_args_recalculates_quantities_from_structured_request() 
         },
         requested_quantity_overrides=requested_overrides,
     )
+    apply_requested_ingredient_overrides(
+        tool_name="vkusvill_cart_link_create",
+        tool_args=args,
+        product_index={
+            112931: {"name": "Говядина мякоть бедра без кости охл., вес", "unit": "кг"},
+            75461: {
+                "name": "Колбаса сырокопченая полусухая Классическая",
+                "unit": "шт",
+                "weight": {"value": 0.2, "unit": "кг"},
+            },
+            96521: {
+                "name": "Сосиски ВкусВилл со сливками",
+                "unit": "шт",
+                "weight": {"value": 0.38, "unit": "кг"},
+            },
+            16516: {
+                "name": "Огурцы соленые, 400 г",
+                "unit": "шт",
+                "weight": {"value": 0.4, "unit": "кг"},
+            },
+            605: {"name": "Лук репчатый", "unit": "кг"},
+            90216: {
+                "name": "Оливки Monini без косточки 300 г",
+                "unit": "шт",
+                "weight": {"value": 0.3, "unit": "кг"},
+            },
+            80956: {
+                "name": "Томатная паста (мини формат), 70 г",
+                "unit": "шт",
+                "weight": {"value": 0.07, "unit": "кг"},
+            },
+        },
+        explicit_egg_pack_request=False,
+        requested_ingredients=requested,
+        search_query_by_xml_id={
+            112931: "Говядина на кости",
+            75461: "Колбаса копчёная",
+            96521: "Сосиски",
+            16516: "Огурцы солёные",
+            605: "Лук репчатый",
+            90216: "Оливки без косточек",
+            80956: "Томатная паста",
+        },
+        requested_quantity_overrides=requested_overrides,
+    )
     assert args["products"] == [
         {"xml_id": 112931, "q": 0.8},
         {"xml_id": 75461, "q": 1},
@@ -1816,6 +1862,51 @@ def test_preprocess_cart_args_recalculates_quantities_from_inline_structured_req
             80956: "Томатная паста",
         },
     )
+    apply_requested_ingredient_overrides(
+        tool_name="vkusvill_cart_link_create",
+        tool_args=args,
+        product_index={
+            112931: {"name": "Говядина мякоть бедра без кости охл., вес", "unit": "кг"},
+            75461: {
+                "name": "Колбаса сырокопченая полусухая Классическая",
+                "unit": "шт",
+                "weight": {"value": 0.2, "unit": "кг"},
+            },
+            96521: {
+                "name": "Сосиски ВкусВилл со сливками",
+                "unit": "шт",
+                "weight": {"value": 0.38, "unit": "кг"},
+            },
+            16516: {
+                "name": "Огурцы соленые, 400 г",
+                "unit": "шт",
+                "weight": {"value": 0.4, "unit": "кг"},
+            },
+            605: {"name": "Лук репчатый", "unit": "кг"},
+            90216: {
+                "name": "Оливки Monini без косточки 300 г",
+                "unit": "шт",
+                "weight": {"value": 0.3, "unit": "кг"},
+            },
+            80956: {
+                "name": "Томатная паста (мини формат), 70 г",
+                "unit": "шт",
+                "weight": {"value": 0.07, "unit": "кг"},
+            },
+        },
+        explicit_egg_pack_request=False,
+        requested_ingredients=requested,
+        search_query_by_xml_id={
+            112931: "Говядина на кости",
+            75461: "Колбаса копчёная",
+            96521: "Сосиски",
+            16516: "Огурцы солёные",
+            605: "Лук репчатый",
+            90216: "Оливки без косточек",
+            80956: "Томатная паста",
+        },
+        requested_quantity_overrides={},
+    )
     assert args["products"][4] == {"xml_id": 605, "q": 0.2}
 
 
@@ -1834,6 +1925,21 @@ def test_preprocess_cart_args_converts_garlic_cloves_to_single_pack() -> None:
         requested_ingredients=requested,
         search_query_by_xml_id={35065: "чеснок"},
     )
+    apply_requested_ingredient_overrides(
+        tool_name="vkusvill_cart_link_create",
+        tool_args=args,
+        product_index={
+            35065: {
+                "name": "Чеснок, 100 г",
+                "unit": "шт",
+                "weight": {"value": 0.1, "unit": "кг"},
+            }
+        },
+        explicit_egg_pack_request=False,
+        requested_ingredients=requested,
+        search_query_by_xml_id={35065: "чеснок"},
+        requested_quantity_overrides={},
+    )
     assert args["products"] == [{"xml_id": 35065, "q": 1}]
 
 
@@ -1851,6 +1957,21 @@ def test_preprocess_cart_args_converts_bay_leaves_to_single_pack() -> None:
         },
         requested_ingredients=requested,
         search_query_by_xml_id={14551: "лавровый лист"},
+    )
+    apply_requested_ingredient_overrides(
+        tool_name="vkusvill_cart_link_create",
+        tool_args=args,
+        product_index={
+            14551: {
+                "name": "Лавровый лист, 10 г",
+                "unit": "шт",
+                "weight": {"value": 0.01, "unit": "кг"},
+            }
+        },
+        explicit_egg_pack_request=False,
+        requested_ingredients=requested,
+        search_query_by_xml_id={14551: "лавровый лист"},
+        requested_quantity_overrides={},
     )
     assert args["products"] == [{"xml_id": 14551, "q": 1}]
 
