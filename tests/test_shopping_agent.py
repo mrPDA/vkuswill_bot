@@ -8,7 +8,13 @@ from typing import Any
 
 import pytest
 
+from vkuswill_bot.agents.recipe_helpers import extract_structured_ingredient_requests
 from vkuswill_bot.agents.shopping_agent import ShoppingAgent
+from vkuswill_bot.agents.tool_preprocessor import (
+    preprocess_tool_args,
+    restore_previous_quantities_for_additive_update,
+)
+from vkuswill_bot.agents.product_index_manager import build_product_index_from_history
 
 
 class _FakeDialogManager:
@@ -603,6 +609,7 @@ def _agent(
     mcp_client: _FakeMCPClient | None = None,
     max_tool_calls: int = 5,
     preferences_store: _FakePreferencesStore | None = None,
+    max_active_users: int = 2000,
 ) -> tuple[ShoppingAgent, _FakeMCPClient]:
     mcp = mcp_client or _FakeMCPClient()
     agent = ShoppingAgent(
@@ -614,6 +621,7 @@ def _agent(
         dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
         max_tool_calls=max_tool_calls,
         max_history=20,
+        max_active_users=max_active_users,
         preferences_store=preferences_store,  # type: ignore[arg-type]
         llm_client=_FakeLLMClient(llm_script),
     )
@@ -625,6 +633,45 @@ async def test_text_only_response() -> None:
     agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="Готово"))])
     result = await agent.process_message(user_id=42, text="привет")
     assert result == "Готово"
+
+
+@pytest.mark.asyncio
+async def test_reset_conversation_clears_history_and_snapshot() -> None:
+    cart_payload = json.dumps(
+        {"ok": True, "data": {"link": "https://shop.example/cart/1", "price_summary": {"total": 100}}},
+        ensure_ascii=False,
+    )
+    tool_call = _FakeToolCall("tc-1", "vkusvill_cart_link_create", '{"products":[{"xml_id":1,"q":1}]}')
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="ok")),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, mcp_client=_FakeMCPClient(tool_result=cart_payload))
+
+    await agent.process_message(user_id=42, text="собери корзину")
+    assert await agent.get_last_cart_snapshot(42) is not None
+
+    await agent.reset_conversation(42)
+    assert await agent.get_last_cart_snapshot(42) is None
+    assert 42 not in agent._history
+
+
+@pytest.mark.asyncio
+async def test_prunes_oldest_user_state_when_max_active_users_exceeded() -> None:
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="ok-1")),
+        _FakeResponse(_FakeMessage(content="ok-2")),
+        _FakeResponse(_FakeMessage(content="ok-3")),
+    ]
+    agent, _mcp = _agent(llm_script=llm_script, max_active_users=2)
+
+    await agent.process_message(user_id=1, text="привет")
+    await agent.process_message(user_id=2, text="привет")
+    await agent.process_message(user_id=3, text="привет")
+
+    assert 1 not in agent._history
+    assert 2 in agent._history
+    assert 3 in agent._history
 
 
 def test_build_product_index_from_history_supports_compact_tool_shapes() -> None:
@@ -655,7 +702,7 @@ def test_build_product_index_from_history_supports_compact_tool_shapes() -> None
         },
     ]
 
-    product_index = agent._build_product_index_from_history(history)
+    product_index = build_product_index_from_history(history)
     assert product_index[45357]["name"] == "Батон белый"
     assert product_index[45357]["price"] == 45
     assert product_index[50548]["name"] == "Кефир 3,2%"
@@ -1566,7 +1613,7 @@ async def test_max_tool_calls_recovery_creates_cart_from_recipe_search_history()
 
 
 def test_preprocess_search_args_drops_page_parameter() -> None:
-    args = ShoppingAgent._preprocess_tool_args(
+    args = preprocess_tool_args(
         "vkusvill_products_search",
         {"q": "картофель", "page": 3},
     )
@@ -1574,7 +1621,7 @@ def test_preprocess_search_args_drops_page_parameter() -> None:
 
 
 def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
-    args = ShoppingAgent._preprocess_tool_args(
+    args = preprocess_tool_args(
         "vkusvill_cart_link_create",
         {
             "products": [
@@ -1598,7 +1645,7 @@ def test_preprocess_cart_args_rounds_discrete_and_egg_quantities() -> None:
 
 def test_extract_structured_ingredient_requests_parses_ranges_and_units() -> None:
     text = "Говядина на кости - 800 г\nСосиски - 2-3 шт.\nТоматная паста -1 ст. ложка\n"
-    rows = ShoppingAgent._extract_structured_ingredient_requests(text)
+    rows = extract_structured_ingredient_requests(text)
     assert len(rows) == 3
     assert rows[0]["name"] == "Говядина на кости"
     assert rows[0]["quantity"] == pytest.approx(800.0, abs=0.001)
@@ -1616,7 +1663,7 @@ def test_extract_structured_ingredient_requests_parses_inline_list_with_prefix()
         "Сосиски - 2-3 шт., Огурцы солёные - 150 г, Лук репчатый - 2 шт., "
         "Оливки без косточек - 100 г, Томатная паста -1 ст. ложка"
     )
-    rows = ShoppingAgent._extract_structured_ingredient_requests(text)
+    rows = extract_structured_ingredient_requests(text)
     assert len(rows) == 7
     assert rows[0]["name"] == "Говядина на кости"
     assert rows[1]["name"] == "Колбаса копченая"
@@ -1626,7 +1673,7 @@ def test_extract_structured_ingredient_requests_parses_inline_list_with_prefix()
 
 
 def test_preprocess_cart_args_recalculates_quantities_from_structured_request() -> None:
-    requested = ShoppingAgent._extract_structured_ingredient_requests(
+    requested = extract_structured_ingredient_requests(
         "Говядина на кости - 800 г\n"
         "Колбаса копчёная - 150 г\n"
         "Сосиски - 2-3 шт.\n"
@@ -1636,7 +1683,7 @@ def test_preprocess_cart_args_recalculates_quantities_from_structured_request() 
         "Томатная паста -1 ст. ложка\n"
     )
     requested_overrides: dict[int, float] = {}
-    args = ShoppingAgent._preprocess_tool_args(
+    args = preprocess_tool_args(
         "vkusvill_cart_link_create",
         {
             "products": [
@@ -1705,12 +1752,12 @@ def test_preprocess_cart_args_recalculates_quantities_from_structured_request() 
 
 
 def test_preprocess_cart_args_recalculates_quantities_from_inline_structured_request() -> None:
-    requested = ShoppingAgent._extract_structured_ingredient_requests(
+    requested = extract_structured_ingredient_requests(
         "собери корзину Говядина на кости - 800 г, "
         "Колбаса копчёная - 150 г, Сосиски - 2-3 шт., Огурцы солёные - 150 г, "
         "Лук репчатый - 2 шт., Оливки без косточек - 100 г, Томатная паста -1 ст. ложка"
     )
-    args = ShoppingAgent._preprocess_tool_args(
+    args = preprocess_tool_args(
         "vkusvill_cart_link_create",
         {
             "products": [
@@ -1767,8 +1814,8 @@ def test_preprocess_cart_args_recalculates_quantities_from_inline_structured_req
 
 
 def test_preprocess_cart_args_converts_garlic_cloves_to_single_pack() -> None:
-    requested = ShoppingAgent._extract_structured_ingredient_requests("Чеснок - 4 зубчика")
-    args = ShoppingAgent._preprocess_tool_args(
+    requested = extract_structured_ingredient_requests("Чеснок - 4 зубчика")
+    args = preprocess_tool_args(
         "vkusvill_cart_link_create",
         {"products": [{"xml_id": 35065, "q": 4}]},
         product_index={
@@ -1785,8 +1832,8 @@ def test_preprocess_cart_args_converts_garlic_cloves_to_single_pack() -> None:
 
 
 def test_preprocess_cart_args_converts_bay_leaves_to_single_pack() -> None:
-    requested = ShoppingAgent._extract_structured_ingredient_requests("Лавровый лист - 2 шт")
-    args = ShoppingAgent._preprocess_tool_args(
+    requested = extract_structured_ingredient_requests("Лавровый лист - 2 шт")
+    args = preprocess_tool_args(
         "vkusvill_cart_link_create",
         {"products": [{"xml_id": 14551, "q": 2}]},
         product_index={
@@ -1803,7 +1850,7 @@ def test_preprocess_cart_args_converts_bay_leaves_to_single_pack() -> None:
 
 
 def test_restore_previous_quantities_for_additive_update_keeps_existing_q() -> None:
-    restored = ShoppingAgent._restore_previous_quantities_for_additive_update(
+    restored = restore_previous_quantities_for_additive_update(
         tool_name="vkusvill_cart_link_create",
         tool_args={
             "products": [
@@ -1833,7 +1880,7 @@ def test_restore_previous_quantities_for_additive_update_keeps_existing_q() -> N
 
 
 def test_restore_previous_quantities_for_additive_update_respects_explicit_override() -> None:
-    restored = ShoppingAgent._restore_previous_quantities_for_additive_update(
+    restored = restore_previous_quantities_for_additive_update(
         tool_name="vkusvill_cart_link_create",
         tool_args={"products": [{"xml_id": 605, "q": 1}]},
         user_text="добавь лук 1 кг",
@@ -2412,7 +2459,7 @@ def test_preprocess_recipe_search_autofills_and_cleans_search_query() -> None:
         ]
     }
 
-    normalized = ShoppingAgent._preprocess_tool_args(
+    normalized = preprocess_tool_args(
         "recipe_search",
         args,
         user_preferences=None,

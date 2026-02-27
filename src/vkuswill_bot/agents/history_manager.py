@@ -33,9 +33,17 @@ def trim_history_by_chars(
         return history
 
     trimmed = recompact_tool_history(list(history), compactor=compactor)
-    while history_char_count(trimmed) > max_history_chars and len(trimmed) > 2:
+    total_chars = history_char_count(trimmed)
+    while total_chars > max_history_chars and len(trimmed) > 2:
+        removed = trimmed[1]
+        total_chars = max(0, total_chars - _message_char_count(removed))
         del trimmed[1]
-        trimmed = sanitize_tool_history(trimmed)
+        sanitized = sanitize_tool_history(trimmed)
+        if len(sanitized) != len(trimmed):
+            trimmed = sanitized
+            total_chars = history_char_count(trimmed)
+            continue
+        trimmed = sanitized
     return trimmed
 
 
@@ -99,6 +107,11 @@ def history_char_count(history: list[dict[str, Any]]) -> int:
     """Посчитать общее количество символов в сериализованной истории."""
     total = 0
     for message in history:
-        with contextlib.suppress(Exception):
-            total += len(json.dumps(message, ensure_ascii=False))
+        total += _message_char_count(message)
     return total
+
+
+def _message_char_count(message: dict[str, Any]) -> int:
+    with contextlib.suppress(Exception):
+        return len(json.dumps(message, ensure_ascii=False))
+    return 0

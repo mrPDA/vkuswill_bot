@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import contextlib
+import json
+import logging
 import math
 import re
 from typing import Any
@@ -14,8 +16,39 @@ from vkuswill_bot.agents.intent_markers import (
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.agents.tool_result_compactor import _safe_float, tokenize_query_terms
+from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.services.prompts import detect_prompt_profile
 from vkuswill_bot.services.search_processor import SearchProcessor
+
+logger = logging.getLogger(__name__)
+
+_QUANTITY_UNIT_PATTERN = (
+    r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
+    r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
+    r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
+    r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
+    r"чайн(?:ая|ые)\s+ложк[аи]"
+)
+_RANGE_QUANTITY_RE = re.compile(
+    rf"(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)\s*({_QUANTITY_UNIT_PATTERN})",
+    flags=re.IGNORECASE,
+)
+_SINGLE_QUANTITY_RE = re.compile(
+    rf"(\d+(?:[.,]\d+)?)\s*({_QUANTITY_UNIT_PATTERN})",
+    flags=re.IGNORECASE,
+)
+_CLEAN_INGREDIENT_PREFIX_RE = (
+    re.compile(r"^\s*собери(?:\s+мне)?\s+корзин[ауые]?\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*добав(?:ь|ьте)(?:\s+в\s+корзин[ауые]?)?\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*закаж(?:и|ите)\s+", flags=re.IGNORECASE),
+)
+_LEADING_AND_RE = re.compile(r"^\s*и\s+", flags=re.IGNORECASE)
+_INLINE_INGREDIENT_RE = re.compile(
+    rf"(?:^|[\n,;])\s*(?P<name>[^\n,;]+?)\s*[-–—:]\s*"
+    rf"(?P<qty>\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?\s*(?:{_QUANTITY_UNIT_PATTERN}))"
+    r"(?=$|[\n,;])",
+    flags=re.IGNORECASE,
+)
 
 
 # ------------------------------------------------------------------
@@ -117,15 +150,7 @@ def parse_quantity_hint(text: str) -> tuple[float, str, str] | None:
     normalized = normalize_text(text)
     if not normalized:
         return None
-    range_pattern = (
-        r"(\d+(?:[.,]\d+)?)\s*[-–—]\s*(\d+(?:[.,]\d+)?)\s*"
-        r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|\s*"
-        r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-        r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
-        r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-        r"чайн(?:ая|ые)\s+ложк[аи])"
-    )
-    match = re.search(range_pattern, normalized, flags=re.IGNORECASE)
+    match = _RANGE_QUANTITY_RE.search(normalized)
     if match is not None:
         low = _safe_float(match.group(1), default=-1.0)
         high = _safe_float(match.group(2), default=-1.0)
@@ -134,15 +159,7 @@ def parse_quantity_hint(text: str) -> tuple[float, str, str] | None:
             if unit:
                 return max(low, high), unit, match.group(0)
 
-    single_pattern = (
-        r"(\d+(?:[.,]\d+)?)\s*"
-        r"(кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
-        r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-        r"ст\.?\s*л\.?|ч\.?\s*л\.?|"
-        r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-        r"чайн(?:ая|ые)\s+ложк[аи])"
-    )
-    match = re.search(single_pattern, normalized, flags=re.IGNORECASE)
+    match = _SINGLE_QUANTITY_RE.search(normalized)
     if match is None:
         return None
     quantity = _safe_float(match.group(1), default=-1.0)
@@ -159,14 +176,9 @@ def clean_structured_ingredient_name(name_raw: str) -> str:
     name = name_raw.strip(" ,.;:").strip()
     if not name:
         return ""
-    prefixes = (
-        r"^\s*собери(?:\s+мне)?\s+корзин[ауые]?\s+",
-        r"^\s*добав(?:ь|ьте)(?:\s+в\s+корзин[ауые]?)?\s+",
-        r"^\s*закаж(?:и|ите)\s+",
-    )
-    for pattern in prefixes:
-        name = re.sub(pattern, "", name, flags=re.IGNORECASE).strip()
-    name = re.sub(r"^\s*и\s+", "", name, flags=re.IGNORECASE).strip()
+    for pattern in _CLEAN_INGREDIENT_PREFIX_RE:
+        name = pattern.sub("", name).strip()
+    name = _LEADING_AND_RE.sub("", name).strip()
     return name
 
 
@@ -195,20 +207,8 @@ def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any
             }
         )
 
-    unit_pattern = (
-        r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|ст\.?\s*л\.?|ч\.?\s*л\.?|"
-        r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
-        r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|столов(?:ая|ые)\s+ложк[аи]|"
-        r"чайн(?:ая|ые)\s+ложк[аи]"
-    )
-    inline_pattern = re.compile(
-        rf"(?:^|[\n,;])\s*(?P<name>[^\n,;]+?)\s*[-–—:]\s*"
-        rf"(?P<qty>\d+(?:[.,]\d+)?(?:\s*[-–—]\s*\d+(?:[.,]\d+)?)?\s*(?:{unit_pattern}))"
-        r"(?=$|[\n,;])",
-        flags=re.IGNORECASE,
-    )
     normalized_text = user_text.replace("\r", "\n")
-    for match in inline_pattern.finditer(normalized_text):
+    for match in _INLINE_INGREDIENT_RE.finditer(normalized_text):
         name_part = str(match.group("name") or "").strip()
         qty_part = str(match.group("qty") or "").strip()
         parsed = parse_quantity_hint(qty_part)
@@ -221,7 +221,7 @@ def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any
         line = raw_line.strip()
         if not line:
             continue
-        if inline_pattern.search(line):
+        if _INLINE_INGREDIENT_RE.search(line):
             continue
         line = re.sub(r"^\s*\d+[.)]\s*", "", line).strip()
         line = line.lstrip("-• ").strip()
@@ -501,3 +501,56 @@ def is_recipe_followup(*, text: str, history: list[dict[str, Any]] | None) -> bo
             if name in {"recipe_ingredients", "recipe_search"}:
                 return True
     return False
+
+
+# ------------------------------------------------------------------
+# Санитизация tool-результатов recipe_ingredients
+# ------------------------------------------------------------------
+
+
+def sanitize_recipe_ingredients_tool_result(
+    *,
+    tool_result: str,
+    explicit_pantry_requests: set[str],
+) -> str:
+    """Отфильтровать pantry-ингредиенты из ответа recipe_ingredients."""
+    payload = parse_json_payload(tool_result)
+    if not isinstance(payload, dict) or not payload:
+        return tool_result
+
+    removed_names: list[str] = []
+    changed = False
+
+    ingredients = payload.get("ingredients")
+    if isinstance(ingredients, list):
+        filtered, removed = filter_recipe_ingredients_list(
+            ingredients=ingredients,
+            explicit_pantry_requests=explicit_pantry_requests,
+        )
+        if len(filtered) != len(ingredients):
+            payload["ingredients"] = filtered
+            removed_names.extend(removed)
+            changed = True
+
+    data = payload.get("data")
+    if isinstance(data, dict):
+        nested = data.get("ingredients")
+        if isinstance(nested, list):
+            filtered, removed = filter_recipe_ingredients_list(
+                ingredients=nested,
+                explicit_pantry_requests=explicit_pantry_requests,
+            )
+            if len(filtered) != len(nested):
+                data["ingredients"] = filtered
+                removed_names.extend(removed)
+                changed = True
+
+    if not changed:
+        return tool_result
+
+    unique_removed = sorted({name for name in removed_names if name})
+    if unique_removed:
+        payload["pantry_filtered"] = unique_removed
+        logger.info("Filtered pantry ingredients from recipe_ingredients: %s", unique_removed)
+
+    return json.dumps(payload, ensure_ascii=False)

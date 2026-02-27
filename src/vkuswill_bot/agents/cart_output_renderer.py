@@ -10,6 +10,12 @@ from vkuswill_bot.agents.tool_result_compactor import (
     normalize_compact_text,
 )
 
+_URL_RE = re.compile(r"https?://[^\s\"<>]+")
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
+_PRICED_ROW_RE = re.compile(
+    r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)"
+)
+
 
 def render_stable_cart_output(
     cart_data: dict[str, Any],
@@ -83,7 +89,7 @@ def extract_cart_safety_note(text: str) -> str:
     if not normalized_text:
         return ""
 
-    candidates = re.split(r"(?<=[.!?])\s+|\n+", normalized_text)
+    candidates = _SENTENCE_SPLIT_RE.split(normalized_text)
     if not candidates:
         candidates = [normalized_text]
 
@@ -139,7 +145,7 @@ def stabilize_cart_output(*, final_text: str, cart_data: dict[str, Any]) -> str:
 
 def extract_first_url(text: str) -> str:
     """Извлечь первый URL из текста."""
-    match = re.search(r"https?://[^\s\"<>]+", text)
+    match = _URL_RE.search(text)
     if not match:
         return ""
     return match.group(0).strip().rstrip("\\).,;:!?]")
@@ -211,8 +217,7 @@ def looks_like_missing_cart_prices(text: str, *, summary: dict[str, Any]) -> boo
     if not normalized:
         return True
 
-    priced_row = re.compile(r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)")
-    has_priced_rows = bool(priced_row.search(normalized))
+    has_priced_rows = bool(_PRICED_ROW_RE.search(normalized))
 
     total_text_raw = summary.get("total_text")
     has_total_text = isinstance(total_text_raw, str) and bool(total_text_raw.strip())
