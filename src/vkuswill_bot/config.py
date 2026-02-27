@@ -240,8 +240,9 @@ class Config(BaseSettings):
     voice_link_code_ttl_minutes: int = 10  # TTL одноразового кода привязки Алисы
     voice_link_api_key: str = ""  # API key для /voice-link/* endpoint'ов (вариант 1)
 
-    # Системный промпт (переопределение через env для production)
+    # Промпты (переопределение через env / Lockbox для production)
     system_prompt: str = ""
+    recipe_extraction_prompt: str = ""
 
     # Отладка
     debug: bool = False

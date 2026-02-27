@@ -16,7 +16,7 @@ import math
 from gigachat import GigaChat
 from gigachat.models import Chat, Messages, MessagesRole
 
-from vkuswill_bot.services.prompts import RECIPE_EXTRACTION_PROMPT
+from vkuswill_bot.services.prompts import get_recipe_extraction_prompt
 from vkuswill_bot.services.recipe_store import RecipeStore
 
 logger = logging.getLogger(__name__)
@@ -236,7 +236,7 @@ class RecipeService:
         Raises:
             ValueError: если ответ не является валидным JSON-массивом.
         """
-        prompt = RECIPE_EXTRACTION_PROMPT.format(dish=dish, servings=servings)
+        prompt = get_recipe_extraction_prompt().format(dish=dish, servings=servings)
         logger.info("Извлечение рецепта: %s на %d порций", dish, servings)
 
         response = await asyncio.to_thread(

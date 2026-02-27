@@ -21,7 +21,7 @@ from vkuswill_bot.services.dialog_manager import (
     MAX_SUMMARY_LENGTH,
     _summarize_tool_result,
 )
-from vkuswill_bot.services.prompts import SYSTEM_PROMPT
+from vkuswill_bot.services.prompts import get_system_prompt
 
 
 # ============================================================================
@@ -51,7 +51,7 @@ class TestGetHistory:
 
         assert len(history) == 1
         assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
 
     def test_reuses_existing(self, manager):
         """Повторный вызов возвращает ту же историю."""
@@ -182,7 +182,7 @@ class TestTrim:
 
         trimmed = manager.conversations[1]
         assert trimmed[0].role == MessagesRole.SYSTEM
-        assert trimmed[0].content == SYSTEM_PROMPT
+        assert trimmed[0].content == get_system_prompt()
 
 
 # ============================================================================
@@ -302,7 +302,7 @@ class TestAgetHistory:
 
         assert len(history) == 1
         assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
 
     async def test_reuses_existing(self, manager):
         """Async: повторный вызов возвращает ту же историю."""
@@ -350,7 +350,7 @@ class TestSaveHistory:
 
     async def test_save_for_new_user(self, manager):
         """save_history для нового пользователя создаёт запись."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         await manager.save_history(user_id=99, history=history)
 
         assert 99 in manager.conversations
@@ -367,7 +367,7 @@ class TestTrimList:
 
     def test_trims_long_history(self, manager):
         """Длинная история обрезается до max_history."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(15):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
@@ -380,7 +380,7 @@ class TestTrimList:
     def test_noop_when_short(self, manager):
         """Короткая история возвращается без изменений."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="привет"),
         ]
 
@@ -389,7 +389,7 @@ class TestTrimList:
 
     def test_returns_new_list_when_trimmed(self, manager):
         """При обрезке возвращается НОВЫЙ список (не мутирует оригинал)."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(15):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
@@ -401,17 +401,17 @@ class TestTrimList:
 
     def test_preserves_system_prompt(self, manager):
         """Системный промпт всегда первый после обрезки."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(20):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
         result = manager.trim_list(history)
         assert result[0].role == MessagesRole.SYSTEM
-        assert result[0].content == SYSTEM_PROMPT
+        assert result[0].content == get_system_prompt()
 
     def test_exact_max_history_noop(self, manager):
         """Ровно max_history элементов — не обрезается."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(9):  # 1 + 9 = 10 = max_history
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 

@@ -1,7 +1,7 @@
 """Тесты текстовых констант prompts.py.
 
 Проверяем:
-- Содержание дефолтного системного промпта (базовые требования)
+- Загрузка системного промпта (env → файл → fallback)
 - Содержание production-промпта (детальные требования, если загружен)
 - Формат сообщений об ошибках
 - Отсутствие секретных данных в промпте
@@ -17,13 +17,11 @@ from vkuswill_bot.services.prompts import (
     ERROR_TOO_MANY_STEPS,
     LOCAL_TOOLS,
     PromptProfile,
-    RECIPE_EXTRACTION_PROMPT,
     RECIPE_SEARCH_TOOL,
     RECIPE_TOOL,
-    SYSTEM_PROMPT,
-    _DEFAULT_SYSTEM_PROMPT,
     detect_prompt_profile,
     get_profiled_system_prompt,
+    get_recipe_extraction_prompt,
     get_system_prompt,
 )
 
@@ -38,52 +36,43 @@ _has_prod_prompt = pytest.mark.skipif(
     reason="Production prompt not available (prompts/system_prompt.txt)",
 )
 
+_RECIPE_PROMPT_PATH = (
+    Path(__file__).resolve().parent.parent / "prompts" / "recipe_extraction_prompt.txt"
+)
+_RECIPE_PROMPT: str | None = None
+if _RECIPE_PROMPT_PATH.exists():
+    _RECIPE_PROMPT = _RECIPE_PROMPT_PATH.read_text(encoding="utf-8")
+
+_has_recipe_prompt = pytest.mark.skipif(
+    _RECIPE_PROMPT is None,
+    reason="Recipe prompt not available (prompts/recipe_extraction_prompt.txt)",
+)
+
 
 # ============================================================================
 # Дефолтный промпт: базовые требования
 # ============================================================================
 
 
-class TestDefaultPromptContent:
-    """Тесты дефолтного промпта (всегда в репозитории)."""
+class TestSystemPromptLoading:
+    """Тесты загрузки системного промпта (env → файл → fallback)."""
 
-    def test_defines_role(self):
+    def test_get_system_prompt_returns_nonempty(self):
+        """get_system_prompt() всегда возвращает непустую строку."""
+        prompt = get_system_prompt()
+        assert isinstance(prompt, str) and len(prompt) > 0
+
+    def test_get_system_prompt_mentions_role(self):
         """Промпт определяет роль: продавец-консультант ВкусВилл."""
-        assert "продавец-консультант" in _DEFAULT_SYSTEM_PROMPT.lower()
-        assert "ВкусВилл" in _DEFAULT_SYSTEM_PROMPT
-
-    def test_defines_workflow(self):
-        """Дефолтный промпт описывает базовый рабочий процесс."""
-        lower = _DEFAULT_SYSTEM_PROMPT.lower()
-        assert "рабочий процесс" in lower or "рецепт" in lower
-
-    def test_has_security_basics(self):
-        """Дефолтный промпт содержит базовые правила безопасности."""
-        lower = _DEFAULT_SYSTEM_PROMPT.lower()
-        assert "безопасность" in lower
-        assert "продавец-консультант" in lower
-        assert "не раскрывай" in lower
-
-    def test_no_secrets(self):
-        """В промпте нет токенов, ключей и паролей."""
-        for keyword in ["token", "password", "secret", "api_key", "credentials"]:
-            assert keyword not in _DEFAULT_SYSTEM_PROMPT.lower(), (
-                f"Промпт не должен содержать '{keyword}'"
-            )
-
-    def test_reasonable_length(self):
-        """Дефолтный промпт разумного размера (не пустой, не гигантский)."""
-        assert 200 < len(_DEFAULT_SYSTEM_PROMPT) < 18000
-
-    def test_system_prompt_constant_equals_default(self):
-        """Константа SYSTEM_PROMPT равна _DEFAULT_SYSTEM_PROMPT."""
-        assert SYSTEM_PROMPT == _DEFAULT_SYSTEM_PROMPT
-
-    def test_get_system_prompt_returns_default_without_env(self):
-        """get_system_prompt() без env возвращает дефолтный промпт."""
         prompt = get_system_prompt()
         assert "продавец-консультант" in prompt.lower()
         assert "ВкусВилл" in prompt
+
+    def test_no_secrets_in_system_prompt(self):
+        """В промпте нет токенов, ключей и паролей."""
+        prompt = get_system_prompt()
+        for keyword in ["token", "password", "secret", "api_key", "credentials"]:
+            assert keyword not in prompt.lower(), f"Промпт не должен содержать '{keyword}'"
 
 
 class TestPromptProfiles:
@@ -265,12 +254,13 @@ class TestRecipeExtractionPrompt:
 
     def test_is_template_with_placeholders(self):
         """Промпт содержит плейсхолдеры {dish} и {servings}."""
-        assert "{dish}" in RECIPE_EXTRACTION_PROMPT
-        assert "{servings}" in RECIPE_EXTRACTION_PROMPT
+        prompt = get_recipe_extraction_prompt()
+        assert "{dish}" in prompt
+        assert "{servings}" in prompt
 
     def test_format_works(self):
         """Шаблон корректно форматируется."""
-        result = RECIPE_EXTRACTION_PROMPT.format(dish="борщ", servings=4)
+        result = get_recipe_extraction_prompt().format(dish="борщ", servings=4)
         assert "борщ" in result
         assert "4" in result
         assert "{dish}" not in result
@@ -278,72 +268,83 @@ class TestRecipeExtractionPrompt:
 
     def test_requests_json_array(self):
         """Промпт просит вернуть JSON-массив."""
-        assert "JSON" in RECIPE_EXTRACTION_PROMPT
-        assert "name" in RECIPE_EXTRACTION_PROMPT
-        assert "quantity" in RECIPE_EXTRACTION_PROMPT
-        assert "search_query" in RECIPE_EXTRACTION_PROMPT
+        prompt = get_recipe_extraction_prompt()
+        assert "JSON" in prompt
+        assert "name" in prompt
+        assert "quantity" in prompt
+        assert "search_query" in prompt
 
+    def test_no_secrets(self):
+        """В промпте рецептов нет секретов."""
+        prompt = get_recipe_extraction_prompt()
+        for keyword in ["token", "password", "secret", "api_key"]:
+            assert keyword not in prompt.lower()
+
+    @_has_recipe_prompt
     def test_defines_unit_types(self):
         """Промпт описывает допустимые единицы."""
-        assert "кг" in RECIPE_EXTRACTION_PROMPT
-        assert "шт" in RECIPE_EXTRACTION_PROMPT
+        assert "кг" in _RECIPE_PROMPT
+        assert "шт" in _RECIPE_PROMPT
 
+    @_has_recipe_prompt
     def test_excludes_common_items(self):
         """Промпт исключает соль, сахар, молотый перец, воду."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "соль" in lower
         assert "сахар" in lower
         assert "перец" in lower
         assert "вод" in lower
 
+    @_has_recipe_prompt
     def test_distinguishes_pepper_spice_from_vegetable(self):
         """Промпт различает перец-приправу и перец-овощ (болгарский)."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "молотый" in lower
         assert "болгарский" in lower or "чили" in lower
 
+    @_has_recipe_prompt
     def test_alcohol_optional_flag(self):
         """Промпт инструктирует добавлять optional=true для алкоголя."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "алкоголь" in lower
         assert "optional" in lower
         assert "ром" in lower
 
+    @_has_recipe_prompt
     def test_coffee_instruction(self):
         """Промпт содержит инструкцию для кофе: 'кофе молотый'."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "кофе молотый" in lower
 
+    @_has_recipe_prompt
     def test_has_search_query_good_bad_examples(self):
         """Промпт содержит примеры хороших и плохих search_query."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "хорошо" in lower
         assert "плохо" in lower
         assert "картофель" in lower
         assert "картошка клубень" in lower
 
+    @_has_recipe_prompt
     def test_has_mandatory_ingredients_checklist(self):
         """Промпт содержит чеклист обязательных ингредиентов."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "обязательные ингредиенты" in lower
         assert "лук репчатый" in lower
         assert "масло растительное" in lower
 
+    @_has_recipe_prompt
     def test_has_exact_spice_names_rule(self):
         """Промпт запрещает жаргон для специй."""
-        lower = RECIPE_EXTRACTION_PROMPT.lower()
+        lower = _RECIPE_PROMPT.lower()
         assert "точное название" in lower
         assert "лавровый лист" in lower
         assert "лаврушка" in lower
 
-    def test_no_secrets(self):
-        """В промпте рецептов нет секретов."""
-        for keyword in ["token", "password", "secret", "api_key"]:
-            assert keyword not in RECIPE_EXTRACTION_PROMPT.lower()
-
+    @_has_recipe_prompt
     def test_reasonable_length(self):
         """Промпт рецептов разумного размера."""
-        assert 100 < len(RECIPE_EXTRACTION_PROMPT) < 5000
+        assert 100 < len(_RECIPE_PROMPT) < 5000
 
 
 # ============================================================================
