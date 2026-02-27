@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from vkuswill_bot.agents.recovery_policy import (
     should_continue_recipe_flow_recovery,
     should_force_batch_search_hint,
@@ -121,4 +123,95 @@ def test_should_force_batch_search_hint_requires_streak_threshold() -> None:
             max_tool_calls=5,
         )
         is False
+    )
+
+
+@pytest.mark.parametrize(
+    ("text", "used", "step", "max_tool_calls", "expected"),
+    [
+        ("Перейдите на сайт и соберите корзину сами.", False, 1, 5, True),
+        ("Перейдите на сайт и соберите корзину сами.", True, 1, 5, False),
+        ("Собрала корзину по вашему запросу.", False, 1, 5, False),
+        ("Перейдите на сайт и соберите корзину сами.", False, 5, 5, False),
+    ],
+)
+def test_should_force_manual_recovery_matrix(
+    text: str,
+    used: bool,
+    step: int,
+    max_tool_calls: int,
+    expected: bool,
+) -> None:
+    assert (
+        should_force_manual_recovery(
+            cart_data_this_turn=None,
+            cart_intent=True,
+            final_text=text,
+            manual_recovery_used=used,
+            step=step,
+            max_tool_calls=max_tool_calls,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("streak", "used", "step", "max_tool_calls", "expected"),
+    [
+        (3, False, 3, 5, True),
+        (4, False, 2, 5, True),
+        (2, False, 3, 5, False),
+        (3, True, 3, 5, False),
+        (3, False, 5, 5, False),
+    ],
+)
+def test_should_force_batch_search_hint_matrix(
+    streak: int,
+    used: bool,
+    step: int,
+    max_tool_calls: int,
+    expected: bool,
+) -> None:
+    assert (
+        should_force_batch_search_hint(
+            cart_intent=True,
+            cart_data_this_turn=None,
+            single_search_steps_streak=streak,
+            search_batch_recovery_used=used,
+            step=step,
+            max_tool_calls=max_tool_calls,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("tools_called", "recipe_started", "used", "text", "expected"),
+    [
+        (True, True, False, "Подобрала ингредиенты для рецепта, могу продолжить.", True),
+        (False, True, False, "Подобрала ингредиенты для рецепта, могу продолжить.", False),
+        (True, False, False, "Подобрала ингредиенты для рецепта, могу продолжить.", False),
+        (True, True, True, "Подобрала ингредиенты для рецепта, могу продолжить.", False),
+        (True, True, False, "Корзина готова.", False),
+    ],
+)
+def test_should_continue_recipe_flow_recovery_matrix(
+    tools_called: bool,
+    recipe_started: bool,
+    used: bool,
+    text: str,
+    expected: bool,
+) -> None:
+    assert (
+        should_continue_recipe_flow_recovery(
+            cart_data_this_turn=None,
+            cart_intent=True,
+            tools_called_this_turn=tools_called,
+            recipe_flow_started_this_turn=recipe_started,
+            final_text=text,
+            cart_flow_recovery_used=used,
+            step=2,
+            max_tool_calls=5,
+        )
+        is expected
     )

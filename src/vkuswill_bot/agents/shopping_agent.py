@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 from collections import OrderedDict
 from collections.abc import AsyncIterator
@@ -24,15 +23,8 @@ from vkuswill_bot.agents.mcp_response_parser import (
     extract_cart_data,
     extract_recipe_products_from_history,
 )
-from vkuswill_bot.agents.recipe_fallback import (
-    fallback_recipe_ingredients,
-    fallback_recipe_search,
-)
-from vkuswill_bot.agents.mcp_helpers import (
-    is_successful_tool_result,
-    make_mcp_call_cache_key,
-    with_virtual_recipe_tools,
-)
+from vkuswill_bot.agents.mcp_helpers import with_virtual_recipe_tools
+from vkuswill_bot.agents.mcp_tool_gateway import McpToolGateway
 from vkuswill_bot.agents.response_analysis import (
     should_start_fresh_context,
 )
@@ -70,15 +62,6 @@ _DEFAULT_MAX_TOOL_RESULT_CHARS = 1800
 _DEFAULT_MAX_HISTORY_CHARS = 16000
 _DEFAULT_MAX_INPUT_CHARS_PER_TURN = 250000
 _DEFAULT_MAX_ACTIVE_USERS = 2000
-_MCP_TOOL_NOT_FOUND = "method not found"
-_MCP_CACHEABLE_TOOLS = frozenset(
-    {
-        "vkusvill_products_search",
-        "vkusvill_product_details",
-        "recipe_ingredients",
-        "recipe_search",
-    }
-)
 
 
 class ShoppingAgent:
@@ -158,6 +141,7 @@ class ShoppingAgent:
 
         self._providers_in_use = self._compute_providers_in_use()
         self._llm_adapters: dict[str, LLMAdapterProtocol] = {}
+        self._mcp_gateway: McpToolGateway | None = None
 
         if llm_adapters is not None:
             normalized_adapters = {
@@ -168,6 +152,7 @@ class ShoppingAgent:
             if missing:
                 missing_str = ", ".join(sorted(missing))
                 raise ValueError(f"llm_adapters are missing providers: {missing_str}")
+            self._mcp_gateway = self._create_mcp_gateway()
             return
 
         if llm_client is not None:
@@ -181,6 +166,7 @@ class ShoppingAgent:
                     timeout_seconds=self._llm_timeout_seconds,
                     client=llm_client,
                 )
+            self._mcp_gateway = self._create_mcp_gateway()
             return
 
         for provider in self._providers_in_use:
@@ -193,6 +179,7 @@ class ShoppingAgent:
                 gigachat_scope=gigachat_scope,
                 gigachat_ca_bundle=gigachat_ca_bundle,
             )
+        self._mcp_gateway = self._create_mcp_gateway()
 
     def _compute_providers_in_use(self) -> set[str]:
         if self._llm_routing_strategy == _DEFAULT_LLM_ROUTING_STRATEGY:
@@ -370,6 +357,17 @@ class ShoppingAgent:
             return self._gigachat_model
         return self._model
 
+    def _create_mcp_gateway(self) -> McpToolGateway:
+        return McpToolGateway(
+            mcp_client=self._mcp_client,
+            mcp_timeout_seconds=self._mcp_timeout_seconds,
+            mcp_retries=self._mcp_retries,
+            llm_timeout_seconds=self._llm_timeout_seconds,
+            llm_adapters=self._llm_adapters,
+            resolve_model_for_provider=self._resolve_model_for_provider,
+            get_mcp_tool_names=lambda: self._mcp_tool_names,
+        )
+
     async def _call_mcp_tool(
         self,
         *,
@@ -378,121 +376,15 @@ class ShoppingAgent:
         llm_provider: str,
         call_cache: dict[str, str] | None = None,
     ) -> str:
-        cache_key: str | None = None
-        if call_cache is not None and name in _MCP_CACHEABLE_TOOLS:
-            cache_key = make_mcp_call_cache_key(name=name, arguments=arguments)
-            cached = call_cache.get(cache_key)
-            if isinstance(cached, str):
-                return cached
-
-        if name == "recipe_ingredients" and name not in self._mcp_tool_names:
-            fallback = await self._fallback_recipe_ingredients(arguments, llm_provider)
-            if cache_key is not None and is_successful_tool_result(fallback):
-                call_cache[cache_key] = fallback
-            return fallback
-        if name == "recipe_search" and name not in self._mcp_tool_names:
-            fallback = await self._fallback_recipe_search(arguments)
-            if cache_key is not None and is_successful_tool_result(fallback):
-                call_cache[cache_key] = fallback
-            return fallback
-
-        last_error: Exception | None = None
-        for attempt in range(self._mcp_retries + 1):
-            try:
-                result = await asyncio.wait_for(
-                    self._mcp_client.call_tool(name, arguments),
-                    timeout=self._mcp_timeout_seconds,
-                )
-                if cache_key is not None and is_successful_tool_result(result):
-                    call_cache[cache_key] = result
-                return result
-            except Exception as exc:
-                last_error = exc
-                fallback = await self._fallback_missing_mcp_tool(
-                    tool_name=name,
-                    arguments=arguments,
-                    llm_provider=llm_provider,
-                    error=exc,
-                )
-                if fallback is not None:
-                    if cache_key is not None and is_successful_tool_result(fallback):
-                        call_cache[cache_key] = fallback
-                    return fallback
-                if attempt >= self._mcp_retries:
-                    break
-                await asyncio.sleep(0.25 * (2**attempt))
-
-        logger.warning("MCP tool failed: %s(%s): %s", name, arguments, last_error)
-        return json.dumps(
-            {
-                "ok": False,
-                "error": "mcp_error",
-                "message": str(last_error) if last_error else "unknown",
-            },
-            ensure_ascii=False,
-        )
-
-    async def _fallback_missing_mcp_tool(
-        self,
-        *,
-        tool_name: str,
-        arguments: dict[str, Any],
-        llm_provider: str,
-        error: Exception,
-    ) -> str | None:
-        message = str(error).lower()
-        if _MCP_TOOL_NOT_FOUND not in message:
-            return None
-
-        if tool_name == "recipe_ingredients":
-            logger.warning("MCP tool missing: recipe_ingredients. Using local fallback.")
-            return await self._fallback_recipe_ingredients(arguments, llm_provider)
-
-        if tool_name == "recipe_search":
-            logger.warning("MCP tool missing: recipe_search. Using local fallback.")
-            return await self._fallback_recipe_search(arguments)
-
-        return None
-
-    async def _fallback_recipe_ingredients(
-        self,
-        arguments: dict[str, Any],
-        llm_provider: str,
-    ) -> str:
-        return await fallback_recipe_ingredients(
-            arguments,
-            adapter=self._llm_adapters.get(llm_provider),
-            model=self._resolve_model_for_provider(llm_provider),
-            timeout_seconds=self._llm_timeout_seconds,
-        )
-
-    async def _fallback_recipe_search(self, arguments: dict[str, Any]) -> str:
-        return await fallback_recipe_search(
-            arguments,
-            search_fn=self._search_products_for_recipe,
-        )
-
-    async def _search_products_for_recipe(self, query: str) -> str:
-        last_error: Exception | None = None
-        args = {"q": query, "limit": 5}
-        for attempt in range(self._mcp_retries + 1):
-            try:
-                return await asyncio.wait_for(
-                    self._mcp_client.call_tool("vkusvill_products_search", args),
-                    timeout=self._mcp_timeout_seconds,
-                )
-            except Exception as exc:
-                last_error = exc
-                if attempt >= self._mcp_retries:
-                    break
-                await asyncio.sleep(0.25 * (2**attempt))
-        return json.dumps(
-            {
-                "ok": False,
-                "error": "mcp_error",
-                "message": str(last_error) if last_error else "unknown",
-            },
-            ensure_ascii=False,
+        gateway = self._mcp_gateway
+        if gateway is None:
+            gateway = self._create_mcp_gateway()
+            self._mcp_gateway = gateway
+        return await gateway.call_tool(
+            name=name,
+            arguments=arguments,
+            llm_provider=llm_provider,
+            call_cache=call_cache,
         )
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]:
@@ -545,35 +437,10 @@ class ShoppingAgent:
         self._sync_compactor_limit()
         return self._compactor.prepare_tool_result_for_history(tool_name, tool_result)
 
-    def _build_cached_tool_stub(self, *, tool_name: str, compact_content: str) -> str:
-        """Построить сверх-компактный stub для повторного tool-результата в history."""
-        self._sync_compactor_limit()
-        return self._compactor.build_cached_tool_stub(
-            tool_name=tool_name,
-            compact_content=compact_content,
-        )
-
-    def _fit_payload_to_limit(self, payload: dict[str, Any]) -> str:
-        """Уместить JSON-пейлоад в лимит, сохранив валидный JSON."""
-        self._sync_compactor_limit()
-        return self._compactor.fit_payload_to_limit(payload)
-
     @staticmethod
     def _extract_usage_details(response: Any) -> dict[str, int] | None:
         """Извлечь usage-details из ответа LLM (OpenAI-compatible / normalized dict)."""
         return extract_usage_details(response)
-
-    def _compact_tool_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._compactor.compact_tool_result(tool_name, payload)
-
-    def _compact_products_search(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._compactor._compact_products_search(payload)
-
-    def _compact_recipe_ingredients(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._compactor._compact_recipe_ingredients(payload)
-
-    def _compact_recipe_search(self, payload: dict[str, Any]) -> dict[str, Any]:
-        return self._compactor._compact_recipe_search(payload)
 
     async def _recover_cart_from_recipe_search_history(
         self,
