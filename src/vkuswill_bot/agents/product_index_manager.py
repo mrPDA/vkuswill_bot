@@ -10,13 +10,15 @@ from typing import Any
 from vkuswill_bot.agents.cart_price_builder import normalize_product_row
 from vkuswill_bot.agents.mcp_response_parser import extract_search_items, parse_json_payload
 
-_INDEXABLE_TOOLS = frozenset({
-    "vkusvill_products_search",
-    "vkusvill_product_details",
-    "recipe_search",
-    "get_previous_cart",
-    "vkusvill_cart_link_create",
-})
+_INDEXABLE_TOOLS = frozenset(
+    {
+        "vkusvill_products_search",
+        "vkusvill_product_details",
+        "recipe_search",
+        "get_previous_cart",
+        "vkusvill_cart_link_create",
+    }
+)
 
 
 def update_product_index_from_tool_result(
