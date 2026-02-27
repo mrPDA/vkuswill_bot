@@ -15,6 +15,7 @@ from vkuswill_bot.agents.tool_preprocessor import (
     restore_previous_quantities_for_additive_update,
 )
 from vkuswill_bot.agents.product_index_manager import build_product_index_from_history
+from vkuswill_bot.agents.tool_result_compactor import ToolResultCompactor
 
 
 class _FakeDialogManager:
@@ -2383,7 +2384,7 @@ async def test_keeps_pantry_ingredients_when_user_explicitly_requests_them() -> 
 
 @pytest.mark.asyncio
 async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
-    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    compactor = ToolResultCompactor()
     payload = {
         "ok": True,
         "results": [
@@ -2409,7 +2410,7 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
         "not_found": ["черный перец"],
     }
 
-    compact = agent._compact_recipe_search(payload)
+    compact = compactor.compact_tool_result("recipe_search", payload)
     assert compact["ok"] is True
     assert len(compact["found"]) == 2
     assert compact["found"][0]["xml_id"] == 781
@@ -2419,7 +2420,7 @@ async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
 
 
 def test_compact_recipe_ingredients_keeps_search_hints() -> None:
-    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    compactor = ToolResultCompactor()
     payload = {
         "ok": True,
         "data": {
@@ -2445,7 +2446,7 @@ def test_compact_recipe_ingredients_keeps_search_hints() -> None:
         },
     }
 
-    compact = agent._compact_recipe_ingredients(payload)
+    compact = compactor.compact_tool_result("recipe_ingredients", payload)
     assert compact["ok"] is True
     assert compact["dish"] == "омлет"
     assert compact["servings"] == 2
@@ -2477,7 +2478,7 @@ def test_preprocess_recipe_search_autofills_and_cleans_search_query() -> None:
 
 
 def test_compact_products_search_flattens_price_and_meta() -> None:
-    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    compactor = ToolResultCompactor()
     payload = {
         "ok": True,
         "data": {
@@ -2501,7 +2502,7 @@ def test_compact_products_search_flattens_price_and_meta() -> None:
         },
     }
 
-    compact = agent._compact_products_search(payload)
+    compact = compactor.compact_tool_result("vkusvill_products_search", payload)
     assert compact["ok"] is True
     assert compact["meta"] == {"q": "укроп", "total": 44, "has_more": True}
     assert compact["items"][0]["xml_id"] == 15194
@@ -2510,7 +2511,7 @@ def test_compact_products_search_flattens_price_and_meta() -> None:
 
 
 def test_compact_products_search_sanitizes_and_limits_top3() -> None:
-    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    compactor = ToolResultCompactor()
     payload = {
         "ok": True,
         "data": {
@@ -2550,7 +2551,7 @@ def test_compact_products_search_sanitizes_and_limits_top3() -> None:
         },
     }
 
-    compact = agent._compact_products_search(payload)
+    compact = compactor.compact_tool_result("vkusvill_products_search", payload)
     assert compact["ok"] is True
     assert compact["meta"] == {"q": "филе грудки", "total": 77, "has_more": True}
     assert len(compact["items"]) == 3
