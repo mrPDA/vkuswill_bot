@@ -1,27 +1,69 @@
-"""Системный промпт и текстовые константы для GigaChat."""
+"""Системный промпт и текстовые константы для GigaChat.
+
+Тексты чувствительных промптов (системный, рецептурный) НЕ хранятся в коде.
+Загрузка: env (production / Lockbox) → файл prompts/*.txt (локальная разработка) → fallback-stub.
+"""
 
 from __future__ import annotations
 
+import logging
+from pathlib import Path
 from typing import Literal
 
-# Упрощённый дефолтный промпт — достаточный для запуска.
-# Полный production-промпт загружается из переменной окружения SYSTEM_PROMPT.
-_DEFAULT_SYSTEM_PROMPT = """
-***REDACTED***
-"""
+logger = logging.getLogger(__name__)
+
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+
+_FALLBACK_SYSTEM_PROMPT = (
+    "Ты — продавец-консультант ВкусВилл в Telegram-боте. "
+    "Помогаешь пользователям подбирать продукты и собирать корзину."
+)
+
+_FALLBACK_RECIPE_PROMPT = (
+    "Составь список ингредиентов для «{dish}» на {servings} порций. "
+    "Верни JSON-массив: "
+    '[{{"name":"...","quantity":N,"unit":"...","search_query":"...","kg_equivalent":N}}]'
+)
+
+
+def _load_prompt_file(filename: str) -> str | None:
+    """Загрузить текст промпта из prompts/ (gitignored)."""
+    path = _PROJECT_ROOT / "prompts" / filename
+    if path.is_file():
+        try:
+            return path.read_text(encoding="utf-8").strip()
+        except OSError:
+            logger.warning("Не удалось прочитать %s", path)
+    return None
 
 
 def get_system_prompt() -> str:
-    """Получить системный промпт: из env (production) или дефолтный."""
+    """Получить системный промпт: env → файл → fallback-stub."""
     from vkuswill_bot.config import config
 
     if config.system_prompt:
         return config.system_prompt
-    return _DEFAULT_SYSTEM_PROMPT
+    file_prompt = _load_prompt_file("system_prompt.txt")
+    if file_prompt:
+        return file_prompt
+    return _FALLBACK_SYSTEM_PROMPT
 
 
-# Обратная совместимость: SYSTEM_PROMPT как свойство для существующего кода.
-SYSTEM_PROMPT = _DEFAULT_SYSTEM_PROMPT
+def get_recipe_extraction_prompt() -> str:
+    """Получить промпт извлечения рецептов: env → файл → fallback-stub."""
+    from vkuswill_bot.config import config
+
+    if config.recipe_extraction_prompt:
+        return config.recipe_extraction_prompt
+    file_prompt = _load_prompt_file("recipe_extraction_prompt.txt")
+    if file_prompt:
+        return file_prompt
+    return _FALLBACK_RECIPE_PROMPT
+
+
+SYSTEM_PROMPT = _FALLBACK_SYSTEM_PROMPT
+
+RECIPE_EXTRACTION_PROMPT = _FALLBACK_RECIPE_PROMPT
 
 PromptProfile = Literal["general", "cart", "recipe", "status", "linking"]
 PromptMode = Literal["start", "compact", "finalize"]
@@ -169,10 +211,6 @@ def get_profiled_system_prompt(
         parts.append(_PROFILE_START_PROMPT)
     return "\n\n".join(parts)
 
-
-RECIPE_EXTRACTION_PROMPT = """
-***REDACTED***
-"""
 
 # ---- Описания инструментов для function calling ----
 

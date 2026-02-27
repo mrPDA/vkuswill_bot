@@ -28,7 +28,7 @@ from gigachat.models import (
 )
 
 from vkuswill_bot.services.gigachat_service import GigaChatService
-from vkuswill_bot.services.prompts import SYSTEM_PROMPT
+from vkuswill_bot.services.prompts import get_system_prompt
 
 from helpers import make_text_response, make_function_call_response
 
@@ -117,7 +117,7 @@ class TestPromptInjection:
         # Системный промпт всегда первый и неизменный
         history = service._conversations[1]
         assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
 
     @pytest.mark.parametrize("payload", PROMPT_INJECTION_PAYLOADS)
     async def test_injection_stored_as_user_message(self, service, payload: str):
@@ -178,8 +178,8 @@ class TestJailbreak:
 
         history = service._conversations[1]
         assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == SYSTEM_PROMPT
-        assert "ВкусВилл" in SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
+        assert "ВкусВилл" in get_system_prompt()
 
     @pytest.mark.parametrize("payload", JAILBREAK_PAYLOADS)
     async def test_jailbreak_sent_as_user_role(self, service, payload: str):
@@ -199,7 +199,7 @@ class TestJailbreak:
         # Только один SYSTEM — наш оригинальный промпт
         system_msgs = [m for m in messages if m.role == MessagesRole.SYSTEM]
         assert len(system_msgs) == 1
-        assert system_msgs[0].content == SYSTEM_PROMPT
+        assert system_msgs[0].content == get_system_prompt()
 
 
 # ============================================================================
@@ -252,7 +252,8 @@ class TestSystemPromptExtraction:
 
     def test_system_prompt_contains_role_definition(self):
         """Системный промпт определяет роль бота (продавец-консультант)."""
-        assert "продавец-консультант" in SYSTEM_PROMPT.lower() or "ВкусВилл" in SYSTEM_PROMPT, (
+        prompt = get_system_prompt()
+        assert "продавец-консультант" in prompt.lower() or "ВкусВилл" in prompt, (
             "Системный промпт должен чётко определять роль бота"
         )
 
@@ -450,7 +451,7 @@ class TestHistoryPoisoning:
         trimmed = dm.conversations[1]
         # Системный промпт на месте
         assert trimmed[0].role == MessagesRole.SYSTEM
-        assert trimmed[0].content == SYSTEM_PROMPT
+        assert trimmed[0].content == get_system_prompt()
         # Лимит соблюдён
         assert len(trimmed) <= service._max_history
 
@@ -470,7 +471,7 @@ class TestHistoryPoisoning:
         history = service._conversations[1]
         system_msgs = [m for m in history if m.role == MessagesRole.SYSTEM]
         assert len(system_msgs) == 1
-        assert system_msgs[0].content == SYSTEM_PROMPT
+        assert system_msgs[0].content == get_system_prompt()
 
     async def test_multiple_users_no_cross_contamination(self, service):
         """История одного пользователя не влияет на другого."""

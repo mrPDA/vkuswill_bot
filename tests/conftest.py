@@ -17,6 +17,18 @@ from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 MCP_URL = "https://mcp-test.example.com/mcp"
 
 
+@pytest.fixture(autouse=True)
+def _stable_prompts():
+    """Отключить загрузку промптов из prompts/*.txt, чтобы наличие файлов
+    на диске разработчика не ломало тесты (промпт 24 КБ > max_history_chars 16 КБ).
+    Тесты ProductionPromptContent читают файлы напрямую и не затрагиваются."""
+    with patch(
+        "vkuswill_bot.services.prompts._load_prompt_file",
+        return_value=None,
+    ):
+        yield
+
+
 @pytest.fixture
 def mcp_client() -> VkusvillMCPClient:
     """MCP-клиент с тестовым URL."""

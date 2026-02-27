@@ -17,7 +17,7 @@ from vkuswill_bot.agents.recipe_helpers import (
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.agents.tool_result_compactor import _safe_float
-from vkuswill_bot.services.prompts import RECIPE_EXTRACTION_PROMPT
+from vkuswill_bot.services.prompts import get_recipe_extraction_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ async def extract_recipe_ingredients_with_llm(
     if adapter is None:
         return []
 
-    prompt = RECIPE_EXTRACTION_PROMPT.format(dish=dish, servings=servings)
+    prompt = get_recipe_extraction_prompt().format(dish=dish, servings=servings)
     try:
         response = await asyncio.wait_for(
             adapter.create_completion(

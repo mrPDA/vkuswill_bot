@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock
 import pytest
 from gigachat.models import FunctionCall, Messages, MessagesRole
 
-from vkuswill_bot.services.prompts import SYSTEM_PROMPT
+from vkuswill_bot.services.prompts import get_system_prompt
 from vkuswill_bot.services.redis_dialog_manager import (
     DEFAULT_DIALOG_TTL,
     MAX_LOCKS,
@@ -152,13 +152,13 @@ class TestAgetHistory:
 
         assert len(history) == 1
         assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
         mock_redis.get.assert_called_once_with("dialog:1")
 
     async def test_loads_from_redis(self, manager, mock_redis):
         """Существующая история загружается из Redis."""
         stored_history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="Привет"),
             Messages(role=MessagesRole.ASSISTANT, content="Здравствуйте!"),
         ]
@@ -173,7 +173,7 @@ class TestAgetHistory:
 
     async def test_extends_ttl_on_access(self, manager, mock_redis):
         """TTL продлевается при каждом доступе (sliding window)."""
-        stored = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        stored = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         mock_redis.get.return_value = _serialize(stored)
 
         await manager.aget_history(user_id=42)
@@ -192,13 +192,13 @@ class TestAgetHistory:
 
     async def test_handles_bytes_from_redis(self, manager, mock_redis):
         """Redis возвращает bytes (decode_responses=False) — корректная обработка."""
-        stored = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        stored = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         mock_redis.get.return_value = _serialize(stored).encode("utf-8")
 
         history = await manager.aget_history(user_id=1)
 
         assert len(history) == 1
-        assert history[0].content == SYSTEM_PROMPT
+        assert history[0].content == get_system_prompt()
 
 
 # ============================================================================
@@ -212,7 +212,7 @@ class TestSaveHistory:
     async def test_saves_to_redis(self, manager, mock_redis):
         """save_history сохраняет сериализованную историю в Redis."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="Молоко"),
         ]
 
@@ -237,7 +237,7 @@ class TestSaveHistory:
             max_history=50,
             dialog_ttl=7200,  # 2 часа
         )
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
 
         await mgr.save_history(user_id=1, history=history)
 
@@ -246,7 +246,7 @@ class TestSaveHistory:
     async def test_default_ttl(self, mock_redis):
         """По умолчанию TTL = DEFAULT_DIALOG_TTL (24 часа)."""
         mgr = RedisDialogManager(redis=mock_redis, max_history=50)
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
 
         await mgr.save_history(user_id=1, history=history)
 
@@ -263,7 +263,7 @@ class TestTrimList:
 
     def test_trims_long_history(self, manager):
         """Длинная история обрезается до max_history."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(15):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
@@ -276,7 +276,7 @@ class TestTrimList:
     def test_noop_when_short(self, manager):
         """Короткая история — без изменений."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="тест"),
         ]
 
@@ -285,7 +285,7 @@ class TestTrimList:
 
     def test_returns_new_list_when_trimmed(self, manager):
         """При обрезке возвращается новый список."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(15):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
@@ -297,7 +297,7 @@ class TestTrimList:
         from vkuswill_bot.services.dialog_manager import DialogManager
 
         dm = DialogManager(max_history=10)
-        history = [Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT)]
+        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
         for i in range(15):
             history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
 
@@ -550,7 +550,7 @@ class TestSerializeDeserializeRoundTrip:
     def test_basic_round_trip(self):
         """Базовый round-trip: serialize → deserialize сохраняет данные."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="Найди молоко"),
             Messages(role=MessagesRole.ASSISTANT, content="Нашёл 3 варианта"),
         ]
@@ -596,7 +596,7 @@ class TestSerializeDeserializeRoundTrip:
     def test_complex_dialog_round_trip(self):
         """Round-trip сложного диалога: system → user → function_call → function → assistant."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=SYSTEM_PROMPT),
+            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
             Messages(role=MessagesRole.USER, content="Купи молоко"),
         ]
 
