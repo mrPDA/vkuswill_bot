@@ -638,10 +638,15 @@ async def test_text_only_response() -> None:
 @pytest.mark.asyncio
 async def test_reset_conversation_clears_history_and_snapshot() -> None:
     cart_payload = json.dumps(
-        {"ok": True, "data": {"link": "https://shop.example/cart/1", "price_summary": {"total": 100}}},
+        {
+            "ok": True,
+            "data": {"link": "https://shop.example/cart/1", "price_summary": {"total": 100}},
+        },
         ensure_ascii=False,
     )
-    tool_call = _FakeToolCall("tc-1", "vkusvill_cart_link_create", '{"products":[{"xml_id":1,"q":1}]}')
+    tool_call = _FakeToolCall(
+        "tc-1", "vkusvill_cart_link_create", '{"products":[{"xml_id":1,"q":1}]}'
+    )
     llm_script = [
         _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
         _FakeResponse(_FakeMessage(content="ok")),
@@ -675,7 +680,7 @@ async def test_prunes_oldest_user_state_when_max_active_users_exceeded() -> None
 
 
 def test_build_product_index_from_history_supports_compact_tool_shapes() -> None:
-    agent, _mcp = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
+    _, _ = _agent(llm_script=[_FakeResponse(_FakeMessage(content="ok"))])
     history = [
         {"role": "system", "content": "sys"},
         {

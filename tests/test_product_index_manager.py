@@ -63,7 +63,15 @@ def test_build_product_index_from_history_uses_last_20_tool_messages() -> None:
                 "content": json.dumps(
                     {
                         "ok": True,
-                        "data": {"items": [{"xml_id": xml_id, "name": f"Товар {xml_id}", "price": xml_id}]},
+                        "data": {
+                            "items": [
+                                {
+                                    "xml_id": xml_id,
+                                    "name": f"Товар {xml_id}",
+                                    "price": xml_id,
+                                }
+                            ]
+                        },
                     },
                     ensure_ascii=False,
                 ),

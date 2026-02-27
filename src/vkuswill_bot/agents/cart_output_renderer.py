@@ -12,9 +12,7 @@ from vkuswill_bot.agents.tool_result_compactor import (
 
 _URL_RE = re.compile(r"https?://[^\s\"<>]+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
-_PRICED_ROW_RE = re.compile(
-    r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)"
-)
+_PRICED_ROW_RE = re.compile(r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)")
 
 
 def render_stable_cart_output(
