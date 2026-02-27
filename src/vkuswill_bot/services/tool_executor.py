@@ -25,6 +25,7 @@ from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.cart_snapshot_store import CartSnapshotStore
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.nutrition_service import NutritionService
+from vkuswill_bot.services.preferences_parser import parse_preferences
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.search_processor import SearchProcessor
 
@@ -861,31 +862,7 @@ class ToolExecutor:
 
     # ---- Вспомогательные статические методы ----
 
-    @staticmethod
-    def _parse_preferences(result_text: str) -> dict[str, str]:
-        """Извлечь предпочтения из результата user_preferences_get.
-
-        Returns:
-            Словарь {категория_lower: preference_text}.
-        """
-        try:
-            data = json.loads(result_text)
-        except (json.JSONDecodeError, TypeError):
-            return {}
-
-        prefs = data.get("preferences", [])
-        if not isinstance(prefs, list):
-            return {}
-
-        result: dict[str, str] = {}
-        for item in prefs:
-            if not isinstance(item, dict):
-                continue
-            cat = item.get("category", "").strip().lower()
-            pref = item.get("preference", "").strip()
-            if cat and pref:
-                result[cat] = pref
-        return result
+    _parse_preferences = staticmethod(parse_preferences)
 
     @staticmethod
     def _apply_preferences_to_query(

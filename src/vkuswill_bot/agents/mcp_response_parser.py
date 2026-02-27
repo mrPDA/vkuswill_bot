@@ -6,14 +6,7 @@ import contextlib
 import json
 from typing import Any
 
-
-def _safe_float(value: Any, *, default: float = 0.0) -> float:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    if isinstance(value, str):
-        with contextlib.suppress(ValueError):
-            return float(value.replace(",", "."))
-    return default
+from vkuswill_bot.agents.tool_result_compactor import _safe_float
 
 
 def parse_json_payload(content: Any) -> Any:
