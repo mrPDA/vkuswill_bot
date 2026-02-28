@@ -59,6 +59,7 @@ class ShoppingTurnAgentProtocol(Protocol):
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         llm_provider: str,
+        max_tokens_override: int | None = None,
     ) -> Any: ...
 
     @staticmethod

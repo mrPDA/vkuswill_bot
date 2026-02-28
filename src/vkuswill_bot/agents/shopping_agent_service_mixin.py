@@ -92,10 +92,16 @@ class ShoppingAgentServiceMixin:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
         llm_provider: str,
+        max_tokens_override: int | None = None,
     ) -> Any:
         llm_adapter: LLMAdapterProtocol | None = self._llm_adapters.get(llm_provider)
         if llm_adapter is None:
             raise RuntimeError(f"LLM adapter not configured for provider: {llm_provider}")
+        max_tokens = (
+            max_tokens_override
+            if max_tokens_override is not None
+            else self._llm_max_tokens
+        )
         last_error: Exception | None = None
         for attempt in range(self._llm_retries + 1):
             try:
@@ -106,7 +112,7 @@ class ShoppingAgentServiceMixin:
                             messages=messages,
                             tools=tools,
                             tool_choice="auto",
-                            max_tokens=self._llm_max_tokens,
+                            max_tokens=max_tokens,
                             temperature=self._llm_temperature,
                         ),
                         timeout=self._llm_timeout_seconds,

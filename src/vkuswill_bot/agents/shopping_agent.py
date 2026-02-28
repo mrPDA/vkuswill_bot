@@ -59,6 +59,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         langfuse_service: LangfuseService | None = None,
         llm_timeout_seconds: float = _DEFAULT_LLM_TIMEOUT_SECONDS,
         llm_max_tokens: int | None = None,
+        llm_max_tokens_recipe: int = 2048,
         llm_temperature: float | None = None,
         prompt_profiles_enabled: bool = False,
         compact_followup_prompt_enabled: bool = True,
@@ -92,6 +93,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._max_history = max(10, max_history)
         self._llm_timeout_seconds = max(1.0, llm_timeout_seconds)
         self._llm_max_tokens = max(1, llm_max_tokens) if llm_max_tokens is not None else None
+        self._llm_max_tokens_recipe = max(1, min(8192, llm_max_tokens_recipe))
         self._llm_temperature = (
             max(0.0, min(1.0, llm_temperature)) if llm_temperature is not None else None
         )

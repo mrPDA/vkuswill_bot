@@ -32,6 +32,12 @@ class Config(BaseSettings):
     llm_model: str = ""
     llm_max_concurrent: int = 10
     llm_max_tokens: int = Field(default=900, ge=1, le=8192)
+    llm_max_tokens_recipe: int = Field(
+        default=2048,
+        ge=1,
+        le=8192,
+        description="max_tokens для финального ответа при корзине по рецепту",
+    )
     llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_prompt_profiles_enabled: bool = False
     llm_compact_followup_prompt_enabled: bool = True

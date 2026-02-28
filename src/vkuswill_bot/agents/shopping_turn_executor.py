@@ -122,11 +122,20 @@ async def run_locked_turn(
                 },
             )
 
+        max_tokens_override = None
+        if (
+            state.cart_data_this_turn is not None
+            and state.recipe_flow_started_this_turn
+            and getattr(agent, "_llm_max_tokens_recipe", None) is not None
+        ):
+            max_tokens_override = agent._llm_max_tokens_recipe
+
         try:
             response = await agent._call_llm(
                 messages=llm_input,
                 tools=tools,
                 llm_provider=llm_provider,
+                max_tokens_override=max_tokens_override,
             )
         except Exception as exc:
             logger.error("ShoppingAgent LLM error: %s", exc, exc_info=True)

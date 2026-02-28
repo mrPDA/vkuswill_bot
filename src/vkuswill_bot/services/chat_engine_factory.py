@@ -67,6 +67,7 @@ def create_chat_engine(
         max_history=cfg.max_history_messages,
         langfuse_service=langfuse_service,
         llm_max_tokens=cfg.llm_max_tokens,
+        llm_max_tokens_recipe=cfg.llm_max_tokens_recipe,
         llm_temperature=cfg.llm_temperature,
         prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
         compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
