@@ -1033,20 +1033,6 @@ wheels = [
 ]
 
 [[package]]
-name = "gigachat"
-version = "0.2.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "httpx" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/f3/9d/b765e89b37742d8ea4a203adf691647d37d75b49255c463a647e585f4245/gigachat-0.2.0.tar.gz", hash = "sha256:d3eb936d5c812abaed30553492ab8de5917268f35f4638769f6f9bc1fcf04ff9", size = 32222, upload-time = "2026-01-22T10:23:09.154Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ab/44/e2d8f2078301e64cfbe942c45fac500012a9b60eb1ca6c367c7ff1689454/gigachat-0.2.0-py3-none-any.whl", hash = "sha256:745927730bf77632634c9db0cb6c19e06c3099a9d4a032207686b91316b8d935", size = 42309, upload-time = "2026-01-22T10:23:07.571Z" },
-]
-
-[[package]]
 name = "greenlet"
 version = "3.3.1"
 source = { registry = "https://pypi.org/simple" }
@@ -2843,7 +2829,6 @@ dependencies = [
     { name = "aiosqlite" },
     { name = "asyncpg" },
     { name = "boto3" },
-    { name = "gigachat" },
     { name = "langfuse" },
     { name = "mcp" },
     { name = "openai" },
@@ -2880,7 +2865,6 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.29" },
     { name = "bandit", marker = "extra == 'test'", specifier = ">=1.7" },
     { name = "boto3", specifier = ">=1.35" },
-    { name = "gigachat", specifier = ">=0.1.36" },
     { name = "langfuse", specifier = ">=2.60,<4" },
     { name = "locust", marker = "extra == 'loadtest'", specifier = ">=2.29" },
     { name = "mcp", specifier = ">=1.9" },

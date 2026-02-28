@@ -23,10 +23,11 @@ from vkuswill_bot.config import Config
 # Корень проекта
 PROJECT_ROOT = Path(__file__).parent.parent
 
-# Минимальный набор env-переменных для создания Config
+# Минимальный набор env-переменных для создания Config (ADR-006: legacy GigaChat удалён)
 MINIMAL_ENV = {
     "BOT_TOKEN": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
-    "GIGACHAT_CREDENTIALS": "test-credentials-value",
+    "LLM_API_KEY": "test-llm-key",
+    "LLM_MODEL": "test-model",
 }
 
 
@@ -41,7 +42,7 @@ class TestRequiredFields:
 
     def test_bot_token_required(self):
         """BOT_TOKEN обязателен — без него Config не создаётся."""
-        env = {"GIGACHAT_CREDENTIALS": "test-creds"}
+        env = {"LLM_API_KEY": "key", "LLM_MODEL": "model"}
         with patch.dict(os.environ, env, clear=True):
             with pytest.raises(ValidationError) as exc_info:
                 Config(
@@ -51,17 +52,17 @@ class TestRequiredFields:
             field_names = [e["loc"][0] for e in errors]
             assert "bot_token" in field_names
 
-    def test_gigachat_credentials_required(self):
-        """GIGACHAT_CREDENTIALS обязателен."""
-        env = {"BOT_TOKEN": "123:ABC"}
+    def test_config_loads_with_shopping_agent_env(self):
+        """Config создаётся с минимальным набором для shopping_agent."""
+        env = {
+            "BOT_TOKEN": "123:ABC",
+            "LLM_API_KEY": "test-key",
+            "LLM_MODEL": "gpt://folder/model/latest",
+        }
         with patch.dict(os.environ, env, clear=True):
-            with pytest.raises(ValidationError) as exc_info:
-                Config(
-                    _env_file=None,  # type: ignore[call-arg]
-                )
-            errors = exc_info.value.errors()
-            field_names = [e["loc"][0] for e in errors]
-            assert "gigachat_credentials" in field_names
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.chat_engine == "shopping_agent"
+        assert cfg.llm_api_key == "test-key"
 
 
 # ============================================================================
@@ -73,11 +74,11 @@ class TestRequiredFields:
 class TestDefaultValues:
     """Проверка безопасности значений по умолчанию."""
 
-    def test_chat_engine_default_legacy(self):
-        """chat_engine по умолчанию — legacy."""
+    def test_chat_engine_default_shopping_agent(self):
+        """chat_engine по умолчанию — shopping_agent (ADR-006)."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.chat_engine == "legacy"
+        assert cfg.chat_engine == "shopping_agent"
 
     def test_llm_base_url_default_https(self):
         """llm_base_url по умолчанию использует HTTPS."""
@@ -97,12 +98,16 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_routing_strategy == "single_provider"
 
-    def test_llm_routing_providers_defaults(self):
-        """Провайдеры маршрутизации имеют безопасные дефолты."""
-        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+    def test_legacy_routing_provider_env_keys_are_ignored(self):
+        """Legacy routing provider env-поля не влияют на конфиг."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "LLM_SINGLETON_PROVIDER": "gigachat_sdk",
+            "LLM_BURST_PROVIDER": "qwen_openai",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.llm_singleton_provider == "gigachat_sdk"
-        assert cfg.llm_burst_provider == "qwen_openai"
+        assert cfg.llm_provider == "qwen_openai"
 
     def test_llm_max_concurrent_default(self):
         """llm_max_concurrent по умолчанию — 10."""
@@ -176,18 +181,6 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.mcp_server_api_keys == {}
 
-    def test_gigachat_model_default(self):
-        """Модель GigaChat по умолчанию — не пустая."""
-        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
-            cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.gigachat_model, "gigachat_model не должен быть пустым"
-
-    def test_gigachat_scope_default(self):
-        """Scope GigaChat имеет значение по умолчанию."""
-        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
-            cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.gigachat_scope, "gigachat_scope не должен быть пустым"
-
     def test_storage_backend_default_memory(self):
         """storage_backend по умолчанию — 'memory'."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -229,20 +222,6 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.webhook_path == "/webhook"
-
-    def test_gigachat_max_concurrent_default(self):
-        """gigachat_max_concurrent по умолчанию — 15."""
-        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
-            cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.gigachat_max_concurrent == 15
-
-    def test_gigachat_max_concurrent_reasonable(self):
-        """gigachat_max_concurrent в разумных пределах [1, 100]."""
-        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
-            cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert 1 <= cfg.gigachat_max_concurrent <= 100, (
-            f"gigachat_max_concurrent={cfg.gigachat_max_concurrent} — должен быть в [1, 100]"
-        )
 
     def test_db_pool_min_default(self):
         """db_pool_min по умолчанию — 2."""
@@ -441,7 +420,7 @@ class TestSecretProtection:
         env_example = PROJECT_ROOT / ".env.example"
         content = env_example.read_text(encoding="utf-8")
 
-        required_keys = ["BOT_TOKEN", "GIGACHAT_CREDENTIALS"]
+        required_keys = ["BOT_TOKEN"]
         for key in required_keys:
             assert key in content, f"{key} отсутствует в .env.example"
 
@@ -449,16 +428,17 @@ class TestSecretProtection:
         """Config загружает значения из env, а не из кода."""
         custom_env = {
             "BOT_TOKEN": "custom-token-123",
-            "GIGACHAT_CREDENTIALS": "custom-creds-456",
-            "CHAT_ENGINE": "legacy",
+            "LLM_API_KEY": "custom-llm-key-456",
+            "LLM_MODEL": "gpt://folder/model/latest",
+            "CHAT_ENGINE": "shopping_agent",
             "MCP_SERVER_URL": "https://custom-mcp.example.com/mcp",
         }
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
 
         assert cfg.bot_token == "custom-token-123"  # noqa: S105
-        assert cfg.gigachat_credentials == "custom-creds-456"
-        assert cfg.chat_engine == "legacy"
+        assert cfg.llm_api_key == "custom-llm-key-456"
+        assert cfg.chat_engine == "shopping_agent"
         assert cfg.mcp_server_url == "https://custom-mcp.example.com/mcp"
 
     def test_chat_engine_customizable(self):
@@ -531,13 +511,11 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
             Config(_env_file=None)  # type: ignore[call-arg]
 
-    def test_llm_routing_providers_must_differ_for_multi_strategy(self):
-        """Для multi-стратегии singleton и burst провайдеры не должны совпадать."""
+    def test_llm_routing_strategy_legacy_multi_rejected(self):
+        """Legacy multi-provider стратегия отклоняется валидатором."""
         custom_env = {
             **MINIMAL_ENV,
             "LLM_ROUTING_STRATEGY": "single_user_gigachat_multi_user_qwen",
-            "LLM_SINGLETON_PROVIDER": "qwen_openai",
-            "LLM_BURST_PROVIDER": "qwen_openai",
         }
         with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
             Config(_env_file=None)  # type: ignore[call-arg]
@@ -594,13 +572,6 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.webhook_path == "/webhook-stg"
-
-    def test_gigachat_max_concurrent_customizable(self):
-        """gigachat_max_concurrent настраивается через env."""
-        custom_env = {**MINIMAL_ENV, "GIGACHAT_MAX_CONCURRENT": "30"}
-        with patch.dict(os.environ, custom_env, clear=True):
-            cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.gigachat_max_concurrent == 30
 
     def test_db_pool_customizable(self):
         """db_pool_min/max настраиваются через переменные окружения."""
@@ -776,12 +747,19 @@ class TestEnvExampleCompleteness:
         content = env_example.read_text(encoding="utf-8")
 
         # Все обязательные ключи
-        required_keys = ["BOT_TOKEN", "GIGACHAT_CREDENTIALS"]
+        required_keys = ["BOT_TOKEN"]
         for key in required_keys:
             assert key in content, f"{key} отсутствует в .env.example"
 
-        # Важные опциональные ключи для документации
-        optional_keys = ["CHAT_ENGINE", "LLM_BASE_URL", "MCP_SERVER_URL", "DEBUG"]
+        # Важные опциональные ключи для документации (ADR-006: GigaChat удалён)
+        optional_keys = [
+            "CHAT_ENGINE",
+            "LLM_API_KEY",
+            "LLM_MODEL",
+            "LLM_BASE_URL",
+            "MCP_SERVER_URL",
+            "DEBUG",
+        ]
         for key in optional_keys:
             assert key in content, f"{key} отсутствует в .env.example — важно для документации"
 

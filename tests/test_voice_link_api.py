@@ -96,7 +96,7 @@ async def test_resolve_handler_success() -> None:
     assert body == {"ok": True, "user_id": 42}
 
 
-class _DummyGigaChat:
+class _DummyChatEngine:
     def __init__(self) -> None:
         self._snapshot_calls = 0
         self.reset_calls = 0
@@ -130,10 +130,10 @@ class _DummyGigaChat:
 
 @pytest.mark.asyncio
 async def test_order_handler_success() -> None:
-    svc = _DummyGigaChat()
+    svc = _DummyChatEngine()
     req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},
-        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
+        app={"voice_link_api_key": "secret", "voice_link_chat_engine": svc},
         payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
     )
     resp = await _order_handler(req)  # type: ignore[arg-type]
@@ -148,11 +148,11 @@ async def test_order_handler_success() -> None:
 
 @pytest.mark.asyncio
 async def test_order_handler_cart_not_created() -> None:
-    svc = _DummyGigaChat()
+    svc = _DummyChatEngine()
     svc._after_snapshot = svc._before_snapshot
     req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},
-        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
+        app={"voice_link_api_key": "secret", "voice_link_chat_engine": svc},
         payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
     )
     resp = await _order_handler(req)  # type: ignore[arg-type]
@@ -164,7 +164,7 @@ async def test_order_handler_cart_not_created() -> None:
 
 @pytest.mark.asyncio
 async def test_order_handler_items_count_uses_snapshot_summary() -> None:
-    svc = _DummyGigaChat()
+    svc = _DummyChatEngine()
     svc._after_snapshot = {
         "link": "https://shop.example/cart/new",
         "created_at": "2026-02-21T00:01:00+00:00",
@@ -181,7 +181,7 @@ async def test_order_handler_items_count_uses_snapshot_summary() -> None:
     }
     req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},
-        app={"voice_link_api_key": "secret", "voice_link_gigachat_service": svc},
+        app={"voice_link_api_key": "secret", "voice_link_chat_engine": svc},
         payload={"user_id": 42, "utterance": "Собери корзину: молоко и яйца"},
     )
     resp = await _order_handler(req)  # type: ignore[arg-type]
@@ -195,7 +195,7 @@ async def test_order_handler_items_count_uses_snapshot_summary() -> None:
 async def test_order_start_and_status_done() -> None:
     app = {
         "voice_link_api_key": "secret",
-        "voice_link_gigachat_service": _DummyGigaChat(),
+        "voice_link_chat_engine": _DummyChatEngine(),
     }
     start_req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},
@@ -237,7 +237,7 @@ async def test_order_start_and_status_done() -> None:
 async def test_order_status_not_found() -> None:
     app = {
         "voice_link_api_key": "secret",
-        "voice_link_gigachat_service": _DummyGigaChat(),
+        "voice_link_chat_engine": _DummyChatEngine(),
     }
     status_req = _DummyRequest(
         headers={"X-Voice-Link-Api-Key": "secret"},

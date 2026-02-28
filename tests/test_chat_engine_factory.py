@@ -11,22 +11,16 @@ from vkuswill_bot.services.chat_engine_factory import create_chat_engine
 
 
 def _cfg(**overrides: object) -> SimpleNamespace:
+    """ADR-006: legacy GigaChat удалён, только shopping_agent."""
     base = {
-        "chat_engine": "legacy",
-        "gigachat_credentials": "creds",
-        "gigachat_model": "GigaChat-2-Max",
-        "gigachat_scope": "GIGACHAT_API_PERS",
+        "chat_engine": "shopping_agent",
         "max_tool_calls": 20,
         "max_history_messages": 50,
-        "gigachat_max_concurrent": 15,
-        "gigachat_ca_bundle": "certs/russian_ca_bundle.pem",
         "llm_base_url": "https://llm.api.cloud.yandex.net/v1",
         "llm_provider": "qwen_openai",
         "llm_routing_strategy": "single_provider",
-        "llm_singleton_provider": "gigachat_sdk",
-        "llm_burst_provider": "qwen_openai",
-        "llm_api_key": "",
-        "llm_model": "",
+        "llm_api_key": "key",
+        "llm_model": "gpt://folder/model/latest",
         "llm_max_concurrent": 10,
         "llm_max_tokens": 900,
         "llm_temperature": 0.2,
@@ -48,97 +42,49 @@ def _deps() -> dict[str, object]:
     }
 
 
-def test_create_chat_engine_legacy() -> None:
-    cfg = _cfg(chat_engine="legacy")
-    deps = _deps()
-
-    with patch("vkuswill_bot.services.chat_engine_factory.GigaChatService") as cls:
-        engine = create_chat_engine(cfg=cfg, **deps)
-
-    assert engine is cls.return_value
-    cls.assert_called_once_with(
-        credentials=cfg.gigachat_credentials,
-        model=cfg.gigachat_model,
-        scope=cfg.gigachat_scope,
-        mcp_client=deps["mcp_client"],
-        preferences_store=deps["preferences_store"],
-        recipe_store=deps["recipe_store"],
-        max_tool_calls=cfg.max_tool_calls,
-        max_history=cfg.max_history_messages,
-        dialog_manager=deps["dialog_manager"],
-        tool_executor=deps["tool_executor"],
-        gigachat_max_concurrent=cfg.gigachat_max_concurrent,
-        langfuse_service=deps["langfuse_service"],
-        ca_bundle_file=cfg.gigachat_ca_bundle,
-    )
-
-
 def test_create_chat_engine_shopping_requires_api_key() -> None:
-    cfg = _cfg(chat_engine="shopping_agent", llm_api_key="", llm_model="model")
+    cfg = _cfg(llm_api_key="", llm_model="model")
     with pytest.raises(RuntimeError, match="LLM_API_KEY"):
         create_chat_engine(cfg=cfg, **_deps())
 
 
 def test_create_chat_engine_shopping_requires_model() -> None:
-    cfg = _cfg(chat_engine="shopping_agent", llm_api_key="key", llm_model="")
+    cfg = _cfg(llm_api_key="key", llm_model="")
     with pytest.raises(RuntimeError, match="LLM_MODEL"):
         create_chat_engine(cfg=cfg, **_deps())
 
 
-def test_create_chat_engine_shopping_gigachat_provider_uses_fallback_model() -> None:
+def test_create_chat_engine_shopping_rejects_gigachat_provider() -> None:
     cfg = _cfg(
-        chat_engine="shopping_agent",
         llm_provider="gigachat_sdk",
-        llm_api_key="",
-        llm_model="",
-        gigachat_model="GigaChat-2-Max",
-        gigachat_credentials="creds",
-    )
-    deps = _deps()
-    shopping_cls = MagicMock()
-    fake_module = SimpleNamespace(ShoppingAgent=shopping_cls)
-
-    with patch(
-        "vkuswill_bot.services.chat_engine_factory.importlib.import_module",
-        return_value=fake_module,
-    ):
-        create_chat_engine(cfg=cfg, **deps)
-
-    shopping_cls.assert_called_once()
-    kwargs = shopping_cls.call_args.kwargs
-    assert kwargs["llm_provider"] == "gigachat_sdk"
-    assert kwargs["gigachat_model"] == "GigaChat-2-Max"
-
-
-def test_create_chat_engine_shopping_routing_requires_burst_model() -> None:
-    cfg = _cfg(
-        chat_engine="shopping_agent",
-        llm_provider="gigachat_sdk",
-        llm_routing_strategy="single_user_gigachat_multi_user_qwen",
-        llm_singleton_provider="gigachat_sdk",
-        llm_burst_provider="qwen_openai",
-        llm_model="",
         llm_api_key="key",
-        gigachat_credentials="creds",
+        llm_model="gpt://folder/model/latest",
     )
-    with pytest.raises(RuntimeError, match="LLM_MODEL"):
+    with pytest.raises(RuntimeError, match="qwen_openai"):
+        create_chat_engine(cfg=cfg, **_deps())
+
+
+def test_create_chat_engine_shopping_rejects_legacy_routing_strategy() -> None:
+    cfg = _cfg(
+        llm_routing_strategy="single_user_gigachat_multi_user_qwen",
+        llm_provider="qwen_openai",
+        llm_model="gpt://folder/model/latest",
+        llm_api_key="key",
+    )
+    with pytest.raises(RuntimeError, match="single_provider"):
         create_chat_engine(cfg=cfg, **_deps())
 
 
 def test_create_chat_engine_shopping_routing_invalid_strategy() -> None:
     cfg = _cfg(
-        chat_engine="shopping_agent",
-        llm_provider="qwen_openai",
         llm_routing_strategy="unknown",
-        llm_model="gpt://folder/model/latest",
-        llm_api_key="key",
     )
     with pytest.raises(RuntimeError, match="LLM_ROUTING_STRATEGY"):
         create_chat_engine(cfg=cfg, **_deps())
 
 
 def test_create_chat_engine_shopping_module_unavailable() -> None:
-    cfg = _cfg(chat_engine="shopping_agent", llm_api_key="key", llm_model="model")
+    cfg = _cfg(llm_api_key="key", llm_model="model")
     with (
         patch(
             "vkuswill_bot.services.chat_engine_factory.importlib.import_module",
@@ -150,12 +96,7 @@ def test_create_chat_engine_shopping_module_unavailable() -> None:
 
 
 def test_create_chat_engine_shopping_success() -> None:
-    cfg = _cfg(
-        chat_engine="shopping_agent",
-        llm_api_key="key",
-        llm_model="gpt://folder/model/latest",
-        llm_max_concurrent=12,
-    )
+    cfg = _cfg(llm_max_concurrent=12)
     deps = _deps()
     shopping_cls = MagicMock()
     fake_module = SimpleNamespace(ShoppingAgent=shopping_cls)
@@ -175,8 +116,6 @@ def test_create_chat_engine_shopping_success() -> None:
         llm_max_concurrent=cfg.llm_max_concurrent,
         llm_provider=cfg.llm_provider,
         llm_routing_strategy=cfg.llm_routing_strategy,
-        llm_singleton_provider=cfg.llm_singleton_provider,
-        llm_burst_provider=cfg.llm_burst_provider,
         mcp_client=deps["mcp_client"],
         dialog_manager=deps["dialog_manager"],
         max_tool_calls=cfg.max_tool_calls,
@@ -186,19 +125,12 @@ def test_create_chat_engine_shopping_success() -> None:
         llm_temperature=cfg.llm_temperature,
         prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
         compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
-        gigachat_credentials=cfg.gigachat_credentials,
-        gigachat_scope=cfg.gigachat_scope,
-        gigachat_ca_bundle=cfg.gigachat_ca_bundle,
-        gigachat_model=cfg.gigachat_model,
         preferences_store=deps["preferences_store"],
     )
 
 
 def test_create_chat_engine_shopping_passes_prompt_profile_flags() -> None:
     cfg = _cfg(
-        chat_engine="shopping_agent",
-        llm_api_key="key",
-        llm_model="gpt://folder/model/latest",
         llm_prompt_profiles_enabled=True,
         llm_compact_followup_prompt_enabled=False,
     )

@@ -2097,41 +2097,32 @@ async def test_runtime_guard_adds_batch_hint_after_repeated_single_search_steps(
 
 
 @pytest.mark.asyncio
-async def test_routing_single_user_gigachat_multi_user_qwen() -> None:
-    mcp = _FakeMCPClient()
-    giga_adapter = _FakeLLMAdapter(text="Ответ Giga", delay_seconds=0.15)
-    qwen_adapter = _FakeLLMAdapter(text="Ответ Qwen")
-    agent = ShoppingAgent(
-        llm_base_url="https://llm.api.cloud.yandex.net/v1",
-        llm_api_key="test-key",
-        llm_model="gpt://folder/qwen-model/latest",
-        llm_max_concurrent=4,
-        llm_provider="qwen_openai",
-        llm_routing_strategy="single_user_gigachat_multi_user_qwen",
-        llm_singleton_provider="gigachat_sdk",
-        llm_burst_provider="qwen_openai",
-        mcp_client=mcp,  # type: ignore[arg-type]
-        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
-        gigachat_model="GigaChat-2-Max",
-        llm_adapters={
-            "gigachat_sdk": giga_adapter,
-            "qwen_openai": qwen_adapter,
-        },
-    )
+async def test_rejects_legacy_multi_provider_routing() -> None:
+    with pytest.raises(ValueError, match="single_provider"):
+        ShoppingAgent(
+            llm_base_url="https://llm.api.cloud.yandex.net/v1",
+            llm_api_key="test-key",
+            llm_model="gpt://folder/qwen-model/latest",
+            llm_max_concurrent=4,
+            llm_provider="qwen_openai",
+            llm_routing_strategy="single_user_gigachat_multi_user_qwen",
+            mcp_client=_FakeMCPClient(),  # type: ignore[arg-type]
+            dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        )
 
-    import asyncio
 
-    t1 = asyncio.create_task(agent.process_message(user_id=1, text="первый запрос"))
-    await asyncio.sleep(0.01)
-    t2 = asyncio.create_task(agent.process_message(user_id=2, text="второй запрос"))
-    r1, r2 = await asyncio.gather(t1, t2)
-
-    assert r1 == "Ответ Giga"
-    assert r2 == "Ответ Qwen"
-    assert len(giga_adapter.calls) == 1
-    assert len(qwen_adapter.calls) == 1
-    assert giga_adapter.calls[0]["model"] == "GigaChat-2-Max"
-    assert qwen_adapter.calls[0]["model"] == "gpt://folder/qwen-model/latest"
+@pytest.mark.asyncio
+async def test_rejects_gigachat_provider_in_shopping_agent() -> None:
+    with pytest.raises(ValueError, match="qwen_openai"):
+        ShoppingAgent(
+            llm_base_url="https://llm.api.cloud.yandex.net/v1",
+            llm_api_key="test-key",
+            llm_model="gpt://folder/qwen-model/latest",
+            llm_max_concurrent=2,
+            llm_provider="gigachat_sdk",
+            mcp_client=_FakeMCPClient(),  # type: ignore[arg-type]
+            dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.asyncio

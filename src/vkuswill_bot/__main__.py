@@ -18,7 +18,8 @@ import json
 import logging
 import signal
 import sys
-from concurrent.futures import ThreadPoolExecutor
+from collections import OrderedDict
+from typing import Any
 import asyncpg
 from aiohttp import web
 from aiogram import Bot, Dispatcher
@@ -30,21 +31,14 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 from vkuswill_bot.bot.handlers import admin_router, router
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware, UserMiddleware
 from vkuswill_bot.config import config
-from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.chat_engine import ChatEngineProtocol
 from vkuswill_bot.services.chat_engine_factory import create_chat_engine
-from vkuswill_bot.services.dialog_manager import DialogManager
 from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.migration_runner import MigrationRunner
 from vkuswill_bot.services.preferences_store import PreferencesStore
-from vkuswill_bot.services.price_cache import PriceCache, TwoLevelPriceCache
-from vkuswill_bot.services.recipe_search import RecipeSearchService
-from vkuswill_bot.services.recipe_store import RecipeStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
-from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.stats_aggregator import StatsAggregator
-from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.user_store import UserStore
 from vkuswill_bot.services.voice_link_api import register_voice_link_routes
 
@@ -122,11 +116,27 @@ def _setup_logging() -> None:
 _setup_logging()
 logger = logging.getLogger(__name__)
 
-# Увеличенный пул потоков для синхронного SDK GigaChat (asyncio.to_thread)
-THREAD_POOL_WORKERS = 50
-
 # Внутренний путь на aiohttp-сервере (nginx проксирует внешние пути сюда)
 INTERNAL_WEBHOOK_PATH = "/webhook"
+
+
+class _LockManager:
+    """Простой per-user lock manager для ShoppingAgent-path без legacy зависимостей."""
+
+    _MAX_LOCKS = 2000
+
+    def __init__(self) -> None:
+        self._locks: OrderedDict[int, asyncio.Lock] = OrderedDict()
+
+    def get_lock(self, user_id: int) -> asyncio.Lock:
+        if user_id in self._locks:
+            self._locks.move_to_end(user_id)
+            return self._locks[user_id]
+        if len(self._locks) >= self._MAX_LOCKS:
+            self._locks.popitem(last=False)
+        lock = asyncio.Lock()
+        self._locks[user_id] = lock
+        return lock
 
 
 def _build_webhook_url(webhook_host: str, webhook_path: str) -> str:
@@ -199,10 +209,6 @@ def _flush_s3_handlers() -> None:
 
 async def main() -> None:
     """Инициализация сервисов и запуск бота."""
-    # Увеличить пул потоков для asyncio.to_thread
-    loop = asyncio.get_running_loop()
-    loop.set_default_executor(ThreadPoolExecutor(max_workers=THREAD_POOL_WORKERS))
-
     # Telegram-бот
     bot = Bot(
         token=config.bot_token,
@@ -281,84 +287,17 @@ async def main() -> None:
 
     # Хранилище предпочтений (SQLite, отдельная БД)
     prefs_store = PreferencesStore(config.database_path)
-
-    # Кеш рецептов (SQLite, отдельная БД — исключает конфликты блокировок)
-    recipe_store = RecipeStore(config.recipe_database_path)
-
-    # Менеджер диалогов, кэш цен, снимок корзины: Redis или in-memory
     redis_client = None
+    recipe_store = None
+    nutrition_service = None
+    dialog_manager: _LockManager | Any = _LockManager()
+
     if config.storage_backend == "redis" and config.redis_url:
         try:
-            from vkuswill_bot.services.cart_snapshot_store import (
-                CartSnapshotStore,
-            )
-            from vkuswill_bot.services.redis_dialog_manager import (
-                RedisDialogManager,
-            )
-
             redis_client = await create_redis_client(config.redis_url)
-            dialog_manager = RedisDialogManager(
-                redis=redis_client,
-                max_history=config.max_history_messages,
-            )
-            # Двухуровневый кэш цен: L1 (in-memory) + L2 (Redis)
-            price_cache = TwoLevelPriceCache(redis=redis_client)
-            # Снимок корзины в Redis (24h TTL)
-            cart_snapshot_store = CartSnapshotStore(redis=redis_client)
-            logger.info(
-                "Redis-бэкенд: диалоги, кэш цен (L1+L2), снимки корзины",
-            )
+            logger.info("Redis подключен (health-check)")
         except Exception as e:
-            logger.warning(
-                "Redis недоступен (%s), fallback на in-memory",
-                e,
-            )
-            from vkuswill_bot.services.cart_snapshot_store import (
-                InMemoryCartSnapshotStore,
-            )
-
-            price_cache = PriceCache()
-            dialog_manager = DialogManager(
-                max_history=config.max_history_messages,
-            )
-            cart_snapshot_store = InMemoryCartSnapshotStore()
-    else:
-        from vkuswill_bot.services.cart_snapshot_store import (
-            InMemoryCartSnapshotStore,
-        )
-
-        price_cache = PriceCache()
-        dialog_manager = DialogManager(
-            max_history=config.max_history_messages,
-        )
-        cart_snapshot_store = InMemoryCartSnapshotStore()
-
-    # Процессоры: поиск и корзина (получают PriceCache через DI)
-    search_processor = SearchProcessor(price_cache)
-    cart_processor = CartProcessor(price_cache)
-    recipe_search_service = RecipeSearchService(
-        mcp_client=mcp_client,
-        search_processor=search_processor,
-        max_concurrency=5,
-    )
-
-    # КБЖУ-сервис (Open Food Facts, бесплатный, без API key)
-    from vkuswill_bot.services.nutrition_service import NutritionService
-
-    nutrition_service = NutritionService()
-    logger.info("NutritionService включён (Open Food Facts)")
-
-    # Исполнитель инструментов (маршрутизация MCP/локальных вызовов)
-    tool_executor = ToolExecutor(
-        mcp_client=mcp_client,
-        search_processor=search_processor,
-        cart_processor=cart_processor,
-        preferences_store=prefs_store,
-        cart_snapshot_store=cart_snapshot_store,
-        nutrition_service=nutrition_service,
-        recipe_search_service=recipe_search_service,
-        user_store=user_store,
-    )
+            logger.warning("Redis недоступен (%s), продолжаю без Redis", e)
 
     # Langfuse — LLM-observability (опционально)
     langfuse_service = LangfuseService(
@@ -369,14 +308,13 @@ async def main() -> None:
         anonymize_messages=config.langfuse_anonymize_messages,
     )
 
-    # Chat engine (feature-flag): legacy GigaChat или ShoppingAgent
     chat_engine = create_chat_engine(
         cfg=config,
         mcp_client=mcp_client,
         preferences_store=prefs_store,
         recipe_store=recipe_store,
         dialog_manager=dialog_manager,
-        tool_executor=tool_executor,
+        tool_executor=None,
         langfuse_service=langfuse_service,
     )
     logger.info("Chat engine selected: %s", config.chat_engine)
@@ -390,8 +328,7 @@ async def main() -> None:
         logger.warning("Инструменты будут загружены при первом запросе")
 
     # Передаём сервисы в хендлеры через DI
-    # DI-ключ сохраняем для обратной совместимости с существующими handlers.
-    dp["gigachat_service"] = chat_engine
+    dp["chat_engine"] = chat_engine
     if user_store is not None:
         dp["user_store"] = user_store
     if stats_aggregator is not None:
@@ -404,9 +341,11 @@ async def main() -> None:
     async def _cleanup() -> None:
         logger.info("Закрытие ресурсов...")
         await chat_engine.close()
-        await recipe_store.close()
         await prefs_store.close()
-        await nutrition_service.close()
+        if recipe_store is not None:
+            await recipe_store.close()
+        if nutrition_service is not None:
+            await nutrition_service.close()
         await close_redis_client(redis_client)
         await mcp_client.close()
         if stats_aggregator is not None:

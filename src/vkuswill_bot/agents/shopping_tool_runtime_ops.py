@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
 
 from vkuswill_bot.agents.llm_helpers import assistant_msg, parse_tool_args
-from vkuswill_bot.agents.mcp_response_parser import extract_cart_data
 from vkuswill_bot.agents.product_index_manager import (
     update_product_index_from_tool_result,
     update_search_query_by_xml_id,
@@ -34,6 +34,24 @@ def _tool_progress_text(tool_name: str) -> str:
         "recipe_search": "\U0001f50d Ищу продукты по рецепту...",
     }
     return mapping.get(tool_name, "\u2699\ufe0f Обрабатываю запрос...")
+
+
+def _extract_cart_data_from_result(*, tool_name: str, tool_result: str) -> dict[str, Any] | None:
+    if tool_name != "vkusvill_cart_link_create":
+        return None
+    try:
+        payload = json.loads(tool_result)
+    except Exception:
+        return None
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return None
+    data = payload.get("data")
+    if not isinstance(data, dict):
+        return None
+    link = data.get("link")
+    if not isinstance(link, str) or not link.strip():
+        return None
+    return data
 
 
 async def execute_tool_calls(
@@ -138,7 +156,7 @@ async def execute_tool_calls(
         if tool_name in {"recipe_ingredients", "recipe_search"}:
             state.recipe_flow_started_this_turn = True
 
-        cart_data = extract_cart_data(tool_name=tool_name, tool_result=tool_result)
+        cart_data = _extract_cart_data_from_result(tool_name=tool_name, tool_result=tool_result)
         if cart_data is not None:
             products = tool_args.get("products")
             if isinstance(products, list) and "products" not in cart_data:

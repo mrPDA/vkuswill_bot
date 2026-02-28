@@ -7,6 +7,7 @@ import math
 import re
 
 from vkuswill_bot.services.price_cache import PriceCache
+from vkuswill_bot.services.tool_input_normalizers import fix_cart_args as _fix_cart_args_shared
 
 logger = logging.getLogger(__name__)
 
@@ -41,9 +42,9 @@ class CartProcessor:
     def enhance_cart_schema(params: dict) -> dict:
         """Дополнить схему vkusvill_cart_link_create описаниями параметров.
 
-        GigaChat плохо работает с дробными значениями, если у параметра
+        LLM плохо работает с дробными значениями, если у параметра
         нет текстового description. Добавляем description к xml_id и q,
-        чтобы GigaChat корректно генерировал аргументы.
+        чтобы LLM корректно генерировала аргументы.
         """
         params = copy.deepcopy(params)
         items_schema = params.get("properties", {}).get("products", {}).get("items", {})
@@ -70,43 +71,15 @@ class CartProcessor:
     def fix_cart_args(arguments: dict) -> dict:
         """Исправить аргументы корзины.
 
-        1. Добавить q=1, если GigaChat забыл указать количество.
+        1. Добавить q=1, если LLM забыл указать количество.
         2. Объединить дубли xml_id (суммировать q).
 
-        GigaChat иногда дублирует xml_id вместо использования q,
+        LLM иногда дублирует xml_id вместо использования q,
         например [{xml_id:1},{xml_id:1},{xml_id:1}] вместо [{xml_id:1,q:3}].
         VkusVill API дедуплицирует по xml_id и берёт q=1,
         поэтому объединяем на нашей стороне.
         """
-        products = arguments.get("products")
-        if not products or not isinstance(products, list):
-            return arguments
-
-        # Шаг 1: добавить q=1 где отсутствует
-        for item in products:
-            if isinstance(item, dict) and "q" not in item:
-                item["q"] = 1
-
-        # Шаг 2: объединить дубли xml_id
-        merged: dict[int, float] = {}
-        order: list[int] = []
-        for item in products:
-            if not isinstance(item, dict):
-                continue
-            xml_id = item.get("xml_id")
-            if xml_id is None:
-                continue
-            q = item.get("q", 1)
-            if xml_id in merged:
-                merged[xml_id] += q
-            else:
-                merged[xml_id] = q
-                order.append(xml_id)
-
-        if merged:
-            arguments["products"] = [{"xml_id": xid, "q": merged[xid]} for xid in order]
-
-        return arguments
+        return _fix_cart_args_shared(arguments)
 
     # Максимальное q, поддерживаемое VkusVill API
     _MAX_Q_API = 40
@@ -146,7 +119,7 @@ class CartProcessor:
     async def fix_unit_quantities(self, args: dict) -> dict:
         """Округлить q до целого для штучных товаров и ограничить max q.
 
-        GigaChat иногда:
+        LLM иногда:
         - Ставит дробное q для штучных товаров (0.68 для банки огурцов)
         - Путает граммы рецепта с количеством штук (170 г сахара → q=170)
 
@@ -192,7 +165,7 @@ class CartProcessor:
                     continue
 
                 # Умный пересчёт: если q подозрительно велико и известен
-                # вес упаковки — GigaChat перепутал граммы рецепта с количеством
+                # вес упаковки — LLM перепутал граммы рецепта с количеством
                 # упаковок. Пересчитываем: q = ceil(q_гр / вес_упаковки_гр).
                 weight_g = cached.weight_grams
                 if q > self._GRAM_CONFUSION_THRESHOLD and weight_g and weight_g > 0:
@@ -203,7 +176,7 @@ class CartProcessor:
                         logger.info(
                             "Пересчёт по весу: xml_id=%s (%s), "
                             "q=%s → %s (вес упаковки: %s %s = %s г, "
-                            "GigaChat перепутал граммы с количеством упаковок)",
+                            "LLM перепутал граммы с количеством упаковок)",
                             xml_id,
                             cached.name,
                             old_q,
@@ -216,7 +189,7 @@ class CartProcessor:
                             f"{cached.name}: {old_q} → {q} {cached.unit} "
                             f"(пересчитано по весу упаковки "
                             f"{cached.weight_value} {cached.weight_unit}; "
-                            f"GigaChat перепутал граммы/мл рецепта "
+                            f"LLM перепутал граммы/мл рецепта "
                             f"с количеством упаковок)"
                         )
 
@@ -326,7 +299,7 @@ class CartProcessor:
                 purchase_total += purchase_subtotal
                 recipe_total += recipe_subtotal
                 # Очищаем HTML-сущности из названий товаров MCP-сервера
-                # (&nbsp; и пр.), чтобы JSON оставался чистым для GigaChat.
+                # (&nbsp; и пр.), чтобы JSON оставался чистым для LLM.
                 clean_name = cached.name.replace("&nbsp;", " ").replace("&amp;", "&")
                 lines.append(
                     "  - "
@@ -408,7 +381,7 @@ class CartProcessor:
         - missing_queries: [query] — запрос был, но товара в корзине нет
         - unmatched_items: [{name, xml_id}] — товар не из поиска
 
-        Это позволяет GigaChat увидеть ошибки и скорректировать корзину.
+        Это позволяет LLM увидеть ошибки и скорректировать корзину.
         """
         cart_xml_ids: set[int] = set()
         for item in cart_args.get("products", []):

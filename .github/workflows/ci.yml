@@ -30,12 +30,21 @@ jobs:
         run: uv sync --all-extras
 
       - name: Run architecture and contract gates
-        run: uv run pytest -q tests/test_agents_architecture.py tests/test_shopping_contract_flows.py
+        run: |
+          uv run pytest -q tests/test_agents_architecture.py \
+            tests/test_services_architecture.py \
+            tests/test_shopping_contract_flows.py
 
-      - name: Build architecture KPI report
+      - name: Build agents architecture KPI report
         run: |
           uv run python scripts/collect_agents_arch_kpi.py \
             --output-dir ci-artifacts/architecture-kpi \
+            --summary-file "$GITHUB_STEP_SUMMARY"
+
+      - name: Build services architecture KPI report (ADR-006)
+        run: |
+          uv run python scripts/collect_services_arch_kpi.py \
+            --output-dir ci-artifacts/services-kpi \
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Upload architecture KPI artifacts
@@ -43,6 +52,12 @@ jobs:
         with:
           name: architecture-kpi
           path: ci-artifacts/architecture-kpi
+
+      - name: Upload services KPI artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: services-kpi
+          path: ci-artifacts/services-kpi
 
   test:
     name: Tests (Python ${{ matrix.python-version }})

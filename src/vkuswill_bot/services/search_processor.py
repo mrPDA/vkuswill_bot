@@ -2,14 +2,16 @@
 
 import json
 import logging
-import re
 
 from vkuswill_bot.services.price_cache import PriceCache
+from vkuswill_bot.services.tool_input_normalizers import (
+    SEARCH_LIMIT,
+    STANDALONE_NUM_PATTERN,
+    UNIT_PATTERN,
+    clean_search_query as _clean_search_query_shared,
+)
 
 logger = logging.getLogger(__name__)
-
-# Максимум товаров в результатах поиска (экономия токенов)
-SEARCH_LIMIT = 5
 
 # Минимальная длина слова для проверки релевантности
 _MIN_RELEVANCE_WORD_LEN = 3
@@ -101,20 +103,14 @@ class SearchProcessor:
     обрезкой тяжёлых полей и извлечением xml_id.
     """
 
-    # Поля товара, которые передаём в GigaChat (остальные срезаем)
+    # Поля товара, которые передаём в LLM (остальные срезаем)
     _SEARCH_ITEM_FIELDS = ("xml_id", "name", "price", "unit", "weight", "rating")
 
     # Паттерн для очистки поисковых запросов:
     # удаляем числа с единицами ("400 гр", "5%", "2 банки", "450 мл")
-    _UNIT_PATTERN = re.compile(
-        r"\b\d+[,.]?\d*\s*"
-        r"(%|шт\w*|гр\w*|г\b|кг\w*|мл\w*|л\b|литр\w*|"
-        r"бутыл\w*|банк\w*|пач\w*|уп\w*|порц\w*|"
-        r"ст\.?\s*л\.?|ч\.?\s*л\.?|зубч\w*|пуч\w*|лист\w*)",
-        re.IGNORECASE,
-    )
+    _UNIT_PATTERN = UNIT_PATTERN
     # Отдельные числа ("молоко 4", "мороженое 2")
-    _STANDALONE_NUM = re.compile(r"\b\d+\b")
+    _STANDALONE_NUM = STANDALONE_NUM_PATTERN
 
     def __init__(self, price_cache: PriceCache | None = None) -> None:
         self.price_cache: PriceCache = price_cache if price_cache is not None else PriceCache()
@@ -123,7 +119,7 @@ class SearchProcessor:
     def clean_search_query(cls, query: str) -> str:
         """Очистить поисковый запрос от количеств и единиц измерения.
 
-        GigaChat часто передаёт в поиск полный текст пользователя
+        LLM часто передаёт в поиск полный текст пользователя
         вместо ключевых слов, например "Творог 5% 400 гр" или "молоко 4".
         Числа и единицы мусорят поисковую выдачу MCP API.
 
@@ -134,10 +130,7 @@ class SearchProcessor:
             "мороженое 2" → "мороженое"
             "темный хлеб" → "темный хлеб" (без изменений)
         """
-        cleaned = cls._UNIT_PATTERN.sub("", query)
-        cleaned = cls._STANDALONE_NUM.sub("", cleaned)
-        cleaned = re.sub(r"\s+", " ", cleaned).strip()
-        return cleaned or query
+        return _clean_search_query_shared(query)
 
     @staticmethod
     def parse_search_items(result_text: str) -> tuple[dict, list[dict]] | None:
@@ -198,11 +191,11 @@ class SearchProcessor:
         """Обрезать результат поиска, оставив только нужные поля.
 
         Убирает description, images, slug и другие тяжёлые поля,
-        чтобы не раздувать контекстное окно GigaChat.
+        чтобы не раздувать контекстное окно LLM.
         Кеширование цен делается ДО обрезки (в cache_prices).
 
         Если значимые слова из запроса не найдены ни в одном товаре,
-        добавляет ``relevance_warning`` — сигнал для GigaChat, что товар
+        добавляет ``relevance_warning`` — сигнал для LLM, что товар
         может отсутствовать в каталоге.
         """
         parsed = self.parse_search_items(result_text)

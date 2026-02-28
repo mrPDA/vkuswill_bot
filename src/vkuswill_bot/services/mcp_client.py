@@ -14,6 +14,14 @@ from typing import Any
 
 import httpx
 
+from vkuswill_bot.services.tool_input_normalizers import (
+    SEARCH_LIMIT,
+    STANDALONE_NUM_PATTERN,
+    UNIT_PATTERN,
+    clean_search_query as _clean_search_query_shared,
+    fix_cart_args as _fix_cart_args_shared,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -279,24 +287,18 @@ class VkusvillMCPClient:
 
     @staticmethod
     def _fix_cart_args(arguments: dict) -> dict:
-        """Делегирует в CartProcessor.fix_cart_args (обратная совместимость)."""
-        from vkuswill_bot.services.cart_processor import CartProcessor
-
-        return CartProcessor.fix_cart_args(arguments)
+        """Обратная совместимость: нормализация аргументов корзины."""
+        return _fix_cart_args_shared(arguments)
 
     # Алиасы для тестов
-    from vkuswill_bot.services.search_processor import SEARCH_LIMIT
-    from vkuswill_bot.services.search_processor import SearchProcessor as _SP
-
-    _UNIT_PATTERN = _SP._UNIT_PATTERN
-    _STANDALONE_NUM = _SP._STANDALONE_NUM
+    SEARCH_LIMIT = SEARCH_LIMIT
+    _UNIT_PATTERN = UNIT_PATTERN
+    _STANDALONE_NUM = STANDALONE_NUM_PATTERN
 
     @classmethod
     def _clean_search_query(cls, query: str) -> str:
-        """Делегирует в SearchProcessor.clean_search_query (обратная совместимость)."""
-        from vkuswill_bot.services.search_processor import SearchProcessor
-
-        return SearchProcessor.clean_search_query(query)
+        """Обратная совместимость: очистка поискового запроса."""
+        return _clean_search_query_shared(query)
 
     async def call_tool(self, name: str, arguments: dict) -> str:
         """Вызвать инструмент на MCP-сервере.

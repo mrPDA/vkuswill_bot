@@ -1,13 +1,12 @@
 [project]
 name = "vkuswill-bot"
 version = "0.18.6"
-description = "Telegram-бот для заказа продуктов из ВкусВилл с GigaChat и MCP"
+description = "Telegram-бот для заказа продуктов из ВкусВилл с ИИ-ассистентом и MCP"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 dependencies = [
     "aiogram>=3.15",
     "aiosqlite>=0.20",
-    "gigachat>=0.1.36",
     "openai>=1.0",
     "mcp>=1.9",
     "pydantic-settings>=2.0",

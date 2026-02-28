@@ -35,6 +35,7 @@ _DEFAULT_MAX_TOOL_RESULT_CHARS = 1800
 _DEFAULT_MAX_HISTORY_CHARS = 16000
 _DEFAULT_MAX_INPUT_CHARS_PER_TURN = 250000
 _DEFAULT_MAX_ACTIVE_USERS = 2000
+_SUPPORTED_LLM_PROVIDER = "qwen_openai"
 
 
 class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
@@ -49,10 +50,8 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         llm_max_concurrent: int,
         mcp_client: VkusvillMCPClient,
         dialog_manager: DialogManager | RedisDialogManager,
-        llm_provider: str = "qwen_openai",
+        llm_provider: str = _SUPPORTED_LLM_PROVIDER,
         llm_routing_strategy: str = _DEFAULT_LLM_ROUTING_STRATEGY,
-        llm_singleton_provider: str = "gigachat_sdk",
-        llm_burst_provider: str = "qwen_openai",
         max_tool_calls: int = _DEFAULT_MAX_TOOL_CALLS,
         max_history: int = _DEFAULT_MAX_HISTORY,
         langfuse_service: LangfuseService | None = None,
@@ -68,20 +67,21 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         max_history_chars: int = _DEFAULT_MAX_HISTORY_CHARS,
         max_input_chars_per_turn: int = _DEFAULT_MAX_INPUT_CHARS_PER_TURN,
         max_active_users: int = _DEFAULT_MAX_ACTIVE_USERS,
-        gigachat_credentials: str = "",
-        gigachat_scope: str = "GIGACHAT_API_PERS",
-        gigachat_ca_bundle: str | None = None,
-        gigachat_model: str = "GigaChat-2-Max",
         preferences_store: PreferencesStore | None = None,
         llm_client: Any | None = None,
         llm_adapters: dict[str, LLMAdapterProtocol] | None = None,
     ) -> None:
         self._llm_provider = normalize_llm_provider(llm_provider)
         self._llm_routing_strategy = llm_routing_strategy.strip().lower()
-        self._llm_singleton_provider = normalize_llm_provider(llm_singleton_provider)
-        self._llm_burst_provider = normalize_llm_provider(llm_burst_provider)
+        if self._llm_provider != _SUPPORTED_LLM_PROVIDER:
+            raise ValueError(
+                "ShoppingAgent supports only llm_provider='qwen_openai' (gigachat_sdk is disabled)",
+            )
+        if self._llm_routing_strategy != _DEFAULT_LLM_ROUTING_STRATEGY:
+            raise ValueError(
+                "ShoppingAgent supports only llm_routing_strategy='single_provider'",
+            )
         self._model = llm_model
-        self._gigachat_model = gigachat_model.strip() or llm_model
         self._mcp_client = mcp_client
         self._dialog_manager = dialog_manager
         self._max_tool_calls = max(1, max_tool_calls)
@@ -109,8 +109,6 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._history: dict[int, list[dict[str, Any]]] = {}
         self._last_cart_snapshot: dict[int, dict[str, Any]] = {}
         self._active_users: OrderedDict[int, None] = OrderedDict()
-        self._routing_lock = asyncio.Lock()
-        self._active_llm_requests = 0
 
         self._providers_in_use = self._compute_providers_in_use()
         self._llm_adapters: dict[str, LLMAdapterProtocol] = {}
@@ -148,8 +146,5 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
                 llm_base_url=llm_base_url,
                 llm_api_key=llm_api_key,
                 llm_timeout_seconds=self._llm_timeout_seconds,
-                gigachat_credentials=gigachat_credentials,
-                gigachat_scope=gigachat_scope,
-                gigachat_ca_bundle=gigachat_ca_bundle,
             )
         self._mcp_gateway = self._create_mcp_gateway()

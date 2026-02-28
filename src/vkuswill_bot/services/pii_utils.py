@@ -6,7 +6,7 @@
 Используется в:
 - ``s3_log_handler.py`` — маскировка PII в S3-логах
 - ``langfuse_tracing.py`` — анонимизация для LLM-observability
-- ``gigachat_service.py`` — санитизация аргументов tool calls
+- ``tool_executor.py`` — санитизация аргументов tool calls
 """
 
 from __future__ import annotations

@@ -58,9 +58,8 @@ _LEAK_PATTERNS: list[tuple[re.Pattern[str], str]] = [
 ]
 
 # Допустимые и документированные исключения SSL (точечный allowlist).
-_SSL_FALSE_ALLOWLIST = {
-    ("src/vkuswill_bot/services/gigachat_service.py", "verify_ssl", 114),
-}
+# ADR-006: gigachat_service удалён.
+_SSL_FALSE_ALLOWLIST: set[tuple[str, str, int]] = set()
 
 
 def _iter_user_message_text_expr(

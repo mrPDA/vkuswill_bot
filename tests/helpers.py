@@ -1,65 +1,9 @@
 """Общие хелперы для тестов.
 
-Публичные функции для создания тестовых объектов GigaChat и aiogram.
-Импортируй из этого модуля, а не дублируй в каждом тесте.
+Публичные функции для создания тестовых объектов aiogram.
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock
-
-from gigachat.models import (
-    ChatCompletion,
-    Choices,
-    FunctionCall,
-    Messages,
-    MessagesRole,
-    Usage,
-)
-
-# Общий объект Usage для тестовых ответов GigaChat
-USAGE = Usage(prompt_tokens=10, completion_tokens=5, total_tokens=15)
-
-
-def make_text_response(text: str) -> ChatCompletion:
-    """Создать ответ GigaChat с текстом (без function_call)."""
-    return ChatCompletion(
-        choices=[
-            Choices(
-                message=Messages(
-                    role=MessagesRole.ASSISTANT,
-                    content=text,
-                ),
-                index=0,
-                finish_reason="stop",
-            )
-        ],
-        created=1000000,
-        model="GigaChat",
-        usage=USAGE,
-        object="chat.completion",
-    )
-
-
-def make_function_call_response(name: str, arguments: dict | str) -> ChatCompletion:
-    """Создать ответ GigaChat с вызовом функции."""
-    args = json.loads(arguments) if isinstance(arguments, str) else arguments
-    return ChatCompletion(
-        choices=[
-            Choices(
-                message=Messages(
-                    role=MessagesRole.ASSISTANT,
-                    content="",
-                    function_call=FunctionCall(name=name, arguments=args),
-                ),
-                index=0,
-                finish_reason="function_call",
-            )
-        ],
-        created=1000000,
-        model="GigaChat",
-        usage=USAGE,
-        object="chat.completion",
-    )
 
 
 def make_message(text: str = "", user_id: int = 1) -> MagicMock:

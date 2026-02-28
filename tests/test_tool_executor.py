@@ -2,25 +2,21 @@
 
 Тестируем:
 - Парсинг аргументов (parse_arguments)
-- Сборка сообщения ассистента (build_assistant_message)
 - Предобработка аргументов (preprocess_args)
-- Детекция зацикливания (is_duplicate_call)
 - Выполнение инструментов (execute)
 - Постобработка результатов (postprocess_result)
 - Маршрутизация локальных инструментов (_call_local_tool)
 - Парсинг/подстановка предпочтений
+
+ADR-006: build_assistant_message, is_duplicate_call, CallTracker удалены (legacy).
 """
 
 import json
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from gigachat.models import Messages, MessagesRole
 
-from vkuswill_bot.services.tool_executor import (
-    CallTracker,
-    ToolExecutor,
-)
+from vkuswill_bot.services.tool_executor import ToolExecutor
 from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.cart_processor import CartProcessor
 
@@ -159,72 +155,6 @@ class TestParseArguments:
 
 
 # ============================================================================
-# build_assistant_message
-# ============================================================================
-
-
-class TestBuildAssistantMessage:
-    """Тесты build_assistant_message."""
-
-    def test_text_message(self):
-        history: list[Messages] = []
-        msg = MagicMock()
-        msg.content = "Привет!"
-        msg.function_call = None
-        msg.functions_state_id = None
-
-        ToolExecutor.build_assistant_message(history, msg)
-
-        assert len(history) == 1
-        assert history[0].role == MessagesRole.ASSISTANT
-        assert history[0].content == "Привет!"
-
-    def test_function_call_preserved(self):
-        history: list[Messages] = []
-        msg = MagicMock()
-        msg.content = ""
-        fc = MagicMock()
-        fc.name = "vkusvill_products_search"
-        fc.arguments = {"q": "молоко"}
-        msg.function_call = fc
-        msg.functions_state_id = None
-
-        ToolExecutor.build_assistant_message(history, msg)
-
-        assert history[0].function_call is fc
-
-    def test_functions_state_id_preserved(self):
-        history: list[Messages] = []
-        msg = MagicMock()
-        msg.content = ""
-        msg.function_call = MagicMock()
-        msg.functions_state_id = "state-123"
-
-        ToolExecutor.build_assistant_message(history, msg)
-
-        assert history[0].functions_state_id == "state-123"
-
-    def test_no_functions_state_id_attr(self):
-        history: list[Messages] = []
-        msg = MagicMock(spec=["content", "function_call"])
-        msg.content = "text"
-        msg.function_call = None
-
-        ToolExecutor.build_assistant_message(history, msg)
-        assert len(history) == 1
-
-    def test_empty_content_defaults_to_empty_string(self):
-        history: list[Messages] = []
-        msg = MagicMock()
-        msg.content = None
-        msg.function_call = None
-        msg.functions_state_id = None
-
-        ToolExecutor.build_assistant_message(history, msg)
-        assert history[0].content == ""
-
-
-# ============================================================================
 # preprocess_args
 # ============================================================================
 
@@ -284,166 +214,6 @@ class TestPreprocessArgs:
             prefs,
         )
         assert result["q"] == "молоко"
-
-
-# ============================================================================
-# is_duplicate_call / CallTracker
-# ============================================================================
-
-
-class TestIsDuplicateCall:
-    """Тесты is_duplicate_call: обнаружение зацикливания."""
-
-    def test_first_call_not_duplicate(self, executor):
-        tracker = CallTracker()
-        history: list[Messages] = []
-
-        is_dup = executor.is_duplicate_call(
-            "vkusvill_products_search",
-            {"q": "молоко"},
-            tracker,
-            history,
-        )
-        assert is_dup is False
-        assert len(history) == 0
-
-    def test_second_call_returns_cached_result(self, executor):
-        tracker = CallTracker()
-        history: list[Messages] = []
-        args = {"q": "молоко"}
-
-        executor.is_duplicate_call(
-            "vkusvill_products_search",
-            args,
-            tracker,
-            history,
-        )
-
-        cached = json.dumps({"ok": True, "data": {"items": [{"xml_id": 123}]}})
-        tracker.record_result("vkusvill_products_search", args, cached)
-
-        is_dup = executor.is_duplicate_call(
-            "vkusvill_products_search",
-            args,
-            tracker,
-            history,
-        )
-
-        assert is_dup is True
-        assert len(history) == 1
-        assert history[0].role == MessagesRole.FUNCTION
-        content = json.loads(history[0].content)
-        assert content["ok"] is True
-
-    def test_second_call_without_cached_result(self, executor):
-        tracker = CallTracker()
-        history: list[Messages] = []
-        args = {"q": "молоко"}
-
-        executor.is_duplicate_call(
-            "vkusvill_products_search",
-            args,
-            tracker,
-            history,
-        )
-        is_dup = executor.is_duplicate_call(
-            "vkusvill_products_search",
-            args,
-            tracker,
-            history,
-        )
-
-        assert is_dup is True
-        content = json.loads(history[0].content)
-        assert content["ok"] is True
-
-    def test_different_args_not_duplicate(self, executor):
-        tracker = CallTracker()
-        history: list[Messages] = []
-
-        executor.is_duplicate_call(
-            "vkusvill_products_search",
-            {"q": "молоко"},
-            tracker,
-            history,
-        )
-        is_dup = executor.is_duplicate_call(
-            "vkusvill_products_search",
-            {"q": "хлеб"},
-            tracker,
-            history,
-        )
-
-        assert is_dup is False
-        assert len(history) == 0
-
-    def test_different_tool_not_duplicate(self, executor):
-        tracker = CallTracker()
-        history: list[Messages] = []
-        args = {"q": "молоко"}
-
-        executor.is_duplicate_call(
-            "vkusvill_products_search",
-            args,
-            tracker,
-            history,
-        )
-        is_dup = executor.is_duplicate_call(
-            "vkusvill_product_details",
-            args,
-            tracker,
-            history,
-        )
-
-        assert is_dup is False
-
-    def test_failing_tool_blocked_with_different_args(self, executor):
-        """Инструмент с N последовательных ошибок блокируется даже с новыми аргументами."""
-        tracker = CallTracker()
-        history: list[Messages] = []
-
-        # Имитируем 2 ошибки от user_preferences_set
-        tracker.record_result(
-            "user_preferences_set",
-            {"category": "a", "preference": "x"},
-            '{"error": "attempt to write a readonly database"}',
-        )
-        tracker.record_result(
-            "user_preferences_set",
-            {"category": "b", "preference": "y"},
-            '{"error": "attempt to write a readonly database"}',
-        )
-
-        # Третий вызов с НОВЫМИ аргументами — должен быть заблокирован
-        is_dup = executor.is_duplicate_call(
-            "user_preferences_set",
-            {"category": "c", "preference": "z"},
-            tracker,
-            history,
-        )
-
-        assert is_dup is True
-        assert len(history) == 1
-        content = json.loads(history[0].content)
-        assert "error" in content
-        assert "временно недоступен" in content["error"]
-
-    def test_failing_tool_does_not_block_other_tools(self, executor):
-        """Ошибки одного инструмента не блокируют другие."""
-        tracker = CallTracker()
-        history: list[Messages] = []
-
-        tracker.record_result("tool_a", {}, '{"error": "fail"}')
-        tracker.record_result("tool_a", {}, '{"error": "fail"}')
-
-        is_dup = executor.is_duplicate_call(
-            "tool_b",
-            {"q": "test"},
-            tracker,
-            history,
-        )
-
-        assert is_dup is False
 
 
 # ============================================================================
@@ -959,64 +729,6 @@ class TestApplyPreferencesToQuery:
         prefs = {"молоко": "Молоко безлактозное 2,5%, 900 мл"}
         result = ToolExecutor._apply_preferences_to_query("молоко", prefs)
         assert result == "Молоко безлактозное 2,5%, 900 мл"
-
-
-# ============================================================================
-# CallTracker
-# ============================================================================
-
-
-class TestCallTracker:
-    """Тесты CallTracker."""
-
-    def test_make_key(self):
-        tracker = CallTracker()
-        key = tracker.make_key("tool_name", {"a": 1, "b": 2})
-        assert "tool_name" in key
-        assert '"a": 1' in key
-
-    def test_record_and_retrieve_result(self):
-        tracker = CallTracker()
-        tracker.record_result("tool", {"q": "test"}, '{"ok": true}')
-        key = tracker.make_key("tool", {"q": "test"})
-        assert tracker.call_results[key] == '{"ok": true}'
-
-    def test_error_count_increments_on_error(self):
-        """Счётчик ошибок растёт при результатах с 'error'."""
-        tracker = CallTracker()
-        tracker.record_result("tool_a", {"q": "1"}, '{"error": "fail"}')
-        assert tracker.error_counts["tool_a"] == 1
-        tracker.record_result("tool_a", {"q": "2"}, '{"error": "fail again"}')
-        assert tracker.error_counts["tool_a"] == 2
-
-    def test_error_count_resets_on_success(self):
-        """Счётчик ошибок сбрасывается при успешном результате."""
-        tracker = CallTracker()
-        tracker.record_result("tool_a", {"q": "1"}, '{"error": "fail"}')
-        assert tracker.error_counts["tool_a"] == 1
-        tracker.record_result("tool_a", {"q": "2"}, '{"ok": true}')
-        assert tracker.error_counts["tool_a"] == 0
-
-    def test_is_tool_failing_false_initially(self):
-        """Изначально инструмент не failing."""
-        tracker = CallTracker()
-        assert tracker.is_tool_failing("any_tool") is False
-
-    def test_is_tool_failing_true_after_threshold(self):
-        """После MAX_CONSECUTIVE_ERRORS_PER_TOOL ошибок — is_tool_failing True."""
-        tracker = CallTracker()
-        tracker.record_result("tool_a", {"q": "1"}, '{"error": "fail"}')
-        tracker.record_result("tool_a", {"q": "2"}, '{"error": "fail"}')
-        assert tracker.is_tool_failing("tool_a") is True
-
-    def test_is_tool_failing_independent_per_tool(self):
-        """Счётчики ошибок независимы для разных инструментов."""
-        tracker = CallTracker()
-        tracker.record_result("tool_a", {}, '{"error": "fail"}')
-        tracker.record_result("tool_a", {}, '{"error": "fail"}')
-        tracker.record_result("tool_b", {}, '{"error": "fail"}')
-        assert tracker.is_tool_failing("tool_a") is True
-        assert tracker.is_tool_failing("tool_b") is False
 
 
 # ============================================================================

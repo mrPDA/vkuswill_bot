@@ -12,6 +12,7 @@ from vkuswill_bot.services.user_store import (
     VALID_STATUSES,
     UserStore,
 )
+from vkuswill_bot.services.user_store._voice import VoiceStore
 
 
 # ---------------------------------------------------------------------------
@@ -877,7 +878,7 @@ class TestVoiceLinking:
     async def test_create_voice_link_code(self, store):
         """create_voice_link_code создаёт одноразовый код."""
         s, conn = store
-        with patch.object(UserStore, "_generate_voice_link_code", return_value="123456"):
+        with patch.object(VoiceStore, "_generate_voice_link_code", return_value="123456"):
             code = await s.create_voice_link_code(
                 user_id=123,
                 provider="alice",

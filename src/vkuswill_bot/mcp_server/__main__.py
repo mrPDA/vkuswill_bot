@@ -9,7 +9,7 @@
     uv run python -m vkuswill_bot.mcp_server --http --host 0.0.0.0 --port 9000
 
 Требования:
-    - Файл .env с переменными BOT_TOKEN, GIGACHAT_CREDENTIALS, MCP_SERVER_URL
+    - Файл .env с переменными BOT_TOKEN, LLM_API_KEY, LLM_MODEL, MCP_SERVER_URL
     - Директория data/ для SQLite (preferences.db)
 """
 

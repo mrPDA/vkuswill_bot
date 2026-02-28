@@ -161,7 +161,7 @@ class TestCommands:
         mock_service = MagicMock()
         mock_service.reset_conversation = AsyncMock()
 
-        await cmd_reset(msg, gigachat_service=mock_service)
+        await cmd_reset(msg, chat_engine=mock_service)
 
         mock_service.reset_conversation.assert_called_once_with(42)
         msg.answer.assert_called_once()
@@ -173,7 +173,7 @@ class TestCommands:
         msg.from_user = None
         mock_service = MagicMock()
 
-        await cmd_reset(msg, gigachat_service=mock_service)
+        await cmd_reset(msg, chat_engine=mock_service)
 
         mock_service.reset_conversation.assert_not_called()
         msg.answer.assert_called_once()
@@ -253,7 +253,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Вот молоко за 79 руб!"
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         mock_service.process_message.assert_called_once_with(
             1,
@@ -268,7 +268,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "A" * 5000  # > 4096
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         assert msg.answer.call_count == 2
 
@@ -278,7 +278,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.side_effect = RuntimeError("Boom!")
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         msg.answer.assert_called_once()
         response_text = msg.answer.call_args[0][0]
@@ -290,7 +290,7 @@ class TestHandleText:
         msg.from_user = None
         mock_service = AsyncMock()
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         mock_service.process_message.assert_not_called()
 
@@ -300,7 +300,7 @@ class TestHandleText:
         msg.text = None
         mock_service = AsyncMock()
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         mock_service.process_message.assert_not_called()
 
@@ -322,7 +322,7 @@ class TestHandleText:
 
         mock_service.process_message.side_effect = slow_process
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         # Typing indicator должен был вызваться хотя бы раз
         msg.bot.send_chat_action.assert_called()
@@ -346,7 +346,7 @@ class TestHandleText:
         mock_service.process_message.side_effect = slow_process
 
         # Не должно бросить исключение
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         msg.answer.assert_called_once_with("Ответ", reply_markup=None)
 
@@ -358,7 +358,7 @@ class TestHandleText:
             'Итого: 500 руб\n<a href="https://vkusvill.ru/?share_basket=123">Корзина</a>'
         )
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         # Текстовая ссылка убрана из сообщения
         response = msg.answer.call_args[0][0]
@@ -375,7 +375,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = '<a href="https://example.com">Подробнее</a>'
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         response = msg.answer.call_args[0][0]
         assert '<a href="https://example.com">' in response
@@ -386,7 +386,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = '<script>alert("xss")</script>Текст'
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         response = msg.answer.call_args[0][0]
         assert "<script>" not in response
@@ -398,7 +398,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Томатная паста Помидорка 70&nbsp;г: 90 руб"
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         response = msg.answer.call_args[0][0]
         # &nbsp; не должен быть экранирован в &amp;nbsp;
@@ -411,7 +411,7 @@ class TestHandleText:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Молоко 3,2% за 79 руб"
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         response = msg.answer.call_args[0][0]
         assert response == "Молоко 3,2% за 79 руб"
@@ -606,7 +606,7 @@ class TestHandleTextCartButton:
             '<a href="https://vkusvill.ru/?share_basket=xyz">Открыть корзину</a>'
         )
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         call_kwargs = msg.answer.call_args
         markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
@@ -623,7 +623,7 @@ class TestHandleTextCartButton:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Привет! Чем помочь?"
 
-        await handle_text(msg, gigachat_service=mock_service)
+        await handle_text(msg, chat_engine=mock_service)
 
         call_kwargs = msg.answer.call_args
         markup = call_kwargs.kwargs.get("reply_markup") or call_kwargs[1].get("reply_markup")
@@ -846,7 +846,7 @@ class TestInformedConsent:
 
         msg.answer.assert_called_once()
         response_text = msg.answer.call_args[0][0]
-        assert "GigaChat" in response_text
+        assert "ИИ" in response_text
         assert "/privacy" in response_text
         # Inline-кнопка присутствует
         call_kwargs = msg.answer.call_args
@@ -926,7 +926,7 @@ class TestInformedConsent:
         mock_store = AsyncMock()
         mock_store.mark_consent.return_value = True  # первый раз
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+        await handle_text(msg, chat_engine=mock_service, user_store=mock_store)
 
         mock_store.mark_consent.assert_called_once_with(42, "implicit")
         # Событие залогировано
@@ -946,7 +946,7 @@ class TestInformedConsent:
         mock_store = AsyncMock()
         mock_store.mark_consent.return_value = False  # уже был consent
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+        await handle_text(msg, chat_engine=mock_service, user_store=mock_store)
 
         # mark_consent вызван, но log_event для consent НЕ вызван
         mock_store.mark_consent.assert_called_once()
@@ -964,7 +964,7 @@ class TestInformedConsent:
         msg.answer.assert_called_once()
         text = msg.answer.call_args[0][0]
         assert "Политика конфиденциальности" in text
-        assert "GigaChat" in text
+        assert "ИИ" in text
         assert "d.pukinov@yandex.ru" in text
         assert "/reset" in text
 
@@ -1133,7 +1133,7 @@ class TestSurveyFlow:
         mock_store.mark_survey_completed_if_not.return_value = True
         mock_store.grant_bonus_carts.return_value = 10
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+        await handle_text(msg, chat_engine=mock_service, user_store=mock_store)
 
         # pending очищен
         assert 42 not in _survey_pending
@@ -1158,7 +1158,7 @@ class TestSurveyFlow:
         msg = make_message("Мой отзыв", user_id=42)
         mock_service = AsyncMock()
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+        await handle_text(msg, chat_engine=mock_service, user_store=None)
 
         # pending очищен — пользователь не застрянет
         assert 42 not in _survey_pending
@@ -1176,7 +1176,7 @@ class TestSurveyFlow:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Вот молоко!"
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+        await handle_text(msg, chat_engine=mock_service, user_store=None)
 
         # Теперь GigaChat вызван нормально
         mock_service.process_message.assert_called_once_with(
@@ -1193,7 +1193,7 @@ class TestSurveyFlow:
         mock_service = AsyncMock()
         mock_service.process_message.return_value = "Вот молоко!"
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+        await handle_text(msg, chat_engine=mock_service, user_store=None)
 
         mock_service.process_message.assert_called_once_with(
             42,
@@ -1586,7 +1586,7 @@ class TestHandleTextErrorLogging:
         mock_store = AsyncMock()
         mock_store.mark_consent.return_value = False  # consent уже был
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=mock_store)
+        await handle_text(msg, chat_engine=mock_service, user_store=mock_store)
 
         # Ищем именно bot_error среди вызовов log_event
         error_calls = [c for c in mock_store.log_event.call_args_list if c[0][1] == "bot_error"]
@@ -1601,7 +1601,7 @@ class TestHandleTextErrorLogging:
         mock_service = AsyncMock()
         mock_service.process_message.side_effect = RuntimeError("Boom!")
 
-        await handle_text(msg, gigachat_service=mock_service, user_store=None)
+        await handle_text(msg, chat_engine=mock_service, user_store=None)
 
         msg.answer.assert_called_once()
         assert "ошибка" in msg.answer.call_args[0][0].lower()

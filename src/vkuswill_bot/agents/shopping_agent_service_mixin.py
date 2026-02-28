@@ -119,8 +119,10 @@ class ShoppingAgentServiceMixin:
         raise last_error or RuntimeError("LLM call failed")
 
     def _resolve_model_for_provider(self, llm_provider: str) -> str:
-        if llm_provider == "gigachat_sdk":
-            return self._gigachat_model
+        if llm_provider != self._llm_provider:
+            raise RuntimeError(
+                f"Unsupported llm provider for ShoppingAgent runtime: {llm_provider}",
+            )
         return self._model
 
     def _create_mcp_gateway(self) -> McpToolGateway:

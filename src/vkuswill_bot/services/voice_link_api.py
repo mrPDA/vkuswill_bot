@@ -21,8 +21,7 @@ logger = logging.getLogger(__name__)
 
 _APP_KEY = "voice_link_api_key"
 _APP_STORE = "voice_link_user_store"
-# Сохраняем историческое имя ключа для обратной совместимости.
-_APP_CHAT_ENGINE = "voice_link_gigachat_service"
+_APP_CHAT_ENGINE = "voice_link_chat_engine"
 _APP_ORDER_JOBS = "voice_link_order_jobs"
 _APP_ORDER_LATEST = "voice_link_order_latest"
 _APP_ORDER_TASKS = "voice_link_order_tasks"

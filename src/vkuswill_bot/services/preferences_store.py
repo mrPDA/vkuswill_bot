@@ -128,9 +128,9 @@ class PreferencesStore:
         return [{"category": row["category"], "preference": row["preference"]} for row in rows]
 
     async def get_formatted(self, user_id: int) -> str:
-        """Получить предпочтения в формате JSON для GigaChat.
+        """Получить предпочтения в формате JSON для LLM.
 
-        GigaChat API требует, чтобы результат функции был валидным JSON.
+        LLM API требует, чтобы результат функции был валидным JSON.
         """
         prefs = await self.get_all(user_id)
         if not prefs:
@@ -150,7 +150,7 @@ class PreferencesStore:
         для защиты от раздувания БД.
 
         Returns:
-            Подтверждение в формате JSON-строки для GigaChat.
+            Подтверждение в формате JSON-строки для LLM.
         """
         category = category.strip().lower()[:MAX_CATEGORY_LENGTH]
         preference = preference.strip()[:MAX_PREFERENCE_LENGTH]
@@ -236,7 +236,7 @@ class PreferencesStore:
         """Удалить предпочтение.
 
         Returns:
-            Подтверждение в формате JSON-строки для GigaChat.
+            Подтверждение в формате JSON-строки для LLM.
         """
         db = await self._ensure_db()
 

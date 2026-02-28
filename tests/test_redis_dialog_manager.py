@@ -6,7 +6,7 @@
 - save_history: сохранение в Redis с TTL
 - trim_list: обрезка истории (чистая функция)
 - areset: удаление из Redis + lock
-- _serialize / _deserialize: round-trip сериализация Messages
+- _serialize / _deserialize: round-trip сериализация list[dict]
 """
 
 import asyncio
@@ -14,7 +14,6 @@ import json
 from unittest.mock import AsyncMock
 
 import pytest
-from gigachat.models import FunctionCall, Messages, MessagesRole
 
 from vkuswill_bot.services.prompts import get_system_prompt
 from vkuswill_bot.services.redis_dialog_manager import (
@@ -151,29 +150,29 @@ class TestAgetHistory:
         history = await manager.aget_history(user_id=1)
 
         assert len(history) == 1
-        assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == get_system_prompt()
+        assert history[0]["role"] == "system"
+        assert history[0]["content"] == get_system_prompt()
         mock_redis.get.assert_called_once_with("dialog:1")
 
     async def test_loads_from_redis(self, manager, mock_redis):
         """Существующая история загружается из Redis."""
         stored_history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="Привет"),
-            Messages(role=MessagesRole.ASSISTANT, content="Здравствуйте!"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "Привет"},
+            {"role": "assistant", "content": "Здравствуйте!"},
         ]
         mock_redis.get.return_value = _serialize(stored_history)
 
         history = await manager.aget_history(user_id=1)
 
         assert len(history) == 3
-        assert history[0].role == MessagesRole.SYSTEM
-        assert history[1].content == "Привет"
-        assert history[2].content == "Здравствуйте!"
+        assert history[0]["role"] == "system"
+        assert history[1]["content"] == "Привет"
+        assert history[2]["content"] == "Здравствуйте!"
 
     async def test_extends_ttl_on_access(self, manager, mock_redis):
         """TTL продлевается при каждом доступе (sliding window)."""
-        stored = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        stored = [{"role": "system", "content": get_system_prompt()}]
         mock_redis.get.return_value = _serialize(stored)
 
         await manager.aget_history(user_id=42)
@@ -188,17 +187,17 @@ class TestAgetHistory:
 
         # Должен вернуть новый диалог, а не упасть
         assert len(history) == 1
-        assert history[0].role == MessagesRole.SYSTEM
+        assert history[0]["role"] == "system"
 
     async def test_handles_bytes_from_redis(self, manager, mock_redis):
         """Redis возвращает bytes (decode_responses=False) — корректная обработка."""
-        stored = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        stored = [{"role": "system", "content": get_system_prompt()}]
         mock_redis.get.return_value = _serialize(stored).encode("utf-8")
 
         history = await manager.aget_history(user_id=1)
 
         assert len(history) == 1
-        assert history[0].content == get_system_prompt()
+        assert history[0]["content"] == get_system_prompt()
 
 
 # ============================================================================
@@ -212,8 +211,8 @@ class TestSaveHistory:
     async def test_saves_to_redis(self, manager, mock_redis):
         """save_history сохраняет сериализованную историю в Redis."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="Молоко"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "Молоко"},
         ]
 
         await manager.save_history(user_id=42, history=history)
@@ -237,7 +236,7 @@ class TestSaveHistory:
             max_history=50,
             dialog_ttl=7200,  # 2 часа
         )
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
 
         await mgr.save_history(user_id=1, history=history)
 
@@ -246,7 +245,7 @@ class TestSaveHistory:
     async def test_default_ttl(self, mock_redis):
         """По умолчанию TTL = DEFAULT_DIALOG_TTL (24 часа)."""
         mgr = RedisDialogManager(redis=mock_redis, max_history=50)
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
 
         await mgr.save_history(user_id=1, history=history)
 
@@ -263,21 +262,21 @@ class TestTrimList:
 
     def test_trims_long_history(self, manager):
         """Длинная история обрезается до max_history."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         result = manager.trim_list(history)
 
         assert len(result) == 10
-        assert result[0].role == MessagesRole.SYSTEM
-        assert result[-1].content == "msg-14"
+        assert result[0]["role"] == "system"
+        assert result[-1]["content"] == "msg-14"
 
     def test_noop_when_short(self, manager):
         """Короткая история — без изменений."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="тест"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "тест"},
         ]
 
         result = manager.trim_list(history)
@@ -285,9 +284,9 @@ class TestTrimList:
 
     def test_returns_new_list_when_trimmed(self, manager):
         """При обрезке возвращается новый список."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         result = manager.trim_list(history)
         assert result is not history
@@ -297,17 +296,17 @@ class TestTrimList:
         from vkuswill_bot.services.dialog_manager import DialogManager
 
         dm = DialogManager(max_history=10)
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         redis_result = manager.trim_list(list(history))
         memory_result = dm.trim_list(list(history))
 
         assert len(redis_result) == len(memory_result)
         for r, m in zip(redis_result, memory_result, strict=False):
-            assert r.content == m.content
-            assert r.role == m.role
+            assert r["content"] == m["content"]
+            assert r["role"] == m["role"]
 
 
 # ============================================================================
@@ -339,19 +338,19 @@ class TestAreset:
 
 
 # ============================================================================
-# _serialize: сериализация Messages → JSON
+# _serialize: сериализация list[dict] → JSON
 # ============================================================================
 
 
 class TestSerialize:
-    """Тесты _serialize: сериализация list[Messages] → JSON."""
+    """Тесты _serialize: сериализация list[dict] → JSON."""
 
     def test_basic_messages(self):
         """Базовые сообщения сериализуются корректно."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content="Системный промпт"),
-            Messages(role=MessagesRole.USER, content="Привет"),
-            Messages(role=MessagesRole.ASSISTANT, content="Здравствуйте!"),
+            {"role": "system", "content": "Системный промпт"},
+            {"role": "user", "content": "Привет"},
+            {"role": "assistant", "content": "Здравствуйте!"},
         ]
 
         result = _serialize(history)
@@ -364,12 +363,12 @@ class TestSerialize:
         assert items[2]["role"] == "assistant"
 
     def test_function_message_with_name(self):
-        """FUNCTION-сообщение сохраняет name."""
-        msg = Messages(
-            role=MessagesRole.FUNCTION,
-            content='{"ok": true}',
-        )
-        msg.name = "vkusvill_products_search"
+        """function-сообщение сохраняет name."""
+        msg = {
+            "role": "function",
+            "content": '{"ok": true}',
+            "name": "vkusvill_products_search",
+        }
 
         result = _serialize([msg])
         items = json.loads(result)
@@ -378,14 +377,14 @@ class TestSerialize:
 
     def test_function_call_with_dict_args(self):
         """function_call с dict arguments сериализуется в JSON-строку."""
-        msg = Messages(
-            role=MessagesRole.ASSISTANT,
-            content="",
-        )
-        msg.function_call = FunctionCall(
-            name="vkusvill_products_search",
-            arguments={"q": "молоко"},
-        )
+        msg = {
+            "role": "assistant",
+            "content": "",
+            "function_call": {
+                "name": "vkusvill_products_search",
+                "arguments": {"q": "молоко"},
+            },
+        }
 
         result = _serialize([msg])
         items = json.loads(result)
@@ -397,11 +396,11 @@ class TestSerialize:
 
     def test_functions_state_id(self):
         """functions_state_id сохраняется."""
-        msg = Messages(
-            role=MessagesRole.ASSISTANT,
-            content="",
-        )
-        msg.functions_state_id = "state-abc-123"
+        msg = {
+            "role": "assistant",
+            "content": "",
+            "functions_state_id": "state-abc-123",
+        }
 
         result = _serialize([msg])
         items = json.loads(result)
@@ -411,7 +410,7 @@ class TestSerialize:
     def test_unicode_preserved(self):
         """Русский текст сохраняется (ensure_ascii=False)."""
         history = [
-            Messages(role=MessagesRole.USER, content="Молоко 3,2%"),
+            {"role": "user", "content": "Молоко 3,2%"},
         ]
 
         result = _serialize(history)
@@ -424,12 +423,12 @@ class TestSerialize:
 
 
 # ============================================================================
-# _deserialize: десериализация JSON → Messages
+# _deserialize: десериализация JSON → list[dict]
 # ============================================================================
 
 
 class TestDeserialize:
-    """Тесты _deserialize: десериализация JSON → list[Messages]."""
+    """Тесты _deserialize: десериализация JSON → list[dict]."""
 
     def test_basic_messages(self):
         """Базовые сообщения десериализуются корректно."""
@@ -444,13 +443,13 @@ class TestDeserialize:
         messages = _deserialize(raw)
 
         assert len(messages) == 3
-        assert messages[0].role == MessagesRole.SYSTEM
-        assert messages[0].content == "Промпт"
-        assert messages[1].role == MessagesRole.USER
-        assert messages[2].role == MessagesRole.ASSISTANT
+        assert messages[0]["role"] == "system"
+        assert messages[0]["content"] == "Промпт"
+        assert messages[1]["role"] == "user"
+        assert messages[2]["role"] == "assistant"
 
     def test_function_message(self):
-        """FUNCTION-сообщение с name."""
+        """function-сообщение с name."""
         raw = json.dumps(
             [
                 {"role": "function", "content": '{"ok": true}', "name": "search"},
@@ -459,11 +458,11 @@ class TestDeserialize:
 
         messages = _deserialize(raw)
 
-        assert messages[0].role == MessagesRole.FUNCTION
-        assert messages[0].name == "search"
+        assert messages[0]["role"] == "function"
+        assert messages[0]["name"] == "search"
 
     def test_function_call(self):
-        """function_call десериализуется с FunctionCall."""
+        """function_call десериализуется."""
         raw = json.dumps(
             [
                 {
@@ -479,9 +478,9 @@ class TestDeserialize:
 
         messages = _deserialize(raw)
 
-        assert messages[0].function_call is not None
-        assert messages[0].function_call.name == "vkusvill_products_search"
-        assert messages[0].function_call.arguments == {"q": "молоко"}
+        assert messages[0]["function_call"] is not None
+        assert messages[0]["function_call"]["name"] == "vkusvill_products_search"
+        assert messages[0]["function_call"]["arguments"] == {"q": "молоко"}
 
     def test_functions_state_id(self):
         """functions_state_id восстанавливается."""
@@ -496,7 +495,7 @@ class TestDeserialize:
         )
 
         messages = _deserialize(raw)
-        assert messages[0].functions_state_id == "state-123"
+        assert messages[0]["functions_state_id"] == "state-123"
 
     def test_bytes_input(self):
         """Принимает bytes (как из Redis без decode_responses)."""
@@ -507,7 +506,7 @@ class TestDeserialize:
         ).encode("utf-8")
 
         messages = _deserialize(raw_bytes)
-        assert messages[0].content == "тест"
+        assert messages[0]["content"] == "тест"
 
     def test_invalid_json_raises(self):
         """Невалидный JSON → JSONDecodeError."""
@@ -518,7 +517,7 @@ class TestDeserialize:
         """Отсутствующий content → пустая строка."""
         raw = json.dumps([{"role": "user"}])
         messages = _deserialize(raw)
-        assert messages[0].content == ""
+        assert messages[0]["content"] == ""
 
     def test_function_call_invalid_args(self):
         """Невалидные arguments в function_call → None."""
@@ -536,7 +535,7 @@ class TestDeserialize:
         )
 
         messages = _deserialize(raw)
-        assert messages[0].function_call.arguments is None
+        assert messages[0]["function_call"]["arguments"] is None
 
 
 # ============================================================================
@@ -550,9 +549,9 @@ class TestSerializeDeserializeRoundTrip:
     def test_basic_round_trip(self):
         """Базовый round-trip: serialize → deserialize сохраняет данные."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="Найди молоко"),
-            Messages(role=MessagesRole.ASSISTANT, content="Нашёл 3 варианта"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "Найди молоко"},
+            {"role": "assistant", "content": "Нашёл 3 варианта"},
         ]
 
         raw = _serialize(history)
@@ -560,73 +559,79 @@ class TestSerializeDeserializeRoundTrip:
 
         assert len(restored) == 3
         for original, restored_msg in zip(history, restored, strict=False):
-            assert original.role == restored_msg.role
-            assert original.content == restored_msg.content
+            assert original["role"] == restored_msg["role"]
+            assert original["content"] == restored_msg["content"]
 
     def test_function_call_round_trip(self):
         """Round-trip с function_call."""
-        msg = Messages(role=MessagesRole.ASSISTANT, content="")
-        msg.function_call = FunctionCall(
-            name="vkusvill_products_search",
-            arguments={"q": "творог 5%", "limit": 5},
-        )
+        msg = {
+            "role": "assistant",
+            "content": "",
+            "function_call": {
+                "name": "vkusvill_products_search",
+                "arguments": {"q": "творог 5%", "limit": 5},
+            },
+        }
 
         raw = _serialize([msg])
         restored = _deserialize(raw)
 
-        assert restored[0].function_call is not None
-        assert restored[0].function_call.name == "vkusvill_products_search"
-        assert restored[0].function_call.arguments == {"q": "творог 5%", "limit": 5}
+        assert restored[0]["function_call"] is not None
+        assert restored[0]["function_call"]["name"] == "vkusvill_products_search"
+        assert restored[0]["function_call"]["arguments"] == {
+            "q": "творог 5%",
+            "limit": 5,
+        }
 
     def test_function_message_round_trip(self):
-        """Round-trip с FUNCTION-сообщением (name + content)."""
-        msg = Messages(
-            role=MessagesRole.FUNCTION,
-            content='{"ok": true, "data": {"items": []}}',
-        )
-        msg.name = "vkusvill_products_search"
+        """Round-trip с function-сообщением (name + content)."""
+        msg = {
+            "role": "function",
+            "content": '{"ok": true, "data": {"items": []}}',
+            "name": "vkusvill_products_search",
+        }
 
         raw = _serialize([msg])
         restored = _deserialize(raw)
 
-        assert restored[0].role == MessagesRole.FUNCTION
-        assert restored[0].name == "vkusvill_products_search"
-        assert '"ok": true' in restored[0].content
+        assert restored[0]["role"] == "function"
+        assert restored[0]["name"] == "vkusvill_products_search"
+        assert '"ok": true' in restored[0]["content"]
 
     def test_complex_dialog_round_trip(self):
         """Round-trip сложного диалога: system → user → function_call → function → assistant."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="Купи молоко"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "Купи молоко"},
         ]
 
         # Assistant с function_call
-        assistant_msg = Messages(role=MessagesRole.ASSISTANT, content="")
-        assistant_msg.function_call = FunctionCall(
-            name="vkusvill_products_search",
-            arguments={"q": "молоко"},
-        )
-        assistant_msg.functions_state_id = "state-1"
+        assistant_msg = {
+            "role": "assistant",
+            "content": "",
+            "function_call": {"name": "vkusvill_products_search", "arguments": {"q": "молоко"}},
+            "functions_state_id": "state-1",
+        }
         history.append(assistant_msg)
 
         # Function result
-        func_msg = Messages(
-            role=MessagesRole.FUNCTION,
-            content='{"ok": true}',
-        )
-        func_msg.name = "vkusvill_products_search"
+        func_msg = {
+            "role": "function",
+            "content": '{"ok": true}',
+            "name": "vkusvill_products_search",
+        }
         history.append(func_msg)
 
         # Final assistant response
-        history.append(Messages(role=MessagesRole.ASSISTANT, content="Молоко за 79 руб!"))
+        history.append({"role": "assistant", "content": "Молоко за 79 руб!"})
 
         raw = _serialize(history)
         restored = _deserialize(raw)
 
         assert len(restored) == 5
-        assert restored[0].role == MessagesRole.SYSTEM
-        assert restored[1].content == "Купи молоко"
-        assert restored[2].function_call.name == "vkusvill_products_search"
-        assert restored[2].functions_state_id == "state-1"
-        assert restored[3].name == "vkusvill_products_search"
-        assert restored[4].content == "Молоко за 79 руб!"
+        assert restored[0]["role"] == "system"
+        assert restored[1]["content"] == "Купи молоко"
+        assert restored[2]["function_call"]["name"] == "vkusvill_products_search"
+        assert restored[2]["functions_state_id"] == "state-1"
+        assert restored[3]["name"] == "vkusvill_products_search"
+        assert restored[4]["content"] == "Молоко за 79 руб!"

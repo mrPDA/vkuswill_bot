@@ -4,8 +4,10 @@ import os
 
 # Устанавливаем минимальные env-переменные ДО импорта модулей приложения,
 # чтобы config = Config() на уровне модуля config.py не падал в CI.
+# ADR-006: legacy GigaChat удалён, нужен LLM для shopping_agent.
 os.environ.setdefault("BOT_TOKEN", "test-token-for-ci-000000000")
-os.environ.setdefault("GIGACHAT_CREDENTIALS", "test-credentials-for-ci")
+os.environ.setdefault("LLM_API_KEY", "test-llm-key-for-ci")
+os.environ.setdefault("LLM_MODEL", "test-model")
 
 from unittest.mock import patch
 
@@ -40,7 +42,8 @@ def mock_env_minimal():
     """Минимальный набор переменных окружения для Config."""
     env = {
         "BOT_TOKEN": "123456789:ABCdefGHIjklMNOpqrsTUVwxyz",
-        "GIGACHAT_CREDENTIALS": "test-credentials-value",
+        "LLM_API_KEY": "test-llm-key",
+        "LLM_MODEL": "test-model",
     }
     with patch.dict(os.environ, env, clear=True):
         yield env

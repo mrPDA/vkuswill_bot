@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-from collections.abc import AsyncIterator
 from typing import TYPE_CHECKING
 
 from vkuswill_bot.agents.shopping_turn_executor import run_locked_turn
@@ -16,11 +15,11 @@ _DEFAULT_LLM_ROUTING_STRATEGY = "single_provider"
 
 class ShoppingAgentRuntimeMixin:
     def _compute_providers_in_use(self) -> set[str]:
-        if self._llm_routing_strategy == _DEFAULT_LLM_ROUTING_STRATEGY:
-            return {self._llm_provider}
-        if self._llm_routing_strategy == "single_user_gigachat_multi_user_qwen":
-            return {self._llm_singleton_provider, self._llm_burst_provider}
-        raise ValueError(f"Unsupported llm_routing_strategy: {self._llm_routing_strategy}")
+        if self._llm_routing_strategy != _DEFAULT_LLM_ROUTING_STRATEGY:
+            raise ValueError(
+                "ShoppingAgent supports only llm_routing_strategy='single_provider'",
+            )
+        return {self._llm_provider}
 
     async def close(self) -> None:
         """Корректно закрыть клиент."""
@@ -43,16 +42,13 @@ class ShoppingAgentRuntimeMixin:
         on_progress: ProgressCallback | None = None,
     ) -> str:
         """Обработать сообщение пользователя с tool-loop через MCP."""
-        async with (
-            self._select_provider_for_request() as provider,
-            self._dialog_manager.get_lock(user_id),
-        ):
+        async with self._dialog_manager.get_lock(user_id):
             self._touch_active_user(user_id)
             return await self._process_locked(
                 user_id=user_id,
                 text=text,
                 on_progress=on_progress,
-                llm_provider=provider,
+                llm_provider=self._llm_provider,
             )
 
     def _touch_active_user(self, user_id: int) -> None:
@@ -63,25 +59,6 @@ class ShoppingAgentRuntimeMixin:
             stale_user_id, _ = self._active_users.popitem(last=False)
             self._history.pop(stale_user_id, None)
             self._last_cart_snapshot.pop(stale_user_id, None)
-
-    @contextlib.asynccontextmanager
-    async def _select_provider_for_request(self) -> AsyncIterator[str]:
-        if self._llm_routing_strategy == _DEFAULT_LLM_ROUTING_STRATEGY:
-            yield self._llm_provider
-            return
-
-        async with self._routing_lock:
-            self._active_llm_requests += 1
-            provider = (
-                self._llm_singleton_provider
-                if self._active_llm_requests <= 1
-                else self._llm_burst_provider
-            )
-        try:
-            yield provider
-        finally:
-            async with self._routing_lock:
-                self._active_llm_requests = max(0, self._active_llm_requests - 1)
 
     async def _process_locked(
         self,

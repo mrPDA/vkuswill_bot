@@ -72,3 +72,5 @@ infra/*.tfplan
 
 assets/
 assets/*
+
+ci-artifacts/

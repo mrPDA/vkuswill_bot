@@ -60,7 +60,7 @@ _TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)(/?\s*)>")
 # Regex: валидирует атрибут href с http/https URL (для <a>)
 _SAFE_HREF_RE = re.compile(r'^\s+href\s*=\s*"https?://[^"]*"\s*$')
 
-# Regex: извлекает URL из ссылки «Открыть корзину» в ответе GigaChat
+# Regex: извлекает URL из ссылки «Открыть корзину» в ответе LLM
 _CART_LINK_RE = re.compile(
     r'<a\s+href="(https?://[^"]+)"[^>]*>[^<]*(?:корзин|[Cc]art)[^<]*</a>',
     re.IGNORECASE,
@@ -292,7 +292,7 @@ async def cmd_start(
             "- <i>Собери корзину для завтрака на двоих</i>\n"
             "- <i>Хочу купить молоко, хлеб и сыр</i>\n\n"
             f"{_freemium_user_note()}\n\n"
-            "\u2139\ufe0f Для ответов я использую ИИ-модель GigaChat (Сбер). "
+            "\u2139\ufe0f Для ответов я использую ИИ-модель. "
             "Ваши сообщения обрабатываются для генерации ответов "
             "и улучшения качества сервиса. Подробнее: /privacy\n\n"
             "<b>Команды:</b>\n"
@@ -367,7 +367,7 @@ async def cmd_privacy(message: Message) -> None:
         "<b>Политика конфиденциальности</b>\n\n"
         "<b>Какие данные обрабатываются:</b>\n"
         "\u2022 Telegram ID — для идентификации в боте\n"
-        "\u2022 Текст сообщений — передаётся в GigaChat (Сбер) "
+        "\u2022 Текст сообщений — передаётся в ИИ-модель "
         "для генерации ответов\n"
         "\u2022 Предпочтения — для персонализации подбора товаров\n"
         "\u2022 История диалога — для контекста беседы (хранится временно)\n\n"
@@ -375,7 +375,7 @@ async def cmd_privacy(message: Message) -> None:
         "\u2022 Имя, фамилию, username из Telegram\n"
         "\u2022 Телефон, email, номера карт — автоматически маскируются\n\n"
         "<b>Кому передаются данные:</b>\n"
-        "\u2022 GigaChat (Сбер) — текст сообщений для ИИ-ответов\n"
+        "\u2022 ИИ-модель (Yandex Cloud) — текст сообщений для генерации ответов\n"
         "\u2022 ВкусВилл — поисковые запросы товаров (без вашего ID)\n"
         "\u2022 Open Food Facts — названия продуктов для КБЖУ (без ID)\n\n"
         "<b>Защита:</b>\n"
@@ -628,11 +628,11 @@ async def cmd_unlink_voice(
 @router.message(Command("reset"))
 async def cmd_reset(
     message: Message,
-    gigachat_service: ChatEngineProtocol,
+    chat_engine: ChatEngineProtocol,
 ) -> None:
     """Обработчик команды /reset — сброс диалога."""
     if message.from_user:
-        await gigachat_service.reset_conversation(message.from_user.id)
+        await chat_engine.reset_conversation(message.from_user.id)
     await message.answer("Диалог сброшен. Напиши, что хочешь купить!")
 
 
@@ -1128,7 +1128,7 @@ async def handle_admin_unauthorized(message: Message) -> None:
 @router.message(F.text)
 async def handle_text(
     message: Message,
-    gigachat_service: ChatEngineProtocol,
+    chat_engine: ChatEngineProtocol,
     user_store: UserStore | None = None,
 ) -> None:
     """Обработчик текстовых сообщений — основная логика бота."""
@@ -1192,7 +1192,7 @@ async def handle_text(
                 await progress_msg.edit_text(text)
 
     try:
-        response = await gigachat_service.process_message(
+        response = await chat_engine.process_message(
             user_id,
             message.text,
             on_progress=_on_progress,

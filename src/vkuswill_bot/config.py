@@ -14,27 +14,19 @@ class Config(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
+        extra="ignore",  # Игнорировать legacy GIGACHAT_* и прочие лишние env
     )
 
     # Telegram
     bot_token: str
 
-    # Chat engine runtime selection
-    chat_engine: str = "legacy"  # legacy | shopping_agent
+    # Chat engine runtime selection (ADR-006: legacy removed)
+    chat_engine: str = "shopping_agent"
 
-    # GigaChat
-    gigachat_credentials: str
-    gigachat_model: str = "GigaChat-2-Max"
-    gigachat_scope: str = "GIGACHAT_API_PERS"
-    gigachat_max_concurrent: int = 15  # макс. параллельных запросов к GigaChat
-    gigachat_ca_bundle: str = "certs/russian_ca_bundle.pem"  # CA-bundle Минцифры для SSL
-
-    # OpenAI-compatible LLM (для shopping_agent)
-    llm_provider: str = "qwen_openai"  # qwen_openai | gigachat_sdk
-    # single_provider | single_user_gigachat_multi_user_qwen
+    # OpenAI-compatible LLM (Qwen via Yandex Cloud AI Studio)
+    llm_provider: str = "qwen_openai"  # qwen_openai
+    # single_provider
     llm_routing_strategy: str = "single_provider"
-    llm_singleton_provider: str = "gigachat_sdk"
-    llm_burst_provider: str = "qwen_openai"
     llm_base_url: str = "https://llm.api.cloud.yandex.net/v1"
     llm_api_key: str = ""
     llm_model: str = ""
@@ -100,10 +92,8 @@ class Config(BaseSettings):
     @classmethod
     def _validate_chat_engine(cls, v: str) -> str:
         normalized = v.strip().lower()
-        allowed = {"legacy", "shopping_agent"}
-        if normalized not in allowed:
-            allowed_values = ", ".join(sorted(allowed))
-            raise ValueError(f"chat_engine must be one of: {allowed_values}")
+        if normalized != "shopping_agent":
+            raise ValueError("chat_engine must be 'shopping_agent' (legacy GigaChat removed)")
         return normalized
 
     @field_validator("llm_provider")
@@ -114,37 +104,19 @@ class Config(BaseSettings):
             "qwen": "qwen_openai",
             "openai": "qwen_openai",
             "openai_compatible": "qwen_openai",
-            "gigachat": "gigachat_sdk",
         }
         normalized = aliases.get(normalized, normalized)
-        allowed = {"qwen_openai", "gigachat_sdk"}
+        allowed = {"qwen_openai"}
         if normalized not in allowed:
             allowed_values = ", ".join(sorted(allowed))
             raise ValueError(f"llm_provider must be one of: {allowed_values}")
-        return normalized
-
-    @field_validator("llm_singleton_provider", "llm_burst_provider")
-    @classmethod
-    def _validate_llm_routing_provider(cls, v: str) -> str:
-        normalized = v.strip().lower()
-        aliases = {
-            "qwen": "qwen_openai",
-            "openai": "qwen_openai",
-            "openai_compatible": "qwen_openai",
-            "gigachat": "gigachat_sdk",
-        }
-        normalized = aliases.get(normalized, normalized)
-        allowed = {"qwen_openai", "gigachat_sdk"}
-        if normalized not in allowed:
-            allowed_values = ", ".join(sorted(allowed))
-            raise ValueError(f"routing provider must be one of: {allowed_values}")
         return normalized
 
     @field_validator("llm_routing_strategy")
     @classmethod
     def _validate_llm_routing_strategy(cls, v: str) -> str:
         normalized = v.strip().lower()
-        allowed = {"single_provider", "single_user_gigachat_multi_user_qwen"}
+        allowed = {"single_provider"}
         if normalized not in allowed:
             allowed_values = ", ".join(sorted(allowed))
             raise ValueError(f"llm_routing_strategy must be one of: {allowed_values}")
@@ -152,14 +124,10 @@ class Config(BaseSettings):
 
     @model_validator(mode="after")
     def _validate_llm_routing_consistency(self) -> Config:
-        if (
-            self.llm_routing_strategy == "single_user_gigachat_multi_user_qwen"
-            and self.llm_singleton_provider == self.llm_burst_provider
-        ):
-            raise ValueError(
-                "llm_singleton_provider and llm_burst_provider must differ for "
-                "single_user_gigachat_multi_user_qwen"
-            )
+        if self.llm_provider != "qwen_openai":
+            raise ValueError("llm_provider must be qwen_openai")
+        if self.llm_routing_strategy != "single_provider":
+            raise ValueError("llm_routing_strategy must be single_provider")
         return self
 
     @field_validator("mcp_server_api_keys", mode="before")

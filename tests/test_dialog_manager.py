@@ -13,13 +13,13 @@
 import asyncio
 import json
 
-from gigachat.models import Messages, MessagesRole
-
 from vkuswill_bot.services.dialog_manager import (
     DialogManager,
     MAX_CONVERSATIONS,
+)
+from vkuswill_bot.services.dialog_history_utils import (
     MAX_SUMMARY_LENGTH,
-    _summarize_tool_result,
+    summarize_tool_result as _summarize_tool_result,
 )
 from vkuswill_bot.services.prompts import get_system_prompt
 
@@ -50,8 +50,8 @@ class TestGetHistory:
         history = manager.get_history(user_id=1)
 
         assert len(history) == 1
-        assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == get_system_prompt()
+        assert history[0]["role"] == "system"
+        assert history[0]["content"] == get_system_prompt()
 
     def test_reuses_existing(self, manager):
         """Повторный вызов возвращает ту же историю."""
@@ -150,14 +150,14 @@ class TestTrim:
         history = manager.get_history(user_id=1)
         # Добавляем 15 сообщений (1 системный + 15 = 16 всего)
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         manager.trim(user_id=1)
 
         trimmed = manager.conversations[1]
         assert len(trimmed) == 10  # max_history
-        assert trimmed[0].role == MessagesRole.SYSTEM  # системный промпт сохранён
-        assert trimmed[-1].content == "msg-14"  # последнее сообщение на месте
+        assert trimmed[0]["role"] == "system"  # системный промпт сохранён
+        assert trimmed[-1]["content"] == "msg-14"  # последнее сообщение на месте
 
     def test_trim_noop_when_short(self, manager):
         """Обрезка ничего не делает, если история короткая."""
@@ -176,13 +176,13 @@ class TestTrim:
         """После обрезки системный промпт всегда первый."""
         history = manager.get_history(user_id=1)
         for i in range(20):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         manager.trim(user_id=1)
 
         trimmed = manager.conversations[1]
-        assert trimmed[0].role == MessagesRole.SYSTEM
-        assert trimmed[0].content == get_system_prompt()
+        assert trimmed[0]["role"] == "system"
+        assert trimmed[0]["content"] == get_system_prompt()
 
 
 # ============================================================================
@@ -301,8 +301,8 @@ class TestAgetHistory:
         history = await manager.aget_history(user_id=1)
 
         assert len(history) == 1
-        assert history[0].role == MessagesRole.SYSTEM
-        assert history[0].content == get_system_prompt()
+        assert history[0]["role"] == "system"
+        assert history[0]["content"] == get_system_prompt()
 
     async def test_reuses_existing(self, manager):
         """Async: повторный вызов возвращает ту же историю."""
@@ -328,7 +328,7 @@ class TestSaveHistory:
     async def test_saves_new_history(self, manager):
         """save_history обновляет ссылку в conversations."""
         original = await manager.aget_history(user_id=1)
-        original.append(Messages(role=MessagesRole.USER, content="тест"))
+        original.append({"role": "user", "content": "тест"})
 
         new_list = list(original)  # новый объект
         await manager.save_history(user_id=1, history=new_list)
@@ -339,18 +339,18 @@ class TestSaveHistory:
         """save_history после trim_list обновляет историю корректно."""
         history = await manager.aget_history(user_id=1)
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         trimmed = manager.trim_list(history)
         await manager.save_history(user_id=1, history=trimmed)
 
         saved = manager.conversations[1]
         assert len(saved) == 10  # max_history
-        assert saved[0].role == MessagesRole.SYSTEM
+        assert saved[0]["role"] == "system"
 
     async def test_save_for_new_user(self, manager):
         """save_history для нового пользователя создаёт запись."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         await manager.save_history(user_id=99, history=history)
 
         assert 99 in manager.conversations
@@ -367,21 +367,21 @@ class TestTrimList:
 
     def test_trims_long_history(self, manager):
         """Длинная история обрезается до max_history."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         result = manager.trim_list(history)
 
         assert len(result) == 10  # max_history
-        assert result[0].role == MessagesRole.SYSTEM
-        assert result[-1].content == "msg-14"
+        assert result[0]["role"] == "system"
+        assert result[-1]["content"] == "msg-14"
 
     def test_noop_when_short(self, manager):
         """Короткая история возвращается без изменений."""
         history = [
-            Messages(role=MessagesRole.SYSTEM, content=get_system_prompt()),
-            Messages(role=MessagesRole.USER, content="привет"),
+            {"role": "system", "content": get_system_prompt()},
+            {"role": "user", "content": "привет"},
         ]
 
         result = manager.trim_list(history)
@@ -389,9 +389,9 @@ class TestTrimList:
 
     def test_returns_new_list_when_trimmed(self, manager):
         """При обрезке возвращается НОВЫЙ список (не мутирует оригинал)."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(15):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         original_len = len(history)
         result = manager.trim_list(history)
@@ -401,19 +401,19 @@ class TestTrimList:
 
     def test_preserves_system_prompt(self, manager):
         """Системный промпт всегда первый после обрезки."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(20):
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         result = manager.trim_list(history)
-        assert result[0].role == MessagesRole.SYSTEM
-        assert result[0].content == get_system_prompt()
+        assert result[0]["role"] == "system"
+        assert result[0]["content"] == get_system_prompt()
 
     def test_exact_max_history_noop(self, manager):
         """Ровно max_history элементов — не обрезается."""
-        history = [Messages(role=MessagesRole.SYSTEM, content=get_system_prompt())]
+        history = [{"role": "system", "content": get_system_prompt()}]
         for i in range(9):  # 1 + 9 = 10 = max_history
-            history.append(Messages(role=MessagesRole.USER, content=f"msg-{i}"))
+            history.append({"role": "user", "content": f"msg-{i}"})
 
         result = manager.trim_list(history)
         assert result is history

@@ -16,7 +16,6 @@ from vkuswill_bot.agents.recipe_runtime import (
     fallback_borscht_ingredients,
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
-from vkuswill_bot.agents.tool_result_compactor import _safe_float
 from vkuswill_bot.services.prompts import get_recipe_extraction_prompt
 
 logger = logging.getLogger(__name__)
@@ -24,6 +23,15 @@ logger = logging.getLogger(__name__)
 # Type alias for an async product-search function.
 SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
+
+
+def _safe_float(value: Any, *, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 async def extract_recipe_ingredients_with_llm(

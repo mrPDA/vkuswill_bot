@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from vkuswill_bot.agents.history_manager import history_char_count
 from vkuswill_bot.agents.llm_helpers import (
     estimate_usage_details,
     extract_message,
@@ -33,6 +33,14 @@ _ERROR_GENERIC = "Не удалось обработать запрос. Поп�
 _ERROR_TOO_MANY_TOOLS = (
     "Не удалось завершить подбор в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
 )
+
+
+def _history_char_count(history: list[dict[str, Any]]) -> int:
+    total = 0
+    for message in history:
+        with contextlib.suppress(Exception):
+            total += len(json.dumps(message, ensure_ascii=False))
+    return total
 
 
 async def run_locked_turn(
@@ -77,7 +85,7 @@ async def run_locked_turn(
             mode=prompt_mode,
             prompt_profiles_enabled=agent._prompt_profiles_enabled,
         )
-        llm_input_chars = history_char_count(llm_input)
+        llm_input_chars = _history_char_count(llm_input)
         state.total_llm_input_chars += llm_input_chars
         if step > 1 and state.total_llm_input_chars > agent._max_input_chars_per_turn:
             logger.warning(

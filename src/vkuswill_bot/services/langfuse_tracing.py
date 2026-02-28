@@ -1,6 +1,6 @@
 """Langfuse-трейсинг для прозрачности LLM-вызовов.
 
-Оборачивает взаимодействия с GigaChat: каждое сообщение пользователя
+Оборачивает взаимодействия с LLM: каждое сообщение пользователя
 создаёт trace, каждый вызов LLM — generation, каждый tool call — span.
 
 Если Langfuse не сконфигурирован (langfuse_enabled=False), используется
@@ -109,7 +109,7 @@ class LangfuseGeneration:
             usage: Старый формат ModelUsage (input/output/total/unit + cost).
                 Если не передан, автоматически строится из usage_details + cost_details.
             usage_details: Новый формат с произвольными ключами.
-            cost_details: Стоимость по типам (₽ для GigaChat).
+            cost_details: Стоимость по типам.
         """
         kwargs: dict[str, Any] = {
             "output": output,
@@ -321,15 +321,17 @@ class LangfuseService:
                 logger.debug("Ошибка при shutdown Langfuse: %s", exc)
 
 
-def _messages_to_langfuse(messages: list) -> list[dict[str, Any]]:
-    """Конвертировать Messages GigaChat в формат для Langfuse input/output."""
-    result = []
+def _messages_to_langfuse(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Конвертировать историю (list[dict]) в формат для Langfuse input/output."""
+    result: list[dict[str, Any]] = []
     for msg in messages:
-        entry: dict[str, Any] = {"role": str(msg.role)}
-        if msg.content:
-            entry["content"] = msg.content
-        if hasattr(msg, "function_call") and msg.function_call:
-            raw_args = msg.function_call.arguments
+        entry: dict[str, Any] = {"role": str(msg.get("role", ""))}
+        content = msg.get("content")
+        if content:
+            entry["content"] = content
+        fc = msg.get("function_call")
+        if fc is not None and isinstance(fc, dict):
+            raw_args = fc.get("arguments")
             if isinstance(raw_args, str):
                 try:
                     parsed_args = json.loads(raw_args)
@@ -338,10 +340,11 @@ def _messages_to_langfuse(messages: list) -> list[dict[str, Any]]:
             else:
                 parsed_args = raw_args
             entry["function_call"] = {
-                "name": msg.function_call.name,
+                "name": fc.get("name", ""),
                 "arguments": parsed_args,
             }
-        if hasattr(msg, "name") and msg.name:
-            entry["name"] = msg.name
+        name = msg.get("name")
+        if name is not None:
+            entry["name"] = name
         result.append(entry)
     return result
