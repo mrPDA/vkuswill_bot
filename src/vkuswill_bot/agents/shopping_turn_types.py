@@ -81,6 +81,7 @@ class ShoppingTurnAgentProtocol(Protocol):
         arguments: dict[str, Any],
         llm_provider: str,
         call_cache: dict[str, str] | None = None,
+        user_id: int | None = None,
     ) -> str: ...
 
     def _capture_cart_snapshot(

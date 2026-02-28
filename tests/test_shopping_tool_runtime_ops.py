@@ -46,6 +46,7 @@ class _FakeAgent:
         arguments: dict[str, Any],
         llm_provider: str,
         call_cache: dict[str, str] | None = None,
+        user_id: int | None = None,
     ) -> str:
         self.mcp_calls.append((name, arguments))
         return self.tool_results[name]

@@ -6,7 +6,37 @@ import contextlib
 import json
 from typing import Any
 
-from vkuswill_bot.services.prompts import RECIPE_SEARCH_TOOL, RECIPE_TOOL
+from vkuswill_bot.services.prompts import LOCAL_TOOLS, RECIPE_SEARCH_TOOL, RECIPE_TOOL
+
+# Preference tool names — обрабатываются локально (SQLite), минуя MCP
+PREFERENCE_TOOL_NAMES = frozenset(
+    {
+        "user_preferences_get",
+        "user_preferences_set",
+        "user_preferences_delete",
+    }
+)
+
+
+def with_virtual_preference_tools(raw_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Добавить виртуальные preference-инструменты, если их ещё нет."""
+    prepared = list(raw_tools)
+    existing_names = {
+        str(tool.get("name", "")).strip() for tool in prepared if isinstance(tool, dict)
+    }
+    for tool_def in LOCAL_TOOLS:
+        name = str(tool_def.get("name", "")).strip()
+        if not name or name not in PREFERENCE_TOOL_NAMES or name in existing_names:
+            continue
+        prepared.append(
+            {
+                "name": name,
+                "description": str(tool_def.get("description", "")),
+                "parameters": tool_def.get("parameters", {}),
+            }
+        )
+        existing_names.add(name)
+    return prepared
 
 
 def with_virtual_recipe_tools(raw_tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -34,6 +64,48 @@ def with_virtual_recipe_tools(raw_tools: list[dict[str, Any]]) -> list[dict[str,
         prepared.append(virtual)
         existing_names.add(name)
     return prepared
+
+
+async def handle_local_preference_tool(
+    name: str,
+    arguments: dict[str, Any],
+    *,
+    store: Any,
+    user_id: int | None,
+) -> str:
+    """Обработать preference tool call локально через PreferencesStore."""
+    if store is None or user_id is None:
+        return json.dumps(
+            {"ok": False, "error": "Хранилище предпочтений не настроено"},
+            ensure_ascii=False,
+        )
+
+    if name == "user_preferences_get":
+        return await store.get_formatted(user_id)
+
+    if name == "user_preferences_set":
+        category = arguments.get("category", "")
+        preference = arguments.get("preference", "")
+        if not category or not preference:
+            return json.dumps(
+                {"ok": False, "error": "Не указана категория или предпочтение"},
+                ensure_ascii=False,
+            )
+        return await store.set(user_id, category, preference)
+
+    if name == "user_preferences_delete":
+        category = arguments.get("category", "")
+        if not category:
+            return json.dumps(
+                {"ok": False, "error": "Не указана категория"},
+                ensure_ascii=False,
+            )
+        return await store.delete(user_id, category)
+
+    return json.dumps(
+        {"ok": False, "error": f"Неизвестный preference tool: {name}"},
+        ensure_ascii=False,
+    )
 
 
 def make_mcp_call_cache_key(*, name: str, arguments: dict[str, Any]) -> str:
