@@ -23,6 +23,18 @@ _CART_START_RE = re.compile(
     r"|(?:итого\s*:?\s*[\d.,]+)"
     r")",
 )
+_CART_END_RE = re.compile(
+    r"(?im)"
+    r"(?:"
+    r"открыть\s+корзин"
+    r"|наличие\s+и\s+точное\s+количество"
+    r"|цены\s+и\s+состав\s+уточняйте"
+    r"|уточняйте\s+на\s+сайте"
+    r"|https?://[^\s\"<>]*(?:cart|basket|share_basket)[^\s\"<>]*"
+    r"|итого\s*:?\s*[\d.,]+\s*(?:₽|руб)"
+    r"|</a>"
+    r")",
+)
 
 
 def render_stable_cart_output(
@@ -92,24 +104,36 @@ def render_stable_cart_output(
 
 
 def extract_llm_preamble(text: str) -> str:
-    """Извлечь вступительный текст LLM до начала вывода корзины.
+    """Извлечь вступительный текст LLM до начала вывода корзины."""
+    return extract_llm_surrounding_text(text)[0]
 
-    Возвращает текст до первого маркера корзины (нумерованный товар, «собрала
-    корзину», «итого» и т.п.). Если маркер не найден или преамбула пуста —
-    возвращает пустую строку.
+
+def extract_llm_postamble(text: str) -> str:
+    """Извлечь текст LLM после вывода корзины (шутка, комментарий и т.п.)."""
+    return extract_llm_surrounding_text(text)[1]
+
+def _clean_fragment(raw: str) -> str:
+    cleaned = normalize_compact_text(raw.strip())
+    return cleaned if len(cleaned) >= 4 else ""
+
+
+def extract_llm_surrounding_text(text: str) -> tuple[str, str]:
+    """Извлечь текст LLM до и после вывода корзины.
+
+    Возвращает (preamble, postamble). Пустая строка, если фрагмент
+    отсутствует или короче 4 символов.
     """
     if not text or not text.strip():
-        return ""
-    match = _CART_START_RE.search(text)
-    if match is None:
-        return ""
-    preamble = text[: match.start()].strip()
-    if not preamble:
-        return ""
-    preamble = normalize_compact_text(preamble)
-    if len(preamble) < 4:
-        return ""
-    return preamble
+        return "", ""
+    preamble = ""
+    start_match = _CART_START_RE.search(text)
+    if start_match is not None:
+        preamble = _clean_fragment(text[: start_match.start()])
+    postamble = ""
+    last_end = max((m.end() for m in _CART_END_RE.finditer(text)), default=-1)
+    if last_end >= 0:
+        postamble = _clean_fragment(text[last_end:])
+    return preamble, postamble
 
 
 def extract_cart_safety_note(text: str) -> str:

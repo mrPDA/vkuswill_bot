@@ -6,6 +6,8 @@ from vkuswill_bot.agents.cart_output_renderer import (
     extract_cart_safety_note,
     extract_first_url,
     extract_llm_preamble,
+    extract_llm_postamble,
+    extract_llm_surrounding_text,
     looks_like_missing_cart_prices,
 )
 
@@ -52,6 +54,44 @@ def test_extract_llm_preamble_returns_empty_when_no_preamble() -> None:
 def test_extract_llm_preamble_returns_empty_for_short_text() -> None:
     text = "Ок\n1. Молоко x 1 = 100 руб"
     assert extract_llm_preamble(text) == ""
+
+
+def test_extract_llm_postamble_returns_joke_after_cart() -> None:
+    text = (
+        "Собрала корзину по вашему запросу:\n"
+        "1. Молоко Parmalat x 3 = 573 руб\n\n"
+        "Итого: 573 руб\n\n"
+        '<a href="https://cart.vkusvill.ru/123">Открыть корзину</a>\n\n'
+        "А теперь шутка:\n"
+        "Почему безлактозное молоко не участвует в спорах?\n"
+        "Потому что оно всегда комфортно! 😄"
+    )
+    postamble = extract_llm_postamble(text)
+    assert "шутка" in postamble.lower()
+    assert "комфортно" in postamble.lower()
+
+
+def test_extract_llm_postamble_returns_empty_when_no_text_after_cart() -> None:
+    text = (
+        "1. Молоко x 1 = 100 руб\n"
+        "Итого: 100 руб\n"
+        '<a href="https://cart.vkusvill.ru/123">Открыть корзину</a>'
+    )
+    assert extract_llm_postamble(text) == ""
+
+
+def test_extract_llm_surrounding_text_both_parts() -> None:
+    text = (
+        "Привет! Вот что я нашла.\n\n"
+        "Собрала корзину:\n"
+        "1. Молоко x 1 = 100 руб\n"
+        "Итого: 100 руб\n"
+        '<a href="https://cart.vkusvill.ru/1">Открыть корзину</a>\n\n'
+        "Приятных покупок! Обращайтесь ещё."
+    )
+    preamble, postamble = extract_llm_surrounding_text(text)
+    assert "привет" in preamble.lower()
+    assert "приятных" in postamble.lower()
 
 
 def test_looks_like_missing_cart_prices_accepts_priced_rows_and_total() -> None:
