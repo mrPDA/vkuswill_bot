@@ -62,10 +62,26 @@ class _FakePreferencesStore:
     def __init__(self, payload: dict[str, Any]) -> None:
         self.payload = payload
         self.calls: list[int] = []
+        self.set_calls: list[tuple[int, str, str]] = []
+        self.delete_calls: list[tuple[int, str]] = []
 
     async def get_formatted(self, user_id: int) -> str:
         self.calls.append(user_id)
         return json.dumps(self.payload, ensure_ascii=False)
+
+    async def set(self, user_id: int, category: str, preference: str) -> str:
+        self.set_calls.append((user_id, category, preference))
+        return json.dumps(
+            {"ok": True, "message": f"Запомнил: {category} → {preference}"},
+            ensure_ascii=False,
+        )
+
+    async def delete(self, user_id: int, category: str) -> str:
+        self.delete_calls.append((user_id, category))
+        return json.dumps(
+            {"ok": True, "message": f"Предпочтение «{category}» удалено."},
+            ensure_ascii=False,
+        )
 
 
 class _FallbackMCPClient(_FakeMCPClient):
@@ -1477,6 +1493,127 @@ async def test_applies_saved_preferences_to_search_without_extra_tool_steps() ->
     assert result == "ok"
     assert prefs_store.calls == [42]
     assert mcp_client.calls == [("vkusvill_products_search", {"q": "молоко безлактозное 3,2%"})]
+
+
+@pytest.mark.asyncio
+async def test_preference_set_handled_locally() -> None:
+    """user_preferences_set обрабатывается локально через PreferencesStore."""
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={"ok": True, "preferences": []},
+    )
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "user_preferences_set",
+        '{"category":"молоко","preference":"безлактозное"}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="Запомнил!")),
+    ]
+    agent, mcp_client = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    result = await agent.process_message(user_id=42, text="запомни молоко безлактозное")
+    assert result == "Запомнил!"
+    assert prefs_store.set_calls == [(42, "молоко", "безлактозное")]
+    assert not any(name == "user_preferences_set" for name, _ in mcp_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_preference_get_handled_locally() -> None:
+    """user_preferences_get обрабатывается локально через PreferencesStore."""
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={
+            "ok": True,
+            "preferences": [{"category": "молоко", "preference": "безлактозное"}],
+        },
+    )
+    tool_call = _FakeToolCall("tc-1", "user_preferences_get", "{}")
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="Ваши предпочтения: молоко → безлактозное")),
+    ]
+    agent, mcp_client = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    result = await agent.process_message(user_id=42, text="мои предпочтения")
+    assert "предпочтения" in result.lower()
+    assert not any(name == "user_preferences_get" for name, _ in mcp_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_preference_delete_handled_locally() -> None:
+    """user_preferences_delete обрабатывается локально через PreferencesStore."""
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={"ok": True, "preferences": []},
+    )
+    tool_call = _FakeToolCall(
+        "tc-1",
+        "user_preferences_delete",
+        '{"category":"молоко"}',
+    )
+    llm_script = [
+        _FakeResponse(_FakeMessage(content="", tool_calls=[tool_call])),
+        _FakeResponse(_FakeMessage(content="Удалено")),
+    ]
+    agent, mcp_client = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    result = await agent.process_message(user_id=42, text="удали предпочтение молоко")
+    assert result == "Удалено"
+    assert prefs_store.delete_calls == [(42, "молоко")]
+    assert not any(name == "user_preferences_delete" for name, _ in mcp_client.calls)
+
+
+@pytest.mark.asyncio
+async def test_preference_tools_visible_in_tool_list() -> None:
+    """Preference tools инжектируются в tool list когда PreferencesStore настроен."""
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={"ok": True, "preferences": []},
+    )
+    llm_script = [_FakeResponse(_FakeMessage(content="ok"))]
+    agent, _mcp = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    tools = await agent._get_tools()
+    tool_names = {t["function"]["name"] for t in tools}
+    assert "user_preferences_get" in tool_names
+    assert "user_preferences_set" in tool_names
+    assert "user_preferences_delete" in tool_names
+
+
+@pytest.mark.asyncio
+async def test_preference_tools_not_visible_without_store() -> None:
+    """Preference tools НЕ инжектируются без PreferencesStore."""
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    llm_script = [_FakeResponse(_FakeMessage(content="ok"))]
+    agent, _mcp = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=None,
+    )
+
+    tools = await agent._get_tools()
+    tool_names = {t["function"]["name"] for t in tools}
+    assert "user_preferences_get" not in tool_names
+    assert "user_preferences_set" not in tool_names
+    assert "user_preferences_delete" not in tool_names
 
 
 @pytest.mark.asyncio

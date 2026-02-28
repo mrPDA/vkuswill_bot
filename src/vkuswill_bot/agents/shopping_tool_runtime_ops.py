@@ -136,6 +136,7 @@ async def execute_tool_calls(
             arguments=tool_args,
             llm_provider=llm_provider,
             call_cache=state.mcp_call_cache,
+            user_id=user_id,
         )
         if tool_name == "recipe_ingredients":
             tool_result = sanitize_recipe_ingredients_tool_result(
