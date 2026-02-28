@@ -13,7 +13,15 @@ LAYER_BY_MODULE: dict[str, str] = {
     # Runtime
     "shopping_agent": "runtime",
     "shopping_turn_executor": "runtime",
-    "shopping_turn_components": "runtime",
+    "shopping_turn_contracts": "runtime",
+    "shopping_turn_types": "runtime",
+    "shopping_tool_step_processor": "runtime",
+    "shopping_tool_runtime_ops": "runtime",
+    "shopping_tool_recovery": "runtime",
+    "shopping_final_response_builder": "runtime",
+    "shopping_agent_runtime_mixin": "runtime",
+    "shopping_agent_service_mixin": "runtime",
+    "shopping_agent_state_ops": "runtime",
     "mcp_tool_gateway": "runtime",
     # Policy
     "prompt_helpers": "policy",
@@ -22,7 +30,12 @@ LAYER_BY_MODULE: dict[str, str] = {
     "recovery_hints": "policy",
     "intent_markers": "policy",
     # Domain
-    "recipe_helpers": "domain",
+    "recipe_pantry": "domain",
+    "recipe_parsing": "domain",
+    "recipe_matching": "domain",
+    "recipe_runtime": "domain",
+    "recipe_quantity_base": "domain",
+    "recipe_quantity_rules": "domain",
     "recipe_quantity_calculator": "domain",
     "recipe_fallback": "domain",
     "product_index_manager": "domain",
@@ -35,6 +48,8 @@ LAYER_BY_MODULE: dict[str, str] = {
     # Shared
     "pantry_tags": "shared",
     "quantity_utils": "shared",
+    "tool_result_compact_strategies": "shared",
+    "tool_value_utils": "shared",
     "tool_result_compactor": "shared",
     "history_manager": "shared",
     "llm_helpers": "shared",
@@ -49,6 +64,8 @@ _LAYER_ORDER: dict[str, int] = {
 }
 
 EXPECTED_LAYER_VIOLATIONS: set[tuple[str, str]] = set()
+MAX_OUTDEGREE_ALLOWED = 6
+MAX_MODULE_LOC_ALLOWED = 286
 
 
 @lru_cache(maxsize=1)
@@ -132,10 +149,10 @@ def test_layer_violations_match_baseline() -> None:
 def test_max_module_outdegree_does_not_regress() -> None:
     graph = _collect_import_graph()
     max_outdegree = max(len(targets) for targets in graph.values())
-    assert max_outdegree <= 10
+    assert max_outdegree <= MAX_OUTDEGREE_ALLOWED
 
 
 def test_max_module_loc_does_not_regress() -> None:
     modules = _agent_modules()
     max_loc = max(sum(1 for _ in path.open("r", encoding="utf-8")) for path in modules.values())
-    assert max_loc <= 556
+    assert max_loc <= MAX_MODULE_LOC_ALLOWED

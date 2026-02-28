@@ -8,9 +8,9 @@ from typing import Any
 
 import pytest
 
-from vkuswill_bot.agents.recipe_helpers import extract_structured_ingredient_requests
+from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
 from vkuswill_bot.agents.shopping_agent import ShoppingAgent
-from vkuswill_bot.agents.shopping_turn_components import apply_requested_ingredient_overrides
+from vkuswill_bot.agents.shopping_tool_runtime_ops import apply_requested_ingredient_overrides
 from vkuswill_bot.agents.tool_preprocessor import (
     preprocess_tool_args,
     restore_previous_quantities_for_additive_update,

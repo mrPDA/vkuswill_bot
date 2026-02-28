@@ -10,10 +10,10 @@ from typing import Any
 
 from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
 from vkuswill_bot.agents.mcp_response_parser import extract_search_items, parse_json_payload
-from vkuswill_bot.agents.recipe_helpers import (
+from vkuswill_bot.agents.recipe_parsing import normalize_recipe_ingredient_row
+from vkuswill_bot.agents.recipe_runtime import (
     enrich_recipe_equivalents,
     fallback_borscht_ingredients,
-    normalize_recipe_ingredient_row,
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.agents.tool_result_compactor import _safe_float

@@ -1,22 +1,23 @@
-"""Unit-тесты для vkuswill_bot.agents.recipe_helpers."""
+"""Unit-тесты для recipe_pantry/recipe_parsing/recipe_matching/recipe_runtime."""
 
 from __future__ import annotations
 
-
-from vkuswill_bot.agents.recipe_helpers import (
-    detect_pantry_tag_for_ingredient,
-    extract_explicit_pantry_requests,
-    filter_recipe_ingredients_list,
-    has_explicit_egg_pack_request,
-    looks_like_pepper_vegetable,
-    match_requested_ingredient,
-    normalize_text,
-    parse_quantity_hint,
-)
-from vkuswill_bot.agents.intent_markers import (
+from vkuswill_bot.agents.pantry_tags import (
     PANTRY_TAG_PEPPER,
     PANTRY_TAG_SALT,
     PANTRY_TAG_SUGAR,
+)
+from vkuswill_bot.agents.recipe_matching import match_requested_ingredient
+from vkuswill_bot.agents.recipe_pantry import (
+    detect_pantry_tag_for_ingredient,
+    extract_explicit_pantry_requests,
+    has_explicit_egg_pack_request,
+    looks_like_pepper_vegetable,
+    normalize_text,
+)
+from vkuswill_bot.agents.recipe_parsing import parse_quantity_hint
+from vkuswill_bot.agents.recipe_runtime import (
+    filter_recipe_ingredients_list,
 )
 
 

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vkuswill_bot.agents.recipe_helpers import is_recipe_followup
+from vkuswill_bot.agents.recipe_runtime import is_recipe_followup
 from vkuswill_bot.services.prompts import (
     PromptMode,
     PromptProfile,
