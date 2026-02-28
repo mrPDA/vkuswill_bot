@@ -8,7 +8,12 @@ import logging
 from typing import TYPE_CHECKING, Any
 
 from vkuswill_bot.agents.history_manager import trim_history, trim_history_by_chars
-from vkuswill_bot.agents.mcp_helpers import with_virtual_recipe_tools
+from vkuswill_bot.agents.mcp_helpers import (
+    PREFERENCE_TOOL_NAMES,
+    handle_local_preference_tool,
+    with_virtual_preference_tools,
+    with_virtual_recipe_tools,
+)
 from vkuswill_bot.agents.mcp_response_parser import (
     extract_cart_data,
     extract_recipe_products_from_history,
@@ -67,6 +72,8 @@ class ShoppingAgentServiceMixin:
             if isinstance(tool, dict) and str(tool.get("name", "")).strip()
         }
         raw_tools = with_virtual_recipe_tools(raw_tools)
+        if self._preferences_store is not None:
+            raw_tools = with_virtual_preference_tools(raw_tools)
         normalized: list[dict[str, Any]] = []
         for tool in raw_tools:
             name = str(tool.get("name", "")).strip()
@@ -147,7 +154,16 @@ class ShoppingAgentServiceMixin:
         arguments: dict[str, Any],
         llm_provider: str,
         call_cache: dict[str, str] | None = None,
+        user_id: int | None = None,
     ) -> str:
+        if name in PREFERENCE_TOOL_NAMES and self._preferences_store is not None:
+            return await handle_local_preference_tool(
+                name,
+                arguments,
+                store=self._preferences_store,
+                user_id=user_id,
+            )
+
         gateway = self._mcp_gateway
         if gateway is None:
             gateway = self._create_mcp_gateway()
