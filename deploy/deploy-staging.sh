@@ -66,4 +66,12 @@ export METABASE_CONTAINER_NAME="${STG_METABASE_CONTAINER_NAME}"
 export HEALTH_PORT="${STG_HEALTH_PORT}"
 export MCP_DEFAULT_PORT="${STG_MCP_DEFAULT_PORT}"
 
+# Staging-специфичные переменные окружения, которые deploy.sh
+# добавит к docker run через DEPLOY_EXTRA_ENV (если Lockbox не содержит их)
+export DEPLOY_EXTRA_ENV="\
+-e PROMPT_LABEL=staging \
+-e PROMPT_CACHE_TTL_SECONDS=30 \
+-e LLM_PROMPT_PROFILES_ENABLED=true \
+-e LLM_COMPACT_FOLLOWUP_PROMPT_ENABLED=true"
+
 exec bash "${SCRIPT_DIR}/deploy.sh" "${FORWARD_ARGS[@]}"

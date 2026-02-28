@@ -619,6 +619,7 @@ docker run -d \
   $ENV_FLAG \
   $MODEL_ENV \
   $PROMPT_ENV \
+  ${DEPLOY_EXTRA_ENV:-} \
   -v "${DATA_DIR}:/app/data" \
   $SSL_MOUNT \
   $SSL_ENV \
