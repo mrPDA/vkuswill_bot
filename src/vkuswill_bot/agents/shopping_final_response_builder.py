@@ -6,6 +6,7 @@ from typing import Any
 
 from vkuswill_bot.agents.cart_output_renderer import (
     extract_cart_safety_note,
+    extract_llm_preamble,
     render_stable_cart_output,
 )
 from vkuswill_bot.agents.llm_helpers import assistant_msg
@@ -85,11 +86,13 @@ class DefaultFinalResponseBuilder:
                 cart_data=state.cart_data_this_turn,
                 product_index=state.product_index_this_turn,
             )
+            preamble = extract_llm_preamble(final_text)
             safety_note = extract_cart_safety_note(final_text)
-            final_text = render_stable_cart_output(
+            cart_output = render_stable_cart_output(
                 state.cart_data_this_turn,
                 safety_note=safety_note,
             )
+            final_text = f"{preamble}\n\n{cart_output}" if preamble else cart_output
 
         agent._history[user_id] = agent._trim_history([*state.history, assistant_msg(message)])
         if trace is not None:

@@ -377,6 +377,20 @@ variable "langfuse_secret_key" {
   default     = ""
 }
 
+# ─── Prompt Management (ADR-007) ──────────────────────────────
+
+variable "prompt_label" {
+  description = "Langfuse prompt label: staging or production"
+  type        = string
+  default     = "production"
+}
+
+variable "prompt_cache_ttl_seconds" {
+  description = "Langfuse prompt cache TTL in seconds"
+  type        = number
+  default     = 300
+}
+
 # ─── Metabase ─────────────────────────────────────────────────
 
 variable "metabase_pg_password" {

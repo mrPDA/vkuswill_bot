@@ -129,6 +129,17 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = var.langfuse_secret_key
   }
 
+  # Prompt Management (ADR-007)
+  entries {
+    key        = "PROMPT_LABEL"
+    text_value = var.prompt_label
+  }
+
+  entries {
+    key        = "PROMPT_CACHE_TTL_SECONDS"
+    text_value = tostring(var.prompt_cache_ttl_seconds)
+  }
+
   # Metabase (BI-дашборды, self-hosted на VM)
   entries {
     key        = "METABASE_ENABLED"

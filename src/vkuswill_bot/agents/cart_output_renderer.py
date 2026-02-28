@@ -13,6 +13,16 @@ from vkuswill_bot.agents.tool_result_compactor import (
 _URL_RE = re.compile(r"https?://[^\s\"<>]+")
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+|\n+")
 _PRICED_ROW_RE = re.compile(r"(?im)^\s*\d+\.\s+.+?(?:x|×).+?=\s*[\d\s.,]+(?:₽|руб(?:\.|ля|лей)?)")
+_CART_START_RE = re.compile(
+    r"(?im)"
+    r"(?:"
+    r"^\s*\d+\.\s+.+?(?:x|×|—|\d+\s*(?:шт|г|кг|мл|л))"
+    r"|(?:собрал[аи]?\s+корзин)"
+    r"|(?:вот\s+(?:ваша|твоя)\s+корзин)"
+    r"|(?:корзин\w*\s+готов[аы]?)"
+    r"|(?:итого\s*:?\s*[\d.,]+)"
+    r")",
+)
 
 
 def render_stable_cart_output(
@@ -79,6 +89,27 @@ def render_stable_cart_output(
         "корзину. Цены и состав уточняйте на сайте.</i>"
     )
     return "\n\n".join(chunks)
+
+
+def extract_llm_preamble(text: str) -> str:
+    """Извлечь вступительный текст LLM до начала вывода корзины.
+
+    Возвращает текст до первого маркера корзины (нумерованный товар, «собрала
+    корзину», «итого» и т.п.). Если маркер не найден или преамбула пуста —
+    возвращает пустую строку.
+    """
+    if not text or not text.strip():
+        return ""
+    match = _CART_START_RE.search(text)
+    if match is None:
+        return ""
+    preamble = text[: match.start()].strip()
+    if not preamble:
+        return ""
+    preamble = normalize_compact_text(preamble)
+    if len(preamble) < 4:
+        return ""
+    return preamble
 
 
 def extract_cart_safety_note(text: str) -> str:
