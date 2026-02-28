@@ -121,9 +121,7 @@ def compact_product_details(payload: dict[str, Any]) -> dict[str, Any]:
             "rating": rating_value,
         }
         result["data"] = {
-            key: value
-            for key, value in compact_data.items()
-            if value is not None and value != ""
+            key: value for key, value in compact_data.items() if value is not None and value != ""
         }
 
     if "error" in payload:
