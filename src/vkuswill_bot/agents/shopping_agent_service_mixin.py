@@ -98,9 +98,7 @@ class ShoppingAgentServiceMixin:
         if llm_adapter is None:
             raise RuntimeError(f"LLM adapter not configured for provider: {llm_provider}")
         max_tokens = (
-            max_tokens_override
-            if max_tokens_override is not None
-            else self._llm_max_tokens
+            max_tokens_override if max_tokens_override is not None else self._llm_max_tokens
         )
         last_error: Exception | None = None
         for attempt in range(self._llm_retries + 1):
