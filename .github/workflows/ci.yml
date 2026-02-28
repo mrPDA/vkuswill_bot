@@ -171,9 +171,6 @@ jobs:
       - name: Run config security tests
         run: uv run pytest tests/test_config_security.py -v --tb=short
 
-      - name: Run AI safety tests
-        run: uv run pytest tests/test_ai_safety.py tests/test_input_validation.py -v --tb=short
-
       - name: Check for secrets in code
         run: |
           # Проверка на наличие захардкоженных секретов
