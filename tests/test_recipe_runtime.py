@@ -78,6 +78,46 @@ def test_sanitize_recipe_ingredients_tool_result_filters_top_and_nested_lists() 
     assert set(decoded["pantry_filtered"]) == {"Соль", "перец черный молотый"}
 
 
+def test_sanitize_recipe_ingredients_tool_result_filters_water() -> None:
+    payload = {
+        "ok": True,
+        "ingredients": [
+            {"name": "вода", "search_query": "вода для соуса лагман"},
+            {"name": "говядина", "search_query": "говядина"},
+            {"name": "лук репчатый", "search_query": "лук репчатый"},
+        ],
+    }
+    sanitized = sanitize_recipe_ingredients_tool_result(
+        tool_result=json.dumps(payload, ensure_ascii=False),
+        explicit_pantry_requests=set(),
+    )
+    decoded = json.loads(sanitized)
+    remaining = [item["name"] for item in decoded["ingredients"]]
+    assert "вода" not in remaining
+    assert "говядина" in remaining
+    assert "лук репчатый" in remaining
+    assert "вода" in decoded["pantry_filtered"]
+
+
+def test_sanitize_recipe_ingredients_tool_result_keeps_water_when_explicit() -> None:
+    payload = {
+        "ok": True,
+        "ingredients": [
+            {"name": "вода", "search_query": "вода минеральная"},
+            {"name": "говядина", "search_query": "говядина"},
+        ],
+    }
+    from vkuswill_bot.agents.pantry_tags import PANTRY_TAG_WATER
+
+    sanitized = sanitize_recipe_ingredients_tool_result(
+        tool_result=json.dumps(payload, ensure_ascii=False),
+        explicit_pantry_requests={PANTRY_TAG_WATER},
+    )
+    decoded = json.loads(sanitized)
+    remaining = [item["name"] for item in decoded["ingredients"]]
+    assert "вода" in remaining
+
+
 def test_sanitize_recipe_ingredients_tool_result_passthrough_for_non_json() -> None:
     raw = "not-a-json"
     assert (

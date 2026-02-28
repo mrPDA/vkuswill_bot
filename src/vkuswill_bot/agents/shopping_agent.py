@@ -6,10 +6,12 @@ import asyncio
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
+from vkuswill_bot.agents.intent_classifier import classify_user_intent
 from vkuswill_bot.agents.mcp_tool_gateway import McpToolGateway
 from vkuswill_bot.agents.shopping_agent_runtime_mixin import ShoppingAgentRuntimeMixin
 from vkuswill_bot.agents.shopping_agent_service_mixin import ShoppingAgentServiceMixin
 from vkuswill_bot.agents.tool_result_compactor import ToolResultCompactor
+from vkuswill_bot.services.prompts import PromptProfile
 from vkuswill_bot.services.llm_adapters import (
     LLMAdapterProtocol,
     OpenAICompatibleLLMAdapter,
@@ -70,6 +72,8 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         preferences_store: PreferencesStore | None = None,
         llm_client: Any | None = None,
         llm_adapters: dict[str, LLMAdapterProtocol] | None = None,
+        intent_classification_enabled: bool = False,
+        intent_classification_timeout: float = 5.0,
     ) -> None:
         self._llm_provider = normalize_llm_provider(llm_provider)
         self._llm_routing_strategy = llm_routing_strategy.strip().lower()
@@ -102,6 +106,8 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._max_input_chars_per_turn = max(10000, max_input_chars_per_turn)
         self._max_active_users = max(1, max_active_users)
         self._preferences_store = preferences_store
+        self._intent_classification_enabled = bool(intent_classification_enabled)
+        self._intent_classification_timeout = max(1.0, intent_classification_timeout)
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
         self._langfuse = langfuse_service
         self._tools_cache: list[dict[str, Any]] | None = None
@@ -148,3 +154,17 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
                 llm_timeout_seconds=self._llm_timeout_seconds,
             )
         self._mcp_gateway = self._create_mcp_gateway()
+
+    async def _classify_intent(self, text: str) -> PromptProfile | None:
+        """Classify user intent via LLM. Returns None to fall back to keywords."""
+        if not self._intent_classification_enabled:
+            return None
+        adapter = self._llm_adapters.get(self._llm_provider)
+        if adapter is None:
+            return None
+        return await classify_user_intent(
+            text,
+            adapter,
+            self._model,
+            timeout_seconds=self._intent_classification_timeout,
+        )

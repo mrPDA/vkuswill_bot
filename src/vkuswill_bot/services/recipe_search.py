@@ -7,6 +7,7 @@ import contextlib
 import json
 import logging
 import math
+import re
 from collections.abc import Callable, Coroutine
 from typing import Any
 
@@ -50,6 +51,45 @@ class RecipeSearchService:
         "горшок",
         "кашпо",
     )
+
+    # Готовые блюда/полуфабрикаты: при поиске сырых ингредиентов
+    # эти товары сдвигаются в конец списка, чтобы не попасть в best_match.
+    _READY_MEAL_KEYWORDS = (
+        "суп ",
+        "суп-",
+        "борщ",
+        "лагман",
+        "плов",
+        "рагу",
+        "солянка",
+        "щи ",
+        "каша ",
+        "котлет",
+        "пельмен",
+        "вареник",
+        "блинчик",
+        "сырник",
+        "запеканка",
+        "шашлык",
+        "шаурма",
+        "голубц",
+        "гуляш",
+        "жаркое",
+        " жареный",
+        " жареная",
+        " жареное",
+        " жареные",
+        " тушеный",
+        " тушеная",
+        " тушеное",
+        " тушеные",
+        " запеченн",
+        " запечённ",
+    )
+
+    # LLM генерирует search_query вида "говядина для лагмана" —
+    # суффикс "для ..." сбивает поисковую выдачу на готовые блюда.
+    _DISH_CONTEXT_RE = re.compile(r"\s+для\s+\S+", re.IGNORECASE)
 
     def __init__(
         self,
@@ -131,6 +171,11 @@ class RecipeSearchService:
             ensure_ascii=False,
         )
 
+    @classmethod
+    def _clean_recipe_query(cls, query: str) -> str:
+        """Strip dish-context suffixes ('для лагмана', 'для соуса') from recipe search queries."""
+        return cls._DISH_CONTEXT_RE.sub("", query).strip()
+
     async def _search_one(
         self,
         ingredient: dict,
@@ -156,6 +201,7 @@ class RecipeSearchService:
                 "found_ids": [],
             }
 
+        query = self._clean_recipe_query(query)
         cleaned_query = self._search_processor.clean_search_query(query)
         search_outcome = await self._search_query_cached(cleaned_query, sem, query_tasks)
         if search_outcome.get("error"):
@@ -325,7 +371,7 @@ class RecipeSearchService:
 
     @classmethod
     def _deprioritize_non_food(cls, items: list[dict]) -> list[dict]:
-        """Переместить нерелевантные товары (семена, рассада) в конец.
+        """Переместить нерелевантные товары (семена, рассада, готовые блюда) в конец.
 
         Если ВСЕ товары нерелевантные — вернуть исходный порядок
         (лучше показать хоть что-то).
@@ -334,7 +380,11 @@ class RecipeSearchService:
         non_food: list[dict] = []
         for item in items:
             name_lower = str(item.get("name", "")).lower()
-            if any(kw in name_lower for kw in cls._NON_FOOD_KEYWORDS):
+            is_bad = any(kw in name_lower for kw in cls._NON_FOOD_KEYWORDS)
+            if not is_bad:
+                padded = f" {name_lower}"
+                is_bad = any(kw in padded for kw in cls._READY_MEAL_KEYWORDS)
+            if is_bad:
                 non_food.append(item)
             else:
                 food.append(item)

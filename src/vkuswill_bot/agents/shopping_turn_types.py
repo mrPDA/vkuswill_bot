@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -33,6 +35,8 @@ class ShoppingTurnAgentProtocol(Protocol):
     ) -> bool: ...
 
     def _normalize_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+
+    async def _classify_intent(self, text: str) -> PromptProfile | None: ...
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]: ...
 
@@ -140,7 +144,15 @@ async def build_turn_state(
     if agent._should_start_fresh_context(text=text, history=history):
         history = None
 
-    prompt_profile = resolve_prompt_profile(text=text, history=history)
+    # LLM-классификация и загрузка preferences — независимы, запускаем параллельно.
+    classify_task = asyncio.create_task(agent._classify_intent(text))
+    prefs_task = asyncio.create_task(agent._load_user_preferences(user_id))
+
+    llm_profile: PromptProfile | None = None
+    with contextlib.suppress(Exception):
+        llm_profile = await classify_task
+
+    prompt_profile = llm_profile or resolve_prompt_profile(text=text, history=history)
     history = ensure_system_prompt(
         history=history,
         prompt_profile=prompt_profile,
@@ -152,6 +164,8 @@ async def build_turn_state(
     history.append({"role": "user", "content": text})
     normalized_history = agent._normalize_history(history)
 
+    user_preferences = await prefs_task
+
     return TurnState(
         history=normalized_history,
         previous_cart_products=previous_cart_products,
@@ -161,5 +175,5 @@ async def build_turn_state(
         explicit_pantry_requests=extract_explicit_pantry_requests(text),
         explicit_egg_pack_request=has_explicit_egg_pack_request(text),
         requested_ingredients=extract_structured_ingredient_requests(text),
-        user_preferences=await agent._load_user_preferences(user_id),
+        user_preferences=user_preferences,
     )

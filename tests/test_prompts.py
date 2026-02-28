@@ -91,6 +91,17 @@ class TestPromptProfiles:
             ("Замени молоко на кефир", "cart"),
             ("Как привязать алису по коду", "linking"),
             ("Привет", "general"),
+            # Названия блюд + cart-маркер → cart (а не recipe)
+            ("Закажи суп", "cart"),
+            ("Купи борщ", "cart"),
+            ("Добавь пасту в корзину", "cart"),
+            # Названия блюд + strong recipe-маркер → recipe
+            ("Свари суп", "recipe"),
+            ("Приготовь борщ", "recipe"),
+            ("Рецепт пасты", "recipe"),
+            # Названия блюд без cart-маркера → recipe
+            ("Борщ", "recipe"),
+            ("Суп", "recipe"),
         ],
     )
     def test_detect_prompt_profile(self, text: str, profile: PromptProfile):

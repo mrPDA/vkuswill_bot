@@ -149,7 +149,9 @@ _PROFILE_FINALIZER_PROMPT = """\
 def detect_prompt_profile(text: str) -> PromptProfile:
     """Определить профиль промпта по тексту запроса пользователя."""
     low = text.lower()
-    recipe_markers = (
+
+    # Явное намерение готовить — всегда recipe
+    strong_recipe_markers = (
         "рецепт",
         "ингредиент",
         "ингридиент",
@@ -157,6 +159,9 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "сдела",
         "свари",
         "испеч",
+    )
+    # Названия блюд — recipe только если нет cart-маркера
+    dish_name_markers = (
         "борщ",
         "суп",
         "паста",
@@ -183,7 +188,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "объедин",
     )
 
-    if any(marker in low for marker in recipe_markers):
+    if any(marker in low for marker in strong_recipe_markers):
         return "recipe"
     if any(marker in low for marker in status_markers):
         return "status"
@@ -191,6 +196,8 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         return "linking"
     if any(marker in low for marker in cart_markers):
         return "cart"
+    if any(marker in low for marker in dish_name_markers):
+        return "recipe"
     return "general"
 
 

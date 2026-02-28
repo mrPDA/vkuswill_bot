@@ -35,6 +35,8 @@ class Config(BaseSettings):
     llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_prompt_profiles_enabled: bool = False
     llm_compact_followup_prompt_enabled: bool = True
+    intent_classification_enabled: bool = False
+    intent_classification_timeout: float = 5.0
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"

@@ -3,3 +3,4 @@
 PANTRY_TAG_SALT = "salt"
 PANTRY_TAG_SUGAR = "sugar"
 PANTRY_TAG_PEPPER = "pepper"
+PANTRY_TAG_WATER = "water"

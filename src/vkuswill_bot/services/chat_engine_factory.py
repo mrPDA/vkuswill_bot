@@ -71,4 +71,6 @@ def create_chat_engine(
         prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
         compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
         preferences_store=preferences_store,
+        intent_classification_enabled=cfg.intent_classification_enabled,
+        intent_classification_timeout=cfg.intent_classification_timeout,
     )

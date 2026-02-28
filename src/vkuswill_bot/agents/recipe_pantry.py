@@ -8,6 +8,7 @@ from vkuswill_bot.agents.pantry_tags import (
     PANTRY_TAG_PEPPER,
     PANTRY_TAG_SALT,
     PANTRY_TAG_SUGAR,
+    PANTRY_TAG_WATER,
 )
 
 
@@ -52,6 +53,24 @@ def is_explicit_seasoning_pepper_request(text: str) -> bool:
     return "соль" in normalized or "сахар" in normalized
 
 
+def _is_plain_water(text: str) -> bool:
+    """Return True when text refers to plain cooking/drinking water, not a compound."""
+    if "вод" not in text:
+        return False
+    non_water_markers = (
+        "водк",
+        "водор",
+        "минерал",
+        "газир",
+        "лимонад",
+        "сок",
+        "компот",
+        "бульон",
+        "розов",
+    )
+    return not any(m in text for m in non_water_markers)
+
+
 def detect_pantry_tag_for_ingredient(row: dict[str, Any]) -> str | None:
     """Resolve pantry tag for an ingredient row if applicable."""
     name = normalize_text(str(row.get("name", "")))
@@ -65,6 +84,8 @@ def detect_pantry_tag_for_ingredient(row: dict[str, Any]) -> str | None:
         return PANTRY_TAG_SUGAR
     if "перец" in text and not looks_like_pepper_vegetable(text):
         return PANTRY_TAG_PEPPER
+    if _is_plain_water(text):
+        return PANTRY_TAG_WATER
     return None
 
 
@@ -78,6 +99,8 @@ def extract_explicit_pantry_requests(user_text: str) -> set[str]:
         requested.add(PANTRY_TAG_SUGAR)
     if is_explicit_seasoning_pepper_request(normalized):
         requested.add(PANTRY_TAG_PEPPER)
+    if _is_plain_water(normalized):
+        requested.add(PANTRY_TAG_WATER)
     return requested
 
 

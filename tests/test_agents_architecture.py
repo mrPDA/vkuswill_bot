@@ -29,6 +29,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "recovery_policy": "policy",
     "recovery_hints": "policy",
     "intent_markers": "policy",
+    "intent_classifier": "policy",
     # Domain
     "recipe_pantry": "domain",
     "recipe_parsing": "domain",

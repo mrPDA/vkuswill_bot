@@ -26,6 +26,8 @@ def _cfg(**overrides: object) -> SimpleNamespace:
         "llm_temperature": 0.2,
         "llm_prompt_profiles_enabled": False,
         "llm_compact_followup_prompt_enabled": True,
+        "intent_classification_enabled": False,
+        "intent_classification_timeout": 5.0,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -126,6 +128,8 @@ def test_create_chat_engine_shopping_success() -> None:
         prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
         compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
         preferences_store=deps["preferences_store"],
+        intent_classification_enabled=cfg.intent_classification_enabled,
+        intent_classification_timeout=cfg.intent_classification_timeout,
     )
 
 

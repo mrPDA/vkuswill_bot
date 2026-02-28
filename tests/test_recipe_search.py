@@ -508,3 +508,106 @@ class TestRecipeSearchService:
         assert "сыр" in parsed["not_found"]
         assert parsed["results"][0]["best_match"] is None
         assert parsed["results"][1]["best_match"]["xml_id"] == 400
+
+    async def test_ready_meal_items_deprioritized(self, service, mock_mcp_client):
+        """Готовые блюда (лагман, суп) уходят в конец — сырые ингредиенты в best_match."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "говядина",
+            [
+                {
+                    "xml_id": 83776,
+                    "name": "Лагман жареный с говядиной",
+                    "price": {"current": 254},
+                    "unit": "шт",
+                },
+                {
+                    "xml_id": 112931,
+                    "name": "Говядина мякоть бедра без кости охл., вес",
+                    "price": {"current": 1487},
+                    "unit": "кг",
+                },
+            ],
+        )
+        ingredients = [
+            {
+                "name": "говядина",
+                "search_query": "говядина",
+                "quantity": 200,
+                "unit": "г",
+                "kg_equivalent": 0.2,
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        assert parsed["results"][0]["best_match"]["xml_id"] == 112931
+        assert parsed["results"][0]["best_match"]["name"] == (
+            "Говядина мякоть бедра без кости охл., вес"
+        )
+        alt_ids = [a["xml_id"] for a in parsed["results"][0]["alternatives"]]
+        assert 83776 in alt_ids
+
+    async def test_dish_context_stripped_from_search_query(self, service, mock_mcp_client):
+        """Суффикс 'для лагмана' удаляется из search_query перед поиском."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "говядина",
+            [
+                {
+                    "xml_id": 112931,
+                    "name": "Говядина мякоть бедра",
+                    "price": {"current": 1487},
+                    "unit": "кг",
+                },
+            ],
+        )
+        ingredients = [
+            {
+                "name": "говядина",
+                "search_query": "говядина для лагмана",
+                "quantity": 200,
+                "unit": "г",
+                "kg_equivalent": 0.2,
+            },
+        ]
+        await service.search_ingredients(ingredients)
+
+        mock_mcp_client.call_tool.assert_awaited_once_with(
+            "vkusvill_products_search",
+            {"q": "говядина", "limit": 5},
+        )
+
+    async def test_soup_deprioritized_for_noodle_ingredient(self, service, mock_mcp_client):
+        """Суп с лапшой не попадает в best_match при поиске лапши."""
+        mock_mcp_client.call_tool.return_value = _search_response(
+            "лапша сухая",
+            [
+                {
+                    "xml_id": 44285,
+                    "name": 'Суп "Куриный" с домашней лапшой, 1 кг',
+                    "price": {"current": 470},
+                    "unit": "шт",
+                },
+                {
+                    "xml_id": 35197,
+                    "name": "Макаронные изделия Barilla №5 Спагетти 450 г",
+                    "price": {"current": 119},
+                    "unit": "шт",
+                    "weight": {"value": 450, "unit": "г"},
+                },
+            ],
+        )
+        ingredients = [
+            {
+                "name": "лапша для лагмана",
+                "search_query": "лапша для лагмана сухая",
+                "quantity": 200,
+                "unit": "г",
+                "kg_equivalent": 0.2,
+            },
+        ]
+        result = await service.search_ingredients(ingredients)
+        parsed = json.loads(result)
+
+        assert parsed["results"][0]["best_match"]["xml_id"] == 35197
+        alt_ids = [a["xml_id"] for a in parsed["results"][0]["alternatives"]]
+        assert 44285 in alt_ids
