@@ -112,10 +112,6 @@ def extract_llm_postamble(text: str) -> str:
     """Извлечь текст LLM после вывода корзины (шутка, комментарий и т.п.)."""
     return extract_llm_surrounding_text(text)[1]
 
-def _clean_fragment(raw: str) -> str:
-    cleaned = normalize_compact_text(raw.strip())
-    return cleaned if len(cleaned) >= 4 else ""
-
 
 def extract_llm_surrounding_text(text: str) -> tuple[str, str]:
     """Извлечь текст LLM до и после вывода корзины.
@@ -123,16 +119,17 @@ def extract_llm_surrounding_text(text: str) -> tuple[str, str]:
     Возвращает (preamble, postamble). Пустая строка, если фрагмент
     отсутствует или короче 4 символов.
     """
+
+    def _clean(raw: str) -> str:
+        c = normalize_compact_text(raw.strip())
+        return c if len(c) >= 4 else ""
+
     if not text or not text.strip():
         return "", ""
-    preamble = ""
     start_match = _CART_START_RE.search(text)
-    if start_match is not None:
-        preamble = _clean_fragment(text[: start_match.start()])
-    postamble = ""
+    preamble = _clean(text[: start_match.start()]) if start_match else ""
     last_end = max((m.end() for m in _CART_END_RE.finditer(text)), default=-1)
-    if last_end >= 0:
-        postamble = _clean_fragment(text[last_end:])
+    postamble = _clean(text[last_end:]) if last_end >= 0 else ""
     return preamble, postamble
 
 
