@@ -217,6 +217,91 @@ async def test_execute_tool_calls_marks_recipe_flow_and_sanitizes_ingredients() 
     assert "соль" not in names
     assert "свекла" in names
 
+    assert len(state.requested_ingredients) >= 1
+    req_names = [str(r.get("name", "")).lower() for r in state.requested_ingredients]
+    assert "свекла" in req_names
+
+
+@pytest.mark.asyncio
+async def test_recipe_ingredients_enriches_requested_ingredients_garlic_quantity() -> None:
+    """Garlic '2 зубчика' should map to q=1 (not q=2) for a 100g pack."""
+    recipe_result = json.dumps(
+        {
+            "ok": True,
+            "ingredients": [
+                {"name": "чеснок", "quantity": 2, "unit": "зубчик", "search_query": "чеснок"},
+                {"name": "говядина", "quantity": 0.5, "unit": "кг", "search_query": "говядина"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    garlic_product = {
+        "xml_id": 555,
+        "name": "Чеснок Фермерский,100 г",
+        "price": {"current": 150},
+        "unit": "шт",
+    }
+    cart_result = json.dumps(
+        {"ok": True, "data": {"link": "https://shop.example/cart/xyz"}},
+        ensure_ascii=False,
+    )
+    state = _build_state(
+        product_index_this_turn={555: garlic_product},
+        search_query_by_xml_id_this_turn={555: "чеснок"},
+    )
+    agent = _FakeAgent(
+        tool_results={
+            "recipe_ingredients": recipe_result,
+            "vkusvill_cart_link_create": cart_result,
+        },
+    )
+
+    async def _on_progress(_text: str) -> None:
+        return None
+
+    await execute_tool_calls(
+        agent=agent,
+        state=state,
+        message={"content": "", "tool_calls": []},
+        tool_calls=[
+            {"id": "tc-r", "name": "recipe_ingredients", "arguments": '{"dish":"лагман"}'},
+        ],
+        user_id=4,
+        text="приготовь лагман",
+        llm_provider="qwen_openai",
+        trace=None,
+        on_progress=_on_progress,
+    )
+
+    assert len(state.requested_ingredients) == 2
+    garlic_row = next(r for r in state.requested_ingredients if "чеснок" in r.get("name", ""))
+    assert garlic_row["quantity"] == 2
+    assert garlic_row["unit"] == "зубчик"
+
+    await execute_tool_calls(
+        agent=agent,
+        state=state,
+        message={"content": "", "tool_calls": []},
+        tool_calls=[
+            {
+                "id": "tc-c",
+                "name": "vkusvill_cart_link_create",
+                "arguments": json.dumps({"products": [{"xml_id": 555, "q": 2}]}),
+            },
+        ],
+        user_id=4,
+        text="приготовь лагман",
+        llm_provider="qwen_openai",
+        trace=None,
+        on_progress=_on_progress,
+    )
+
+    cart_call_args = agent.mcp_calls[-1][1]
+    garlic_in_cart = next(p for p in cart_call_args["products"] if p.get("xml_id") == 555)
+    assert garlic_in_cart["q"] == 1, (
+        f"2 cloves of garlic should map to q=1 for 100g pack, got q={garlic_in_cart['q']}"
+    )
+
 
 def test_apply_post_step_recovery_hints_appends_expected_system_hints(monkeypatch: Any) -> None:
     state = _build_state(

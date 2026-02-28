@@ -41,6 +41,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "langfuse_tracing": "shared",
     "llm_adapters": "shared",
     "pii_utils": "shared",
+    "prompt_registry": "shared",
     "prompts": "shared",
     "tool_input_normalizers": "shared",
 }

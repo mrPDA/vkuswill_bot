@@ -17,6 +17,7 @@ from vkuswill_bot.agents.recipe_matching import (
     match_requested_ingredient,
 )
 from vkuswill_bot.agents.recipe_runtime import (
+    enrich_requested_ingredients_from_recipe,
     sanitize_recipe_ingredients_tool_result,
 )
 from vkuswill_bot.agents.tool_preprocessor import (
@@ -141,6 +142,7 @@ async def execute_tool_calls(
                 tool_result=tool_result,
                 explicit_pantry_requests=state.explicit_pantry_requests,
             )
+            enrich_requested_ingredients_from_recipe(state, tool_result)
         update_product_index_from_tool_result(
             product_index=state.product_index_this_turn,
             tool_name=tool_name,

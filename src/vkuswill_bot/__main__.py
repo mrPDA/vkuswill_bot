@@ -35,6 +35,7 @@ from vkuswill_bot.services.chat_engine import ChatEngineProtocol
 from vkuswill_bot.services.chat_engine_factory import create_chat_engine
 from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
+from vkuswill_bot.services.prompt_registry import init_registry
 from vkuswill_bot.services.migration_runner import MigrationRunner
 from vkuswill_bot.services.preferences_store import PreferencesStore
 from vkuswill_bot.services.redis_client import close_redis_client, create_redis_client
@@ -306,6 +307,46 @@ async def main() -> None:
         secret_key=config.langfuse_secret_key,
         host=config.langfuse_host,
         anonymize_messages=config.langfuse_anonymize_messages,
+    )
+
+    # PromptRegistry — централизованное управление промптами (ADR-007)
+    env_overrides: dict[str, str] = {}
+    if config.system_prompt:
+        env_overrides["system-prompt"] = config.system_prompt
+    if config.recipe_extraction_prompt:
+        env_overrides["recipe-extraction"] = config.recipe_extraction_prompt
+
+    prompt_registry = init_registry(
+        langfuse_client=langfuse_service.client,
+        cache_ttl_seconds=config.prompt_cache_ttl_seconds,
+        label=config.prompt_label,
+        env_overrides=env_overrides or None,
+    )
+    from vkuswill_bot.services.prompts import (
+        _FALLBACK_MODES,
+        _FALLBACK_PROFILE_CORE,
+        _FALLBACK_PROFILES,
+        _FALLBACK_RECIPE_PROMPT,
+        _FALLBACK_SYSTEM_PROMPT,
+    )
+
+    from vkuswill_bot.agents.intent_classifier import _CLASSIFY_PROMPT_STUB
+
+    prompt_registry.register_fallbacks(
+        {
+            "system-prompt": _FALLBACK_SYSTEM_PROMPT,
+            "recipe-extraction": _FALLBACK_RECIPE_PROMPT,
+            "profile-core": _FALLBACK_PROFILE_CORE,
+            **{f"profile-{k}": v for k, v in _FALLBACK_PROFILES.items()},
+            **{f"mode-{k}": v for k, v in _FALLBACK_MODES.items()},
+            "classify-intent": _CLASSIFY_PROMPT_STUB,
+        }
+    )
+    logger.info(
+        "PromptRegistry initialized (%d prompts, langfuse=%s, label=%s)",
+        len(prompt_registry.registered_names),
+        langfuse_service.client is not None,
+        config.prompt_label,
     )
 
     chat_engine = create_chat_engine(

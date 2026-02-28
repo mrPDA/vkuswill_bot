@@ -7,20 +7,17 @@ import logging
 from typing import Any, Protocol
 
 from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
+from vkuswill_bot.services.prompt_registry import get_registry
 from vkuswill_bot.services.prompts import PromptProfile
 
 logger = logging.getLogger(__name__)
 
 _VALID_PROFILES: frozenset[str] = frozenset({"recipe", "cart", "status", "linking", "general"})
 
-_CLASSIFY_PROMPT = (
+_CLASSIFY_PROMPT_STUB = (
     "Определи намерение покупателя в магазине ВкусВилл. Ответь ОДНИМ словом.\n"
-    "- recipe — хочет приготовить блюдо, нужен рецепт или ингредиенты для готовки\n"
-    "- cart — хочет купить или заказать готовый товар\n"
-    "- status — спрашивает о статусе заказа или корзины\n"
-    "- linking — хочет привязать аккаунт (Алиса, голос, код)\n"
-    "- general — другой вопрос о продуктах\n\n"
-    "Сообщение: {text}"
+    "- recipe — рецепт\n- cart — купить\n- status — статус\n"
+    "- linking — привязка\n- general — другое\n\nСообщение: {text}"
 )
 
 _CLASSIFY_MAX_TOKENS = 20
@@ -61,7 +58,11 @@ async def classify_user_intent(
     failed (timeout, invalid response, adapter error) — caller
     should fall back to keyword-based detection.
     """
-    prompt = _CLASSIFY_PROMPT.format(text=text)
+    registry = get_registry()
+    if registry is not None:
+        prompt = registry.get("classify-intent", text=text)
+    else:
+        prompt = _CLASSIFY_PROMPT_STUB.format(text=text)
     messages = [{"role": "user", "content": prompt}]
     try:
         response = await asyncio.wait_for(

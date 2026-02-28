@@ -213,6 +213,8 @@ class Config(BaseSettings):
     # Промпты (переопределение через env / Lockbox для production)
     system_prompt: str = ""
     recipe_extraction_prompt: str = ""
+    prompt_cache_ttl_seconds: int = 300
+    prompt_label: str = "production"
 
     # Отладка
     debug: bool = False

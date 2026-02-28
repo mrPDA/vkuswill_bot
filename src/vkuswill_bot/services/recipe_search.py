@@ -89,7 +89,9 @@ class RecipeSearchService:
 
     # LLM генерирует search_query вида "говядина для лагмана" —
     # суффикс "для ..." сбивает поисковую выдачу на готовые блюда.
-    _DISH_CONTEXT_RE = re.compile(r"\s+для\s+\S+", re.IGNORECASE)
+    # Промпт теперь запрещает добавлять контекст блюда, но regex
+    # остаётся как страховка (defence in depth).
+    _DISH_CONTEXT_RE = re.compile(r"\s+для\b.*$", re.IGNORECASE)
 
     def __init__(
         self,

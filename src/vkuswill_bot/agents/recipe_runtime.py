@@ -12,6 +12,7 @@ from vkuswill_bot.agents.recipe_pantry import (
     detect_pantry_tag_for_ingredient,
     normalize_text,
 )
+from vkuswill_bot.agents.recipe_parsing import normalize_recipe_ingredient_row
 from vkuswill_bot.agents.tool_result_compactor import _safe_float
 from vkuswill_bot.services.prompts import detect_prompt_profile
 
@@ -141,6 +142,44 @@ def is_recipe_followup(*, text: str, history: list[dict[str, Any]] | None) -> bo
             if name in {"recipe_ingredients", "recipe_search"}:
                 return True
     return False
+
+
+def enrich_requested_ingredients_from_recipe(state: Any, tool_result: str) -> None:
+    """Populate state.requested_ingredients from recipe_ingredients response.
+
+    Without this, the deterministic quantity calculator in
+    apply_requested_ingredient_overrides never fires for recipe flows
+    because requested_ingredients (parsed from user text) is empty.
+    """
+    try:
+        payload = json.loads(tool_result)
+    except Exception:
+        return
+    if not isinstance(payload, dict):
+        return
+    ingredients: list[Any] | None = None
+    if isinstance(payload.get("ingredients"), list):
+        ingredients = payload["ingredients"]
+    elif isinstance(payload.get("data"), dict):
+        data = payload["data"]
+        if isinstance(data.get("ingredients"), list):
+            ingredients = data["ingredients"]
+    if not ingredients:
+        return
+    seen_queries: set[str] = {
+        str(row.get("search_query", "")).strip().lower()
+        for row in state.requested_ingredients
+        if isinstance(row, dict)
+    }
+    for raw_row in ingredients:
+        normalized = normalize_recipe_ingredient_row(raw_row)
+        if not normalized or not normalized.get("name"):
+            continue
+        query_key = str(normalized.get("search_query", "")).strip().lower()
+        if query_key and query_key in seen_queries:
+            continue
+        seen_queries.add(query_key)
+        state.requested_ingredients.append(normalized)
 
 
 def sanitize_recipe_ingredients_tool_result(

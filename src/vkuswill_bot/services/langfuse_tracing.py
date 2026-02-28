@@ -263,6 +263,11 @@ class LangfuseService:
         """Активен ли трейсинг."""
         return self._enabled and self._client is not None
 
+    @property
+    def client(self) -> Any:
+        """Raw Langfuse client (for prompt management, etc.)."""
+        return self._client
+
     def trace(
         self,
         *,
