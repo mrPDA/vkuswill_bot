@@ -91,6 +91,7 @@ class DefaultFinalResponseBuilder:
             cart_output = render_stable_cart_output(
                 state.cart_data_this_turn,
                 safety_note=safety_note,
+                include_intro=not bool(preamble),
             )
             parts = [p for p in (preamble, cart_output, postamble) if p]
             final_text = "\n\n".join(parts)
