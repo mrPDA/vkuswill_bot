@@ -2631,6 +2631,39 @@ async def test_keeps_pantry_ingredients_when_user_explicitly_requests_them() -> 
     assert "pantry_filtered" not in tool_payload
 
 
+def test_compact_preference_get_preserves_full_payload() -> None:
+    """Preference tool results не обрезаются compact_generic."""
+    compactor = ToolResultCompactor()
+    payload = json.dumps(
+        {
+            "ok": True,
+            "preferences": [
+                {"category": "молоко", "preference": "безлактозное молоко 1,5 ВкусВилл"},
+                {"category": "яйца", "preference": "яйца С0"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    result = compactor.prepare_tool_result_for_history("user_preferences_get", payload)
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+    assert len(parsed["preferences"]) == 2
+    assert parsed["preferences"][0]["category"] == "молоко"
+
+
+def test_compact_preference_set_preserves_full_payload() -> None:
+    """user_preferences_set result не теряет message."""
+    compactor = ToolResultCompactor()
+    payload = json.dumps(
+        {"ok": True, "message": "Запомнил: молоко → безлактозное"},
+        ensure_ascii=False,
+    )
+    result = compactor.prepare_tool_result_for_history("user_preferences_set", payload)
+    parsed = json.loads(result)
+    assert parsed["ok"] is True
+    assert "Запомнил" in parsed["message"]
+
+
 @pytest.mark.asyncio
 async def test_compact_recipe_search_handles_top_level_results_shape() -> None:
     compactor = ToolResultCompactor()

@@ -23,6 +23,15 @@ from vkuswill_bot.agents.tool_value_utils import (
 )
 
 
+_PREFERENCE_TOOLS = frozenset(
+    {
+        "user_preferences_get",
+        "user_preferences_set",
+        "user_preferences_delete",
+    }
+)
+
+
 class ToolResultCompactor:
     """Сжимает tool-результаты MCP для передачи в LLM context window."""
 
@@ -129,6 +138,8 @@ class ToolResultCompactor:
             return compact_recipe_search(payload)
         if tool_name == "vkusvill_cart_link_create":
             return compact_cart_link(payload)
+        if tool_name in _PREFERENCE_TOOLS:
+            return payload
         return compact_generic(payload)
 
 
