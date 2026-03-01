@@ -29,6 +29,7 @@ def _cfg(**overrides: object) -> SimpleNamespace:
         "llm_compact_followup_prompt_enabled": True,
         "intent_classification_enabled": False,
         "intent_classification_timeout": 5.0,
+        "llm_queue_timeout_seconds": 15.0,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -132,6 +133,7 @@ def test_create_chat_engine_shopping_success() -> None:
         preferences_store=deps["preferences_store"],
         intent_classification_enabled=cfg.intent_classification_enabled,
         intent_classification_timeout=cfg.intent_classification_timeout,
+        llm_queue_timeout_seconds=cfg.llm_queue_timeout_seconds,
     )
 
 
