@@ -11,6 +11,7 @@ from vkuswill_bot.agents.tool_preprocessor_cart import (
 )
 from vkuswill_bot.agents.tool_preprocessor_search import (
     apply_preferences_to_query,
+    inject_preference_mismatch_hint,
     normalize_recipe_search_args,
     preprocess_products_search_args,
 )

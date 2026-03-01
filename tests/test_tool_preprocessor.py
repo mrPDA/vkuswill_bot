@@ -5,6 +5,8 @@ from __future__ import annotations
 from typing import Any
 
 
+import json
+
 from vkuswill_bot.agents.tool_preprocessor import (
     apply_preferences_to_query,
     collect_requested_products_snapshot,
@@ -12,6 +14,7 @@ from vkuswill_bot.agents.tool_preprocessor import (
     preprocess_tool_args,
     restore_previous_quantities_for_additive_update,
 )
+from vkuswill_bot.agents.tool_preprocessor_search import inject_preference_mismatch_hint
 
 
 # ── apply_preferences_to_query ────────────────────────────────────
@@ -202,3 +205,72 @@ class TestNormalizeRecipeSearchArgs:
         args: dict[str, Any] = {"ingredients": ["raw_string", {"name": "Морковь"}]}
         result = normalize_recipe_search_args(args)
         assert result["ingredients"][0] == "raw_string"
+
+
+# ── inject_preference_mismatch_hint ──────────────────────────────
+
+
+class TestInjectPreferenceMismatchHint:
+    def test_adds_warning_when_top_result_differs_from_preference(self) -> None:
+        raw = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "безлактозное молоко 1,5 ВкусВилл", "total": 100},
+                    "items": [
+                        {"xml_id": 54730, "name": "Молоко Parmalat Comfort Безлактозное 1,8% 1 л"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+        result = inject_preference_mismatch_hint(
+            raw,
+            user_preferences={"молоко": "безлактозное молоко 1,5 ВкусВилл"},
+        )
+        parsed = json.loads(result)
+        warning = parsed["data"].get("relevance_warning", "")
+        assert "любимый продукт" in warning.lower() or "не найден точно" in warning
+
+    def test_no_warning_when_result_matches_preference(self) -> None:
+        raw = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "безлактозное молоко 1,5 ВкусВилл", "total": 10},
+                    "items": [
+                        {"xml_id": 999, "name": "Молоко безлактозное 1,5% ВкусВилл 1 л"},
+                    ],
+                },
+            },
+            ensure_ascii=False,
+        )
+        result = inject_preference_mismatch_hint(
+            raw,
+            user_preferences={"молоко": "безлактозное молоко 1,5 ВкусВилл"},
+        )
+        parsed = json.loads(result)
+        assert "relevance_warning" not in parsed.get("data", {})
+
+    def test_no_warning_without_preferences(self) -> None:
+        raw = json.dumps({"ok": True, "data": {"meta": {"q": "молоко"}, "items": []}})
+        result = inject_preference_mismatch_hint(raw, user_preferences=None)
+        assert result == raw
+
+    def test_no_warning_when_query_unrelated_to_preference(self) -> None:
+        raw = json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "meta": {"q": "хлеб бородинский", "total": 5},
+                    "items": [{"xml_id": 1, "name": "Хлеб Бородинский"}],
+                },
+            },
+            ensure_ascii=False,
+        )
+        result = inject_preference_mismatch_hint(
+            raw,
+            user_preferences={"молоко": "безлактозное молоко 1,5 ВкусВилл"},
+        )
+        parsed = json.loads(result)
+        assert "relevance_warning" not in parsed.get("data", {})
