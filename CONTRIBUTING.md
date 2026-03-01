@@ -15,7 +15,7 @@
 
 ### Требования
 
-- Python 3.12+
+- Python 3.11+
 - uv (пакетный менеджер)
 - Git
 
@@ -34,8 +34,8 @@ cp .env.example .env
 
 # 4. Заполните переменные окружения в .env
 # BOT_TOKEN=your_telegram_bot_token
-# GIGACHAT_API_KEY=your_gigachat_api_key
-# ...
+# LLM_API_KEY=your_api_key
+# LLM_MODEL=your_model_id
 
 # 5. Запустите тесты
 uv run pytest
@@ -60,7 +60,7 @@ git checkout -b feature/your-feature-name
 git checkout -b fix/issue-number-description
 ```
 
-Подробнее: [Правила именования веток](.cursor/rules/git-branches.mdc)
+Формат: `feature/<name>`, `fix/<issue>-<desc>`, `docs/<desc>`.
 
 ### 3. Внесите изменения
 
@@ -89,7 +89,7 @@ git commit -m "fix(gigachat): исправить обработку ошибок
 git commit -m "test: добавить тесты для MCP клиента"
 ```
 
-Подробнее: [Правила коммитов](.cursor/rules/git-commits.mdc)
+Типы: `feat`, `fix`, `test`, `docs`, `refactor`, `chore`. Scope — модуль: `bot`, `agents`, `alice`, `services`, `infra`.
 
 ### 6. Отправьте изменения
 
@@ -129,32 +129,26 @@ git push origin feature/your-feature-name
 - [ ] Нет конфликтов с main
 ```
 
-Подробнее: [Правила Pull Request](.cursor/rules/git-pull-requests.mdc)
+PR должен содержать описание, ссылку на issue и чеклист проверки.
 
 ## 💻 Стандарты кода
 
 ### Python стиль
 
 ```python
-# ✅ ХОРОШО
+# Хорошо
 async def process_message(message: Message) -> None:
-    """
-    Обрабатывает входящее сообщение.
-    
-    Args:
-        message: Объект сообщения от Telegram
-    """
+    """Обрабатывает входящее сообщение."""
     try:
-        response = await gigachat_service.generate_response(message.text)
+        response = await chat_engine.process_message(user_id, message.text)
         await message.answer(response)
     except Exception as e:
-        logger.error(f"Ошибка обработки сообщения: {e}")
+        logger.error("Ошибка обработки сообщения: %s", e)
         await message.answer("Произошла ошибка. Попробуйте позже.")
 
-# ❌ ПЛОХО
+# Плохо
 def process(msg):
-    # Без типов, без docstring, без обработки ошибок
-    resp = gigachat.gen(msg.text)
+    resp = engine.gen(msg.text)
     msg.answer(resp)
 ```
 
@@ -169,8 +163,8 @@ def process(msg):
 ### Форматирование
 
 ```bash
-# Если в проекте настроены линтеры (ruff, black и т.д.)
-# Запустите их перед коммитом
+# Линтер (обязателен перед коммитом)
+uv run ruff check src/ tests/
 ```
 
 ## 🧪 Тестирование
@@ -231,19 +225,17 @@ uv run pytest -v
 3. Все тесты должны проходить
 4. Нет конфликтов слияния
 
-Подробнее: [Правила Code Review](.cursor/rules/git-code-review.mdc)
+Комментарии с `[BLOCKER]` блокируют мёрж.
 
 ## 📚 Правила ведения репозитория
 
 Проект использует следующие стандарты:
 
-1. **[Conventional Commits](.cursor/rules/git-commits.mdc)** - формат коммитов
-2. **[Именование веток](.cursor/rules/git-branches.mdc)** - структура веток
-3. **[Pull Request](.cursor/rules/git-pull-requests.mdc)** - создание PR
-4. **[Code Review](.cursor/rules/git-code-review.mdc)** - процесс ревью
-5. **[Semantic Versioning](.cursor/rules/git-versioning.mdc)** - версионирование
-
-Все правила находятся в каталоге [`.cursor/rules/`](.cursor/rules/)
+1. **Conventional Commits** — формат коммитов (`feat`, `fix`, `test`, ...)
+2. **Именование веток** — `feature/`, `fix/`, `docs/`
+3. **Semantic Versioning** — версионирование через CHANGELOG.md
+4. **Ruff** — линтер и форматтер (`uv run ruff check`)
+5. **pytest** — обязательные тесты для новой логики
 
 ## ❓ Вопросы
 
@@ -266,5 +258,5 @@ uv run pytest -v
 **Полезные ссылки:**
 - [Документация Telegram Bot API](https://core.telegram.org/bots/api)
 - [Документация aiogram](https://docs.aiogram.dev/)
-- [Документация GigaChat](https://developers.sber.ru/docs/ru/gigachat/api/overview)
+- [Yandex Cloud AI Studio](https://yandex.cloud/ru/services/ai-studio)
 - [Model Context Protocol](https://modelcontextprotocol.io/)

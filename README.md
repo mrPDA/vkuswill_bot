@@ -43,10 +43,13 @@
 ```mermaid
 graph TD
     A[Telegram User] -->|Сообщение| B[aiogram 3]
-    B --> C[Middlewares]
+    A2[Алиса / Яндекс Станция] -->|Голос| B2[Alice Skill]
+    B --> C[Middlewares — rate limit, user mgmt]
     C --> D[Handlers]
-    D --> E[GigaChatService]
-    E -->|Function Calling| F[GigaChat API]
+    D --> E[ShoppingAgent]
+    B2 --> E2[Alice Orchestrator]
+    E -->|Function Calling| F[Qwen LLM — Yandex Cloud]
+    E2 -->|MCP| H
     F --> G[ToolExecutor]
     G --> H[MCP Client — каталог ВкусВилл]
     G --> I[SearchProcessor + CartProcessor]
@@ -55,7 +58,7 @@ graph TD
     D --> L[UserStore — PostgreSQL]
 ```
 
-**GigaChat** понимает запрос пользователя и через **function calling** вызывает инструменты: поиск товаров, сборка корзины, сохранение предпочтений. Интеграция с каталогом ВкусВилл работает через **MCP** (Model Context Protocol) — открытый стандарт для подключения LLM к внешним данным.
+**Qwen** (через Yandex Cloud AI Studio) понимает запрос пользователя и через **function calling** вызывает инструменты: поиск товаров, сборка корзины, сохранение предпочтений. Интеграция с каталогом ВкусВилл работает через **MCP** (Model Context Protocol) — открытый стандарт для подключения LLM к внешним данным.
 
 > Подробнее об архитектурных решениях — в статьях на Хабре (см. ниже).
 
@@ -66,13 +69,14 @@ graph TD
 | Компонент | Технология |
 |-----------|-----------|
 | Telegram-фреймворк | [aiogram 3](https://docs.aiogram.dev/) |
-| ИИ-модель | [GigaChat-2-Max](https://developers.sber.ru/portal/products/gigachat) (Сбер) |
+| ИИ-модель | Qwen (OpenAI-compatible) через [Yandex Cloud AI Studio](https://yandex.cloud/ru/services/ai-studio) |
+|| Голосовой канал | Алиса (Яндекс Диалоги + Cloud Functions) |
 | Интеграция с ВкусВилл | [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) |
 | БД (пользователи) | PostgreSQL + asyncpg |
 | БД (кеши) | SQLite (aiosqlite) |
 | Кэш и сессии | Redis (опционально, fallback на in-memory) |
 | LLM Observability | [Langfuse](https://langfuse.com/) (self-hosted) |
-| Тестирование | pytest + pytest-asyncio (1231 тест) |
+| Тестирование | pytest + pytest-asyncio (2200+ тестов) |
 | CI/CD | GitHub Actions |
 | Деплой | Docker + Kubernetes (Yandex Cloud) |
 | Пакетный менеджер | [uv](https://docs.astral.sh/uv/) |
@@ -95,14 +99,15 @@ uv sync
 cp .env.example .env
 ```
 
-Минимально нужны две переменные:
+Минимально нужны три переменные:
 
 ```bash
 # Telegram Bot Token (получить у @BotFather)
 BOT_TOKEN=your_telegram_bot_token
 
-# GigaChat API (https://developers.sber.ru/portal/products/gigachat)
-GIGACHAT_CREDENTIALS=your_gigachat_auth_key
+# LLM API (Qwen через Yandex Cloud AI Studio)
+LLM_API_KEY=your_api_key
+LLM_MODEL=your_model_id
 ```
 
 PostgreSQL и Redis **не обязательны** для локальной разработки — бот автоматически использует in-memory хранилище и SQLite.
@@ -134,8 +139,10 @@ vkuswill_bot/
 │   ├── __main__.py              # Точка входа
 │   ├── config.py                # Конфигурация (pydantic-settings)
 │   ├── bot/                     # Handlers, middlewares
-│   └── services/                # Бизнес-логика (GigaChat, MCP, корзина, поиск...)
-├── tests/                       # 1231 тест (юнит, SAST, AI Safety)
+│   ├── agents/                  # ShoppingAgent, intent classifier, tool pipeline
+│   ├── alice_skill/             # Навык Алисы (Яндекс Диалоги)
+│   └── services/                # Бизнес-логика (LLM, MCP, корзина, поиск...)
+├── tests/                       # 2200+ тестов (юнит, SAST, AI Safety)
 ├── migrations/                  # SQL-миграции PostgreSQL
 ├── infra/                       # Terraform (Yandex Cloud)
 ├── scripts/                     # Утилиты (deploy, metabase setup)
@@ -157,7 +164,7 @@ make test-security     # SAST + AI Safety
 make lint              # Линтер (ruff)
 ```
 
-Проект включает 1231 тест: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak) и валидация входных данных.
+Проект включает 2200+ тестов: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak), валидация входных данных и тесты навыка Алисы.
 
 ---
 
@@ -170,6 +177,9 @@ make lint              # Линтер (ruff)
 | `/reset` | Сбросить историю диалога |
 | `/survey` | Пройти опрос и получить бонусные корзины |
 | `/invite` | Реферальная ссылка для приглашения друзей |
+| `/link_voice` | Привязать Алису для голосовых заказов |
+| `/unlink_voice` | Отвязать Алису |
+| `/privacy` | Политика конфиденциальности |
 
 ---
 
@@ -210,7 +220,8 @@ git push origin feature/amazing-feature
 
 ## Roadmap
 
-- [ ] Голосовые сообщения — распознавание речи для заказа
+- [x] Голосовой канал — навык Алисы для заказа через Яндекс Станцию
+- [x] Freemium-модель — trial, survey, реферальная система, feedback-бонусы
 - [ ] Рекомендации на основе истории покупок
 - [ ] Поддержка других магазинов через MCP
 - [ ] Telegram Mini App для управления корзиной
