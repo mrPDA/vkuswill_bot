@@ -22,9 +22,16 @@ from vkuswill_bot.agents.recipe_runtime import (
 )
 from vkuswill_bot.agents.tool_preprocessor import (
     collect_requested_products_snapshot,
+    inject_preference_mismatch_hint,
     preprocess_tool_args,
     restore_previous_quantities_for_additive_update,
 )
+
+
+def _inject_preference_hint(tool_result: str, user_preferences: dict[str, str] | None) -> str:
+    if not user_preferences:
+        return tool_result
+    return inject_preference_mismatch_hint(tool_result, user_preferences=user_preferences)
 
 
 def _tool_progress_text(tool_name: str) -> str:
@@ -150,6 +157,7 @@ async def execute_tool_calls(
             tool_result=tool_result,
         )
         if tool_name == "vkusvill_products_search":
+            tool_result = _inject_preference_hint(tool_result, state.user_preferences)
             update_search_query_by_xml_id(
                 search_query_by_xml_id=state.search_query_by_xml_id_this_turn,
                 tool_args=tool_args,
