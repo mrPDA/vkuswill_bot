@@ -322,6 +322,7 @@ async def _get_runtime() -> _Runtime:
             secret_key=langfuse_secret_key,
             host=langfuse_host,
             anonymize_messages=langfuse_anonymize_messages,
+            environment=os.getenv("PROMPT_LABEL", "production"),
         ),
     )
     return _RUNTIME

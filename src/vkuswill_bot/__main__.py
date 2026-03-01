@@ -307,6 +307,7 @@ async def main() -> None:
         secret_key=config.langfuse_secret_key,
         host=config.langfuse_host,
         anonymize_messages=config.langfuse_anonymize_messages,
+        environment=config.prompt_label,
     )
 
     # PromptRegistry — централизованное управление промптами (ADR-007)
