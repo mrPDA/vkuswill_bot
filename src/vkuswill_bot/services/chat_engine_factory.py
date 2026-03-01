@@ -74,4 +74,5 @@ def create_chat_engine(
         preferences_store=preferences_store,
         intent_classification_enabled=cfg.intent_classification_enabled,
         intent_classification_timeout=cfg.intent_classification_timeout,
+        llm_queue_timeout_seconds=cfg.llm_queue_timeout_seconds,
     )

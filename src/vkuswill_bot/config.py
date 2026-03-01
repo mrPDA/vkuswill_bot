@@ -31,6 +31,12 @@ class Config(BaseSettings):
     llm_api_key: str = ""
     llm_model: str = ""
     llm_max_concurrent: int = 10
+    llm_queue_timeout_seconds: float = Field(
+        default=15.0,
+        ge=1.0,
+        le=120.0,
+        description="Таймаут ожидания свободного слота LLM-семафора (graceful degradation)",
+    )
     llm_max_tokens: int = Field(default=900, ge=1, le=8192)
     llm_max_tokens_recipe: int = Field(
         default=2048,
