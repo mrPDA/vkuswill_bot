@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from typing import Any
+from typing import Any, ClassVar
 
 from vkuswill_bot.services.pii_utils import hash_user_id as _anonymize_user_id
 from vkuswill_bot.services.pii_utils import mask_pii as _mask_pii
@@ -220,6 +220,11 @@ class LangfuseService:
     Совместим с Langfuse Python SDK v2 (Langfuse.trace() API).
     """
 
+    _ENV_TAG_MAP: ClassVar[dict[str, str]] = {
+        "production": "env:prod",
+        "staging": "env:stage",
+    }
+
     def __init__(
         self,
         *,
@@ -228,10 +233,12 @@ class LangfuseService:
         secret_key: str = "",
         host: str = "https://cloud.langfuse.com",
         anonymize_messages: bool = False,
+        environment: str = "production",
     ) -> None:
         self._enabled = enabled
         self._client: Any = None
         self._anonymize_messages = anonymize_messages
+        self._env_tag = self._ENV_TAG_MAP.get(environment, f"env:{environment}")
 
         if enabled and public_key and secret_key:
             try:
@@ -297,13 +304,15 @@ class LangfuseService:
         if isinstance(input, str):
             safe_input = "[REDACTED]" if self._anonymize_messages else _mask_pii(input)
 
+        all_tags = [self._env_tag] + (tags or [])
+
         trace = self._client.trace(
             name=name,
             user_id=anon_user_id,
             input=safe_input,
             metadata=metadata,
             session_id=anon_session_id,
-            tags=tags,
+            tags=all_tags,
         )
         return LangfuseTrace(trace)
 
