@@ -7,6 +7,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
+from vkuswill_bot.agents.exceptions import LLMOverloadedError
 from vkuswill_bot.agents.llm_helpers import (
     estimate_usage_details,
     extract_message,
@@ -30,6 +31,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
+_ERROR_OVERLOADED = (
+    "Сейчас очень много запросов — все ассистенты заняты. "
+    "Попробуйте через 1–2 минуты, я обязательно помогу! 🙏"
+)
 _ERROR_TOO_MANY_TOOLS = (
     "Не удалось завершить подбор в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
 )
@@ -137,6 +142,12 @@ async def run_locked_turn(
                 llm_provider=llm_provider,
                 max_tokens_override=max_tokens_override,
             )
+        except LLMOverloadedError:
+            logger.warning("ShoppingAgent LLM overloaded for user %d at step %d", user_id, step)
+            if gen is not None:
+                gen.end(output=_ERROR_OVERLOADED, level="WARNING", status_message="LLM overloaded")
+            agent._history[user_id] = state.history
+            return _ERROR_OVERLOADED
         except Exception as exc:
             logger.error("ShoppingAgent LLM error: %s", exc, exc_info=True)
             if gen is not None:

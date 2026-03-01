@@ -101,16 +101,30 @@ class ShoppingAgentServiceMixin:
         llm_provider: str,
         max_tokens_override: int | None = None,
     ) -> Any:
+        from vkuswill_bot.agents.exceptions import LLMOverloadedError
+
         llm_adapter: LLMAdapterProtocol | None = self._llm_adapters.get(llm_provider)
         if llm_adapter is None:
             raise RuntimeError(f"LLM adapter not configured for provider: {llm_provider}")
         max_tokens = (
             max_tokens_override if max_tokens_override is not None else self._llm_max_tokens
         )
-        last_error: Exception | None = None
-        for attempt in range(self._llm_retries + 1):
-            try:
-                async with self._api_semaphore:
+
+        try:
+            await asyncio.wait_for(
+                self._api_semaphore.acquire(),
+                timeout=self._llm_queue_timeout_seconds,
+            )
+        except TimeoutError:
+            raise LLMOverloadedError(
+                f"LLM queue full: semaphore not acquired within "
+                f"{self._llm_queue_timeout_seconds}s"
+            ) from None
+
+        try:
+            last_error: Exception | None = None
+            for attempt in range(self._llm_retries + 1):
+                try:
                     return await asyncio.wait_for(
                         llm_adapter.create_completion(
                             model=self._resolve_model_for_provider(llm_provider),
@@ -122,12 +136,14 @@ class ShoppingAgentServiceMixin:
                         ),
                         timeout=self._llm_timeout_seconds,
                     )
-            except Exception as exc:
-                last_error = exc
-                if attempt >= self._llm_retries:
-                    break
-                await asyncio.sleep(0.5 * (2**attempt))
-        raise last_error or RuntimeError("LLM call failed")
+                except Exception as exc:
+                    last_error = exc
+                    if attempt >= self._llm_retries:
+                        break
+                    await asyncio.sleep(0.5 * (2**attempt))
+            raise last_error or RuntimeError("LLM call failed")
+        finally:
+            self._api_semaphore.release()
 
     def _resolve_model_for_provider(self, llm_provider: str) -> str:
         if llm_provider != self._llm_provider:

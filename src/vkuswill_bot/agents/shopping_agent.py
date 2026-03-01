@@ -75,6 +75,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         llm_adapters: dict[str, LLMAdapterProtocol] | None = None,
         intent_classification_enabled: bool = False,
         intent_classification_timeout: float = 5.0,
+        llm_queue_timeout_seconds: float = 15.0,
     ) -> None:
         self._llm_provider = normalize_llm_provider(llm_provider)
         self._llm_routing_strategy = llm_routing_strategy.strip().lower()
@@ -111,6 +112,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._intent_classification_enabled = bool(intent_classification_enabled)
         self._intent_classification_timeout = max(1.0, intent_classification_timeout)
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
+        self._llm_queue_timeout_seconds = max(1.0, llm_queue_timeout_seconds)
         self._langfuse = langfuse_service
         self._tools_cache: list[dict[str, Any]] | None = None
         self._mcp_tool_names: set[str] = set()
