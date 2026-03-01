@@ -48,6 +48,67 @@ def preprocess_products_search_args(
     return {**normalized_search_args, query_key: enhanced_query}
 
 
+def inject_preference_mismatch_hint(
+    tool_result: str,
+    *,
+    user_preferences: dict[str, str] | None = None,
+) -> str:
+    """Add relevance_warning to search result when top items don't match a preference.
+
+    Helps the LLM detect that the search returned a different product than
+    the user's saved preference and decide to inform the user instead of
+    silently ordering a wrong item.
+    """
+    if not user_preferences:
+        return tool_result
+    import contextlib
+    import json
+
+    with contextlib.suppress(Exception):
+        parsed = json.loads(tool_result)
+        if not isinstance(parsed, dict) or not parsed.get("ok"):
+            return tool_result
+
+        data = parsed.get("data") or parsed
+        if not isinstance(data, dict):
+            return tool_result
+        meta = data.get("meta", {})
+        query = str(meta.get("q", "")).strip().lower() if isinstance(meta, dict) else ""
+        if not query:
+            return tool_result
+
+        matched_pref: str | None = None
+        for _cat, pref_text in user_preferences.items():
+            if pref_text.lower() in query or query in pref_text.lower():
+                matched_pref = pref_text
+                break
+        if matched_pref is None:
+            return tool_result
+
+        items = data.get("items", [])
+        if not isinstance(items, list) or not items:
+            return tool_result
+
+        pref_lower = matched_pref.lower()
+        first = items[0]
+        top_name = str(first.get("name", "")).strip().lower() if isinstance(first, dict) else ""
+        pref_tokens = set(pref_lower.split())
+        name_tokens = set(top_name.split())
+        overlap = pref_tokens & name_tokens
+        if len(overlap) >= len(pref_tokens) * 0.6:
+            return tool_result
+
+        warning = (
+            f"Внимание: любимый продукт пользователя «{matched_pref}» "
+            f"не найден точно. Первый результат — «{items[0].get('name', '')}». "
+            "Проверь совпадение перед заказом или уточни у пользователя."
+        )
+        data["relevance_warning"] = warning
+        return json.dumps(parsed, ensure_ascii=False)
+
+    return tool_result
+
+
 def normalize_recipe_search_args(tool_args: dict[str, Any]) -> dict[str, Any]:
     """Normalize `recipe_search` ingredient rows."""
     ingredients = tool_args.get("ingredients")

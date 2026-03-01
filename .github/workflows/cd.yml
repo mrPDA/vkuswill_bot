@@ -105,10 +105,15 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           ssh-keyscan -H "${{ secrets.VM_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
 
+      - name: Validate production deploy guard
+        run: |
+          bash deploy/deploy-production.sh --validate-only
+
       - name: Sync deploy assets
         run: |
           scp -i ~/.ssh/deploy_key \
             deploy/deploy.sh \
+            deploy/deploy-production.sh \
             deploy/nginx-bot.conf \
             deploy/setup-ssl.sh \
             deploy/setup-selfsigned-ssl.sh \
@@ -156,6 +161,9 @@ jobs:
             echo "WEBHOOK_HOST=${_WEBHOOK_HOST}"
             echo "USE_WEBHOOK=true"
             echo "WEBHOOK_PORT=8080"
+            echo "PROMPT_LABEL=production"
+            echo "LLM_PROMPT_PROFILES_ENABLED=true"
+            echo "LLM_COMPACT_FOLLOWUP_PROMPT_ENABLED=true"
             echo "LANGFUSE_ENABLED=${_LF_ENABLED:-false}"
             echo "LANGFUSE_HOST=${_LF_HOST:-http://localhost:3000}"
             echo "LANGFUSE_DATABASE_URL=${_LF_DB_URL}"
@@ -171,7 +179,7 @@ jobs:
       - name: Run deploy
         run: |
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
-          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}' --model 'GigaChat-2-Max'"
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" "bash ${{ env.DEPLOY_DIR }}/deploy-production.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID }}' --model 'GigaChat-2-Max'"
 
       - name: Container diagnostics
         if: always()
