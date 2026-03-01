@@ -41,6 +41,7 @@ def render_stable_cart_output(
     cart_data: dict[str, Any],
     *,
     safety_note: str = "",
+    include_intro: bool = True,
 ) -> str:
     """Отрендерить стабильный детерминированный вывод корзины (HTML для Telegram)."""
     link = str(cart_data.get("link", "")).strip()
@@ -79,7 +80,9 @@ def render_stable_cart_output(
         purchase_total >= 0 and recipe_total >= 0 and abs(purchase_total - recipe_total) >= 0.01
     )
 
-    chunks = ["Собрала корзину по вашему запросу."]
+    chunks: list[str] = []
+    if include_intro:
+        chunks.append("Собрала корзину по вашему запросу.")
     if lines:
         chunks.append("\n".join(lines))
     if total_text:
