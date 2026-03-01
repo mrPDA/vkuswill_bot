@@ -5,6 +5,28 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.19.0] — 2026-03-01
+
+### Добавлено
+
+- **Production CD pipeline** — `deploy-production.sh` обёртка для production-деплоя (аналог staging), валидация guard, `PROMPT_LABEL=production` в fallback `.env`
+- **PromptRegistry** — 4-tier fallback загрузки промптов (Langfuse → env/Lockbox → файлы → stubs), поддержка `prompt_label` для разделения staging/production
+- **Intent classifier** — определение профиля промпта (general/cart/recipe/status/linking) по тексту запроса
+- **Preference mismatch hint** — предупреждение LLM когда результат поиска не совпадает с предпочтением пользователя
+- **Локальная обработка preference tools** — virtual injection preference tools в ShoppingAgent, маршрутизация через PreferencesStore (без MCP)
+- **Preamble/postamble** — сохранение текста LLM до и после детерминированной корзины
+- **max_tokens для рецептов** — увеличенный лимит токенов для корзины по рецепту
+
+### Исправлено
+
+- **Preference compaction** — tool_result_compactor больше не обрезает preference-данные
+- **Staging deploy env** — staging-специфичные env через `DEPLOY_EXTRA_ENV`
+
+### Изменено
+
+- **Архитектура agents** — декомпозиция на pantry_tags, quantity_utils, shopping_turn_components, cart_price_builder
+- **user_store модуль** — рефакторинг tool_executor_pipeline, dialog_types
+
 ## [0.18.6] — 2026-02-23
 
 ### Исправлено
