@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -125,8 +125,8 @@ class TestBuildTurnStateIntegration:
         agent._max_tool_calls = 5
         agent._max_input_chars_per_turn = 250000
         agent._llm_routing_strategy = "single_provider"
-        agent._should_start_fresh_context.return_value = True
-        agent._normalize_history.side_effect = lambda h: h
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
         agent._load_user_preferences.return_value = {}
         agent._classify_intent.return_value = "cart"
 
@@ -146,8 +146,8 @@ class TestBuildTurnStateIntegration:
         agent._max_tool_calls = 5
         agent._max_input_chars_per_turn = 250000
         agent._llm_routing_strategy = "single_provider"
-        agent._should_start_fresh_context.return_value = True
-        agent._normalize_history.side_effect = lambda h: h
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
         agent._load_user_preferences.return_value = {}
         agent._classify_intent.return_value = None
 
@@ -166,8 +166,8 @@ class TestBuildTurnStateIntegration:
         agent._max_tool_calls = 5
         agent._max_input_chars_per_turn = 250000
         agent._llm_routing_strategy = "single_provider"
-        agent._should_start_fresh_context.return_value = True
-        agent._normalize_history.side_effect = lambda h: h
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
         agent._load_user_preferences.return_value = {}
         agent._classify_intent.side_effect = RuntimeError("boom")
 

@@ -61,15 +61,32 @@ class RedisDialogManager:
 
         Lock нужен только внутри одного процесса для защиты
         от параллельных мутаций одного диалога.
+        Занятые locks (locked) не вытесняются — это защищает
+        от race condition при высокой нагрузке.
         """
         if user_id in self._locks:
             self._locks.move_to_end(user_id)
             return self._locks[user_id]
-        if len(self._locks) >= MAX_LOCKS:
-            self._locks.popitem(last=False)  # удаляем самый старый
+        self._evict_idle()
         lock = asyncio.Lock()
         self._locks[user_id] = lock
         return lock
+
+    def _evict_idle(self) -> None:
+        """Удалить idle (не захваченные) locks, если лимит достигнут."""
+        while len(self._locks) >= MAX_LOCKS:
+            evicted = False
+            for uid in list(self._locks):
+                if not self._locks[uid].locked():
+                    del self._locks[uid]
+                    evicted = True
+                    break
+            if not evicted:
+                logger.warning(
+                    "All %d locks are active, temporarily exceeding limit",
+                    len(self._locks),
+                )
+                break
 
     # ---- Async API ----
 

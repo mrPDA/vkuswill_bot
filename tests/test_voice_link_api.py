@@ -248,3 +248,53 @@ async def test_order_status_not_found() -> None:
     assert status_resp.status == 200
     body = _read_json(status_resp)
     assert body == {"ok": True, "status": "not_found"}
+
+
+@pytest.mark.asyncio
+async def test_order_status_job_id_only_rejected() -> None:
+    """FND-003: job_id без owner-поля отклоняется (ownership enforcement)."""
+    app = {
+        "voice_link_api_key": "secret",
+        "voice_link_chat_engine": _DummyChatEngine(),
+    }
+    status_req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app=app,
+        payload={"job_id": "some-job-id"},
+    )
+    status_resp = await _order_status_handler(status_req)  # type: ignore[arg-type]
+    assert status_resp.status == 400
+    body = _read_json(status_resp)
+    assert body["ok"] is False
+    assert body["error"] == "invalid_input"
+
+
+@pytest.mark.asyncio
+async def test_order_status_cross_owner_blocked() -> None:
+    """FND-003: запрос с чужим user_id возвращает not_found."""
+    app = {
+        "voice_link_api_key": "secret",
+        "voice_link_chat_engine": _DummyChatEngine(),
+    }
+    start_req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app=app,
+        payload={
+            "user_id": 42,
+            "voice_user_id": "alice-1",
+            "utterance": "Собери корзину: молоко и яйца",
+        },
+    )
+    start_resp = await _order_start_handler(start_req)  # type: ignore[arg-type]
+    start_body = _read_json(start_resp)
+    job_id = start_body["job_id"]
+
+    status_req = _DummyRequest(
+        headers={"X-Voice-Link-Api-Key": "secret"},
+        app=app,
+        payload={"job_id": job_id, "user_id": 999, "voice_user_id": "alice-1"},
+    )
+    status_resp = await _order_status_handler(status_req)  # type: ignore[arg-type]
+    assert status_resp.status == 200
+    body = _read_json(status_resp)
+    assert body["status"] == "not_found"
