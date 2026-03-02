@@ -520,12 +520,18 @@ class TestSecretProtection:
         with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
             Config(_env_file=None)  # type: ignore[call-arg]
 
-    def test_storage_backend_customizable(self):
-        """storage_backend настраивается через переменную окружения."""
+    def test_storage_backend_redis_rejected(self):
+        """storage_backend='redis' is not yet supported — must fail fast."""
         custom_env = {**MINIMAL_ENV, "STORAGE_BACKEND": "redis"}
+        with patch.dict(os.environ, custom_env, clear=True), pytest.raises(ValidationError):
+            Config(_env_file=None)  # type: ignore[call-arg]
+
+    def test_storage_backend_memory_accepted(self):
+        """storage_backend='memory' is the only supported value."""
+        custom_env = {**MINIMAL_ENV, "STORAGE_BACKEND": "memory"}
         with patch.dict(os.environ, custom_env, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.storage_backend == "redis"
+        assert cfg.storage_backend == "memory"
 
     def test_mcp_server_api_keys_customizable(self):
         """mcp_server_api_keys настраивается через JSON в env."""
