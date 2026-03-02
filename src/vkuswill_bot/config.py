@@ -68,7 +68,20 @@ class Config(BaseSettings):
     database_path: str = "data/preferences.db"
     recipe_database_path: str = "data/recipes.db"
 
-    # Бэкенд хранилища: "redis" | "memory"
+    @field_validator("storage_backend")
+    @classmethod
+    def _validate_storage_backend(cls, v: str) -> str:
+        normalized = v.strip().lower()
+        if normalized == "redis":
+            raise ValueError(
+                "storage_backend='redis' is not yet supported for Telegram dialog history. "
+                "Use 'memory' (default). Redis backend will be available in a future release."
+            )
+        if normalized != "memory":
+            raise ValueError("storage_backend must be 'memory'")
+        return normalized
+
+    # Бэкенд хранилища: "memory" (Redis planned but not yet integrated)
     storage_backend: str = "memory"
 
     # Redis

@@ -652,12 +652,13 @@ class TestSendTypingPeriodically:
         async def fake_wait_for(coro, timeout):
             nonlocal call_count
             call_count += 1
-            # Первый вызов — TimeoutError (цикл продолжается)
-            if call_count == 1:
-                raise TimeoutError()
-            # Второй вызов — устанавливаем событие и "завершаемся"
-            stop_event.set()
-            return
+            try:
+                if call_count == 1:
+                    raise TimeoutError()
+                stop_event.set()
+                return
+            finally:
+                coro.close()
 
         with patch("vkuswill_bot.bot.handlers.asyncio.wait_for", side_effect=fake_wait_for):
             await _send_typing_periodically(msg, stop_event)
@@ -674,6 +675,7 @@ class TestSendTypingPeriodically:
 
         # Устанавливаем событие через мок wait_for
         async def immediate_return(coro, timeout):
+            coro.close()
             stop_event.set()
             return
 
