@@ -203,10 +203,7 @@ async def test_multiple_concurrent_within_limit() -> None:
         delay_seconds=0.1,
     )
 
-    tasks = [
-        asyncio.create_task(agent.process_message(uid, "Запрос"))
-        for uid in range(3)
-    ]
+    tasks = [asyncio.create_task(agent.process_message(uid, "Запрос")) for uid in range(3)]
     results = await asyncio.gather(*tasks)
 
     for r in results:
