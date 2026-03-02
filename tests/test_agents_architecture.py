@@ -158,5 +158,10 @@ def test_max_module_outdegree_does_not_regress() -> None:
 
 def test_max_module_loc_does_not_regress() -> None:
     modules = _agent_modules()
-    max_loc = max(sum(1 for _ in path.open("r", encoding="utf-8")) for path in modules.values())
+    max_loc = 0
+    for path in modules.values():
+        with path.open("r", encoding="utf-8") as f:
+            loc = sum(1 for _ in f)
+        if loc > max_loc:
+            max_loc = loc
     assert max_loc <= MAX_MODULE_LOC_ALLOWED

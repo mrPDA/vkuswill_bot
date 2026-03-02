@@ -539,11 +539,11 @@ async def _order_status_handler(request: web.Request) -> web.Response:
     voice_user_id = str(payload.get("voice_user_id", "")).strip()
     job_id = _parse_job_id(payload.get("job_id"))
 
-    if user_id is None and not voice_user_id and not job_id:
+    if user_id is None and not voice_user_id:
         return _json_error(
             400,
             "invalid_input",
-            "user_id or voice_user_id or job_id required",
+            "user_id or voice_user_id required (job_id alone is not sufficient)",
         )
 
     _ensure_job_storage(request.app)
