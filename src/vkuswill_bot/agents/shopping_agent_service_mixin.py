@@ -117,8 +117,7 @@ class ShoppingAgentServiceMixin:
             )
         except TimeoutError:
             raise LLMOverloadedError(
-                f"LLM queue full: semaphore not acquired within "
-                f"{self._llm_queue_timeout_seconds}s"
+                f"LLM queue full: semaphore not acquired within {self._llm_queue_timeout_seconds}s"
             ) from None
 
         try:
