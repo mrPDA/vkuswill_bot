@@ -5,6 +5,15 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [0.21.1] — 2026-03-03
+
+### Исправлено
+
+- **Race condition в lock-менеджерах** (FND-002) — LRU-вытеснение теперь пропускает занятые locks, предотвращая параллельную обработку для одного пользователя
+- **Ownership enforcement для voice-link API** (FND-003) — `/voice-link/order/status` требует `user_id` или `voice_user_id`, запрос только по `job_id` отклоняется
+- **Fail-fast при storage_backend=redis** (FND-001) — конфиг с `redis` теперь падает на старте с понятной ошибкой, пока Redis не интегрирован в Telegram dialog path
+- **RuntimeWarning в тестах** (FND-004) — устранены unawaited coroutine и unclosed file warnings, корректные sync/async моки
+
 ## [0.21.0] — 2026-02-28
 
 ### Добавлено
