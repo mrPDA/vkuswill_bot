@@ -121,6 +121,7 @@ class TurnState:
     search_batch_recovery_used: bool = False
     cart_flow_recovery_used: bool = False
     recipe_to_cart_recovery_used: bool = False
+    step_budget_warning_used: bool = False
     single_search_steps_streak: int = 0
     tools_called_this_turn: bool = False
     recipe_flow_started_this_turn: bool = False
@@ -168,12 +169,14 @@ async def build_turn_state(
 
     user_preferences = await prefs_task
 
+    cart_intent = is_cart_intent(text) or prompt_profile in ("cart", "recipe")
+
     return TurnState(
         history=normalized_history,
         previous_cart_products=previous_cart_products,
         prompt_profile=prompt_profile,
         product_index_this_turn=product_index_this_turn,
-        cart_intent=is_cart_intent(text),
+        cart_intent=cart_intent,
         explicit_pantry_requests=extract_explicit_pantry_requests(text),
         explicit_egg_pack_request=has_explicit_egg_pack_request(text),
         requested_ingredients=extract_structured_ingredient_requests(text),
