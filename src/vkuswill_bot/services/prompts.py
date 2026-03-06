@@ -155,6 +155,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "закажи",
         "добав",
         "собери",
+        "подбер",
         "убер",
         "удал",
         "замен",

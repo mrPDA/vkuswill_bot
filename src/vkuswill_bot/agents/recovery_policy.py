@@ -106,3 +106,24 @@ def should_force_batch_search_hint(
         and not search_batch_recovery_used
         and step < max_tool_calls
     )
+
+
+def should_force_step_budget_warning(
+    *,
+    cart_data_this_turn: dict[str, Any] | None,
+    step_budget_warning_used: bool,
+    step: int,
+    max_tool_calls: int,
+) -> bool:
+    """Предупредить модель о приближении к лимиту шагов.
+
+    Срабатывает на ~70% бюджета (но не раньше шага 5),
+    если корзина ещё не создана и warning ещё не использован.
+    """
+    threshold = max(5, int(max_tool_calls * 0.7))
+    return bool(
+        cart_data_this_turn is None
+        and not step_budget_warning_used
+        and step >= threshold
+        and step < max_tool_calls
+    )

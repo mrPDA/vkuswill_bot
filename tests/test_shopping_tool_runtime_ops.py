@@ -87,6 +87,7 @@ def _build_state(**overrides: Any) -> SimpleNamespace:
         "explicit_pantry_requests": set(),
         "recipe_to_cart_recovery_used": False,
         "search_batch_recovery_used": False,
+        "step_budget_warning_used": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -320,6 +321,10 @@ def test_apply_post_step_recovery_hints_appends_expected_system_hints(monkeypatc
         "vkuswill_bot.agents.shopping_tool_recovery.should_force_batch_search_hint",
         lambda **_kwargs: True,
     )
+    monkeypatch.setattr(
+        "vkuswill_bot.agents.shopping_tool_recovery.should_force_step_budget_warning",
+        lambda **_kwargs: False,
+    )
 
     apply_post_step_recovery_hints(agent=agent, state=state, step=2, max_tool_calls=5)
 
@@ -342,6 +347,10 @@ def test_apply_post_step_recovery_hints_keeps_history_when_no_conditions(monkeyp
     )
     monkeypatch.setattr(
         "vkuswill_bot.agents.shopping_tool_recovery.should_force_batch_search_hint",
+        lambda **_kwargs: False,
+    )
+    monkeypatch.setattr(
+        "vkuswill_bot.agents.shopping_tool_recovery.should_force_step_budget_warning",
         lambda **_kwargs: False,
     )
 

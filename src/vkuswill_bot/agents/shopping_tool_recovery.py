@@ -7,10 +7,12 @@ from typing import Any
 from vkuswill_bot.agents.recovery_hints import (
     FORCE_BATCH_SEARCH_HINT,
     FORCE_RECIPE_TO_CART_HINT,
+    FORCE_STEP_BUDGET_WARNING_HINT,
 )
 from vkuswill_bot.agents.recovery_policy import (
     should_force_batch_search_hint,
     should_force_recipe_to_cart_hint,
+    should_force_step_budget_warning,
 )
 
 
@@ -44,4 +46,14 @@ def apply_post_step_recovery_hints(
     ):
         state.search_batch_recovery_used = True
         state.history.append({"role": "system", "content": FORCE_BATCH_SEARCH_HINT})
+        state.history = agent._normalize_history(state.history)
+
+    if should_force_step_budget_warning(
+        cart_data_this_turn=state.cart_data_this_turn,
+        step_budget_warning_used=state.step_budget_warning_used,
+        step=step,
+        max_tool_calls=max_tool_calls,
+    ):
+        state.step_budget_warning_used = True
+        state.history.append({"role": "system", "content": FORCE_STEP_BUDGET_WARNING_HINT})
         state.history = agent._normalize_history(state.history)
