@@ -62,6 +62,14 @@ class _DummyChatEngine:
         assert user_id == 42
         return "trace-42"
 
+    async def get_last_turn_diagnostics(self, user_id: int) -> dict[str, Any] | None:
+        assert user_id == 42
+        return {
+            "prompt_profile": "cart",
+            "meal_plan_can_use_executor": False,
+            "execution_path": "standard_turn",
+        }
+
 
 @pytest.mark.asyncio
 async def test_run_shopping_handler_requires_auth() -> None:
@@ -93,6 +101,8 @@ async def test_run_shopping_handler_runs_scenario_and_returns_trace_id() -> None
     assert body["cart_link"] == "https://vkusvill.ru/?share_basket=123"
     assert body["items_count"] == 1
     assert body["total_rub"] == 99.0
+    assert body["diagnostics"]["prompt_profile"] == "cart"
+    assert body["diagnostics"]["execution_path"] == "standard_turn"
     assert engine.reset_calls == 1
     assert engine.process_calls == 1
 
