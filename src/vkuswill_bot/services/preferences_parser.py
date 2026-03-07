@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from vkuswill_bot.services.preference_scope import is_group_scoped_diet_preference
+
 _DIET_MARKERS: dict[str, tuple[str, ...]] = {
     "vegan": ("vegan", "веган", "plant based", "plant-based", "plant_based"),
     "vegetarian": ("vegetarian", "вегетариан", "без мяса"),
@@ -98,6 +100,24 @@ def _normalize_profile(profile: dict[str, Any]) -> dict[str, Any]:
     return normalized
 
 
+def _mark_scoped_diet_note(profile: dict[str, Any], preference: str) -> None:
+    hard = profile.get("hard_constraints")
+    if isinstance(hard, dict):
+        hard.pop("diet", None)
+    else:
+        profile["hard_constraints"] = {}
+
+    soft = profile.get("soft_preferences")
+    if not isinstance(soft, dict):
+        soft = {}
+        profile["soft_preferences"] = soft
+    freeform = soft.get("freeform_preferences")
+    if not isinstance(freeform, dict):
+        freeform = {}
+        soft["freeform_preferences"] = freeform
+    freeform["diet_scope_note"] = preference
+
+
 def _apply_legacy_preference(
     profile: dict[str, Any],
     *,
@@ -115,6 +135,10 @@ def _apply_legacy_preference(
     int_value = _to_int(preference)
 
     if cat_alias in {"diet", "диета"}:
+        if is_group_scoped_diet_preference(preference):
+            _mark_scoped_diet_note(profile, preference)
+            return
+        freeform.pop("diet_scope_note", None)
         canonical_diet = _canonicalize_diet(preference)
         if canonical_diet:
             hard["diet"] = canonical_diet
@@ -204,7 +228,18 @@ def parse_preference_profile(result_text: str) -> dict[str, Any]:
 
     profile = data.get("profile")
     if isinstance(profile, dict):
-        return _normalize_profile(profile)
+        normalized = _normalize_profile(profile)
+        prefs = data.get("preferences", [])
+        if isinstance(prefs, list):
+            for item in prefs:
+                if not isinstance(item, dict):
+                    continue
+                category = str(item.get("category", "")).strip().lower()
+                preference = str(item.get("preference", "")).strip()
+                if category in {"diet", "диета"} and is_group_scoped_diet_preference(preference):
+                    _mark_scoped_diet_note(normalized, preference)
+                    break
+        return normalized
 
     prefs = data.get("preferences", [])
     if not isinstance(prefs, list):

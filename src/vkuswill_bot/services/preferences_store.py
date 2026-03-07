@@ -12,6 +12,8 @@ from typing import Any
 
 import aiosqlite
 
+from vkuswill_bot.services.preference_scope import is_group_scoped_diet_preference
+
 logger = logging.getLogger(__name__)
 
 _CREATE_TABLE_SQL = """\
@@ -341,6 +343,11 @@ class PreferencesStore:
         int_value = self._to_int(preference)
 
         if cat_alias in {"diet", "диета"}:
+            if is_group_scoped_diet_preference(preference):
+                hard.pop("diet", None)
+                freeform["diet_scope_note"] = preference
+                return normalized
+            freeform.pop("diet_scope_note", None)
             canonical_diet = self._canonicalize_diet(preference)
             if canonical_diet:
                 hard["diet"] = canonical_diet
@@ -403,6 +410,7 @@ class PreferencesStore:
 
         if cat_alias in {"diet", "диета"}:
             hard.pop("diet", None)
+            freeform.pop("diet_scope_note", None)
         elif cat_alias in {
             "allergies",
             "allergy",
@@ -486,7 +494,44 @@ class PreferencesStore:
     async def get_profile(self, user_id: int) -> dict[str, Any]:
         """Получить структурированный профиль предпочтений для meal-plan."""
         db = await self._ensure_db()
-        return await self._get_profile_from_db(db, user_id)
+        profile = await self._get_profile_from_db(db, user_id)
+        return await self._repair_scoped_diet_profile(db, user_id, profile)
+
+    async def _repair_scoped_diet_profile(
+        self,
+        db: aiosqlite.Connection,
+        user_id: int,
+        profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        """Remove false global diet hard-constraints for family-scoped preferences."""
+        normalized = self._ensure_profile_shape(profile)
+        cursor = await db.execute(
+            "SELECT preference FROM preferences WHERE user_id = ? AND category IN (?, ?)",
+            (user_id, "diet", "диета"),
+        )
+        rows = await cursor.fetchall()
+        scoped_note = ""
+        for row in rows:
+            preference = str(row["preference"]).strip()[:MAX_PREFERENCE_LENGTH]
+            if is_group_scoped_diet_preference(preference):
+                scoped_note = preference
+                break
+        if not scoped_note:
+            return normalized
+
+        hard = normalized.get("hard_constraints")
+        if isinstance(hard, dict):
+            hard.pop("diet", None)
+        soft = normalized.get("soft_preferences")
+        if not isinstance(soft, dict):
+            soft = {}
+            normalized["soft_preferences"] = soft
+        freeform = soft.get("freeform_preferences")
+        if not isinstance(freeform, dict):
+            freeform = {}
+            soft["freeform_preferences"] = freeform
+        freeform["diet_scope_note"] = scoped_note
+        return normalized
 
     async def set(self, user_id: int, category: str, preference: str) -> str:
         """Сохранить предпочтение (upsert по user_id + category).

@@ -76,3 +76,46 @@ def test_parse_preference_profile_fallback_maps_known_legacy_fields() -> None:
     assert parsed["soft_preferences"]["liked_ingredients"] == ["tomato", "basil"]
     assert parsed["operational_preferences"]["max_dishes"] == 8
     assert parsed["soft_preferences"]["freeform_preferences"]["молоко"] == "безлактозное"
+
+
+def test_parse_preference_profile_scoped_diet_does_not_become_global_hard_constraint() -> None:
+    payload = json.dumps(
+        {
+            "ok": True,
+            "preferences": [
+                {"category": "diet", "preference": "vegetarian for one person in family"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    parsed = parse_preference_profile(payload)
+    assert "diet" not in parsed["hard_constraints"]
+    assert (
+        parsed["soft_preferences"]["freeform_preferences"]["diet_scope_note"]
+        == "vegetarian for one person in family"
+    )
+
+
+def test_parse_preference_profile_repairs_polluted_profile_using_scoped_legacy_note() -> None:
+    payload = json.dumps(
+        {
+            "ok": True,
+            "preferences": [
+                {"category": "diet", "preference": "vegetarian for one person in family"},
+            ],
+            "profile": {
+                "schema_version": 1,
+                "hard_constraints": {"diet": "vegetarian"},
+                "soft_preferences": {"cuisines": ["italian"]},
+                "operational_preferences": {},
+            },
+        },
+        ensure_ascii=False,
+    )
+    parsed = parse_preference_profile(payload)
+    assert "diet" not in parsed["hard_constraints"]
+    assert parsed["soft_preferences"]["cuisines"] == ["italian"]
+    assert (
+        parsed["soft_preferences"]["freeform_preferences"]["diet_scope_note"]
+        == "vegetarian for one person in family"
+    )

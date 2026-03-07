@@ -9,6 +9,7 @@ from typing import Any
 from vkuswill_bot.agents.tool_result_compact_strategies import (
     compact_cart_link,
     compact_generic,
+    compact_preferences_get,
     compact_product_details,
     compact_products_search,
     compact_recipe_ingredients,
@@ -138,6 +139,8 @@ class ToolResultCompactor:
             return compact_recipe_search(payload)
         if tool_name == "vkusvill_cart_link_create":
             return compact_cart_link(payload)
+        if tool_name == "user_preferences_get":
+            return compact_preferences_get(payload)
         if tool_name in _PREFERENCE_TOOLS:
             return payload
         return compact_generic(payload)

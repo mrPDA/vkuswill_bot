@@ -2713,16 +2713,27 @@ async def test_keeps_pantry_ingredients_when_user_explicitly_requests_them() -> 
     assert "pantry_filtered" not in tool_payload
 
 
-def test_compact_preference_get_preserves_full_payload() -> None:
-    """Preference tool results не обрезаются compact_generic."""
+def test_compact_preference_get_moves_scoped_diet_out_of_global_preferences() -> None:
+    """Scoped diet notes should not look like a global cart hard-constraint in history."""
     compactor = ToolResultCompactor()
     payload = json.dumps(
         {
             "ok": True,
             "preferences": [
+                {"category": "diet", "preference": "vegetarian for one person in family"},
                 {"category": "молоко", "preference": "безлактозное молоко 1,5 ВкусВилл"},
                 {"category": "яйца", "preference": "яйца С0"},
             ],
+            "profile": {
+                "schema_version": 1,
+                "hard_constraints": {},
+                "soft_preferences": {
+                    "freeform_preferences": {
+                        "diet_scope_note": "vegetarian for one person in family",
+                    }
+                },
+                "operational_preferences": {},
+            },
         },
         ensure_ascii=False,
     )
@@ -2731,6 +2742,8 @@ def test_compact_preference_get_preserves_full_payload() -> None:
     assert parsed["ok"] is True
     assert len(parsed["preferences"]) == 2
     assert parsed["preferences"][0]["category"] == "молоко"
+    assert parsed["scoped_preferences"][0]["category"] == "diet"
+    assert "глобальным запретом" in parsed["scoped_preferences_note"]
 
 
 def test_compact_preference_set_preserves_full_payload() -> None:

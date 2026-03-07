@@ -45,6 +45,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "meal_plan_rollout_policy": "shared",
     "meal_plan_trace_metadata": "shared",
     "pii_utils": "shared",
+    "preference_scope": "shared",
     "prompt_registry": "shared",
     "prompts": "shared",
     "tool_input_normalizers": "shared",
