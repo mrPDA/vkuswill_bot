@@ -12,7 +12,7 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 from vkuswill_bot.agents.recipe_fallback import extract_recipe_ingredients_with_llm_debug
 
 _MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 2.0
-_LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 4.0
+_LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 10.0
 
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
@@ -155,7 +155,7 @@ async def collect_ingredients_for_dishes(
     semaphore_limit: int = 6,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], IngredientCollectionStats]:
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
-    fallback_semaphore = asyncio.Semaphore(2)
+    fallback_semaphore = asyncio.Semaphore(4)
     group_sizes = _group_sizes_from_request(request)
 
     async def _load_ingredients(

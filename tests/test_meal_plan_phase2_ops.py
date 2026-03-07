@@ -622,7 +622,7 @@ async def test_collect_ingredients_for_dishes_limits_fallback_concurrency() -> N
     assert len(by_dish) == 5
     assert stats.fallback_attempted_dishes == 5
     assert stats.fallback_success_dishes == 5
-    assert agent._llm_adapters["qwen_openai"].peak <= 2
+    assert agent._llm_adapters["qwen_openai"].peak <= 4
 
 
 @pytest.mark.asyncio
