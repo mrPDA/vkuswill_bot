@@ -11,6 +11,7 @@ from vkuswill_bot.agents.recovery_policy import (
     should_force_batch_search_hint,
     should_force_cart_link_source_recovery,
     should_force_manual_recovery,
+    should_force_native_tool_call_recovery,
     should_force_recipe_to_cart_hint,
 )
 
@@ -72,6 +73,39 @@ def test_should_force_cart_link_source_recovery_detects_fake_ready_reply() -> No
             max_tool_calls=5,
         )
         is True
+    )
+
+
+def test_should_force_native_tool_call_recovery_detects_textual_tool_call() -> None:
+    assert (
+        should_force_native_tool_call_recovery(
+            final_text='<tool_call>\n{"name":"recipe_search","arguments":{"ingredients":[]}}',
+            textual_tool_call_recovery_used=False,
+            step=1,
+            max_tool_calls=5,
+        )
+        is True
+    )
+
+
+def test_should_force_native_tool_call_recovery_respects_retry_budget() -> None:
+    assert (
+        should_force_native_tool_call_recovery(
+            final_text='<tool_call>\n{"name":"recipe_search","arguments":{"ingredients":[]}}',
+            textual_tool_call_recovery_used=True,
+            step=1,
+            max_tool_calls=5,
+        )
+        is False
+    )
+    assert (
+        should_force_native_tool_call_recovery(
+            final_text='<tool_call>\n{"name":"recipe_search","arguments":{"ingredients":[]}}',
+            textual_tool_call_recovery_used=False,
+            step=5,
+            max_tool_calls=5,
+        )
+        is False
     )
 
 

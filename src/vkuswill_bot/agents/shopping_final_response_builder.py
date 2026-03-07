@@ -15,19 +15,23 @@ from vkuswill_bot.agents.llm_helpers import assistant_msg
 from vkuswill_bot.agents.meal_plan_response_contract import (
     render_meal_plan_contract_response,
 )
+from vkuswill_bot.agents.response_analysis import looks_like_textual_tool_call_reply
 from vkuswill_bot.agents.recovery_hints import (
     FORCE_CART_FLOW_CONTINUATION_HINT,
     FORCE_CART_LINK_SOURCE_HINT,
     FORCE_CART_RECOVERY_HINT,
+    FORCE_NATIVE_TOOL_CALL_HINT,
 )
 from vkuswill_bot.agents.recovery_policy import (
     should_continue_recipe_flow_recovery,
     should_force_cart_link_source_recovery,
     should_force_manual_recovery,
+    should_force_native_tool_call_recovery,
 )
 from vkuswill_bot.agents.shopping_turn_contracts import NoToolCallsOutcome
 
 logger = logging.getLogger(__name__)
+_TEXTUAL_TOOL_CALL_ERROR = "Не удалось корректно выполнить шаг обработки. Попробуйте ещё раз."
 
 
 class DefaultFinalResponseBuilder:
@@ -57,6 +61,18 @@ class DefaultFinalResponseBuilder:
         trace: Any | None,
         max_tool_calls: int,
     ) -> NoToolCallsOutcome:
+        if should_force_native_tool_call_recovery(
+            final_text=final_text,
+            textual_tool_call_recovery_used=state.textual_tool_call_recovery_used,
+            step=step,
+            max_tool_calls=max_tool_calls,
+        ):
+            state.textual_tool_call_recovery_used = True
+            state.history.append(assistant_msg(message))
+            state.history.append({"role": "system", "content": FORCE_NATIVE_TOOL_CALL_HINT})
+            state.history = agent._normalize_history(state.history)
+            return NoToolCallsOutcome(continue_loop=True)
+
         if should_continue_recipe_flow_recovery(
             cart_data_this_turn=state.cart_data_this_turn,
             cart_intent=state.cart_intent,
@@ -100,6 +116,11 @@ class DefaultFinalResponseBuilder:
             state.history.append({"role": "system", "content": FORCE_CART_LINK_SOURCE_HINT})
             state.history = agent._normalize_history(state.history)
             return NoToolCallsOutcome(continue_loop=True)
+
+        if state.textual_tool_call_recovery_used and (
+            not final_text.strip() or looks_like_textual_tool_call_reply(final_text)
+        ):
+            final_text = _TEXTUAL_TOOL_CALL_ERROR
 
         if state.prompt_profile == "meal_plan":
             final_text = self._render_meal_plan_response(

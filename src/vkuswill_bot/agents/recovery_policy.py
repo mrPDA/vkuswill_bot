@@ -10,6 +10,7 @@ from vkuswill_bot.agents.cart_output_renderer import (
 )
 from vkuswill_bot.agents.mcp_response_parser import has_recipe_search_candidates
 from vkuswill_bot.agents.response_analysis import looks_like_partial_recipe_reply
+from vkuswill_bot.agents.response_analysis import looks_like_textual_tool_call_reply
 
 
 def should_continue_recipe_flow_recovery(
@@ -66,6 +67,20 @@ def should_force_cart_link_source_recovery(
         and cart_intent
         and looks_like_cart_ready_reply(final_text)
         and not cart_creation_recovery_used
+        and step < max_tool_calls
+    )
+
+
+def should_force_native_tool_call_recovery(
+    *,
+    final_text: str,
+    textual_tool_call_recovery_used: bool,
+    step: int,
+    max_tool_calls: int,
+) -> bool:
+    return bool(
+        looks_like_textual_tool_call_reply(final_text)
+        and not textual_tool_call_recovery_used
         and step < max_tool_calls
     )
 

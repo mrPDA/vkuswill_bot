@@ -42,6 +42,21 @@ def looks_like_partial_recipe_reply(text: str) -> bool:
     return any(marker in normalized for marker in markers)
 
 
+def looks_like_textual_tool_call_reply(text: str) -> bool:
+    normalized = text.strip().lower()
+    if not normalized:
+        return False
+    if "<tool_call>" in normalized:
+        return True
+    if normalized.startswith("{") and '"name"' in normalized and '"arguments"' in normalized:
+        return True
+    return bool(
+        '"name": "vkusvill_' in normalized
+        or '"name": "recipe_' in normalized
+        or '"name": "user_preferences_get"' in normalized
+    )
+
+
 def should_start_fresh_context(
     *,
     text: str,
