@@ -28,6 +28,7 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
     PHASE2_DEADLINE_SECONDS,
     RECIPE_INGREDIENTS_TIMEOUT_SECONDS,
     TURN_DEADLINE_SECONDS,
+    bounded_deadline,
     deadline_after,
     deadline_remaining,
 )
@@ -175,7 +176,10 @@ async def run_meal_plan_turn(
     )
     soft_coverage_by_group = soft_coverage_for_render(request=request, dishes=meal_plan.dishes)
     phase2_started_at = time.monotonic()
-    phase2_deadline_at = deadline_after(PHASE2_DEADLINE_SECONDS)
+    phase2_deadline_at = bounded_deadline(
+        PHASE2_DEADLINE_SECONDS,
+        hard_deadline_at=turn_deadline_at,
+    )
 
     await on_progress("🥗 Подбираю ингредиенты...")
     flat_ingredients, ingredients_by_dish = await collect_ingredients_for_dishes(

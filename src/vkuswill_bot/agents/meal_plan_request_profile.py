@@ -14,20 +14,45 @@ def extract_segmented_adult_preferences(
     cuisine_keywords: dict[str, tuple[str, ...]],
 ) -> list[dict[str, str]]:
     low = text.lower()
-    if not segmented_pattern.search(low):
-        return []
-    result: list[dict[str, str]] = []
-    for diet, markers in diet_keywords.items():
-        if any(f"один {marker}" in low for marker in markers):
-            result.append({"id": f"{diet}_user", "diet": diet})
-            break
+    paired = segmented_pattern.search(low) is not None
+    single_first = re.search(
+        r"один[^.,:;]{0,80}" if paired else r"один\s+из\s+них[^.,:;]{0,80}",
+        low,
+    )
     second = re.search(r"(другой|второй)[^.,:;]{0,80}", low)
-    if second:
-        fragment = second.group(0)
+    if not paired and single_first is None:
+        return []
+
+    def _extract_diet(fragment: str) -> str | None:
+        for diet, markers in diet_keywords.items():
+            if any(marker in fragment for marker in markers):
+                return diet
+        return None
+
+    def _extract_cuisine(fragment: str) -> str | None:
         for cuisine, markers in cuisine_keywords.items():
             if any(marker in fragment for marker in markers):
-                result.append({"id": f"{cuisine}_user", "cuisine": cuisine})
-                break
+                return cuisine
+        return None
+
+    result: list[dict[str, str]] = []
+    if single_first:
+        fragment = single_first.group(0)
+        diet = _extract_diet(fragment)
+        cuisine = _extract_cuisine(fragment)
+        if diet:
+            result.append({"id": f"{diet}_user", "diet": diet})
+        elif cuisine:
+            result.append({"id": f"{cuisine}_user", "cuisine": cuisine})
+
+    if second:
+        fragment = second.group(0)
+        diet = _extract_diet(fragment)
+        cuisine = _extract_cuisine(fragment)
+        if diet:
+            result.append({"id": f"{diet}_user", "diet": diet})
+        elif cuisine:
+            result.append({"id": f"{cuisine}_user", "cuisine": cuisine})
     return result
 
 
