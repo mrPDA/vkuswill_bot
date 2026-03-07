@@ -339,6 +339,79 @@ PYCODE
   log "Nginx конфиг обновлён и перезагружен (/voice-link/)"
 }
 
+# ─── 2e. Идемпотентная настройка nginx для stage debug API ──
+ensure_stage_debug_nginx_route() {
+  if [[ "${DEPLOY_ROOT}" != *-stg ]]; then
+    return 0
+  fi
+
+  local NGINX_CONF="/etc/nginx/sites-available/vkuswill-bot"
+
+  if [[ ! -f "$NGINX_CONF" ]]; then
+    warn "Nginx-конфиг ${NGINX_CONF} не найден, пропускаем проверку /debug/"
+    return 0
+  fi
+
+  if grep -qE 'location[[:space:]]+/debug/' "$NGINX_CONF"; then
+    log "Nginx route /debug/ уже настроен"
+    return 0
+  fi
+
+  if ! sudo -n true 2>/dev/null; then
+    warn "Нет прав sudo без пароля, пропускаем автоматическое добавление /debug/ в nginx"
+    return 0
+  fi
+
+  log "Добавление nginx route /debug/ в ${NGINX_CONF}..."
+
+  if ! sudo python3 - "$NGINX_CONF" "$HEALTH_PORT" <<'PYCODE'
+import pathlib
+import sys
+
+conf_path = pathlib.Path(sys.argv[1])
+health_port = sys.argv[2]
+content = conf_path.read_text()
+
+if "location /debug/" in content:
+    sys.exit(0)
+
+block = f"""    # Stage-only debug API for direct ShoppingAgent scenario runs
+    location /debug/ {{
+        proxy_pass http://127.0.0.1:{health_port}/debug/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }}
+
+"""
+
+marker = "    # Voice-link API для привязки аккаунта в Alice Skill"
+if marker in content:
+    content = content.replace(marker, block + marker, 1)
+else:
+    needle = "\n}\n"
+    idx = content.rfind(needle)
+    if idx == -1:
+        raise SystemExit("nginx server block end not found")
+    content = content[:idx] + "\n" + block + content[idx:]
+
+conf_path.write_text(content)
+PYCODE
+  then
+    err "Не удалось обновить nginx-конфиг для /debug/"
+    return 1
+  fi
+
+  if ! sudo nginx -t >/dev/null 2>&1; then
+    err "nginx -t не прошел после добавления /debug/"
+    return 1
+  fi
+
+  sudo systemctl reload nginx
+  log "Nginx конфиг обновлён и перезагружен (/debug/)"
+}
+
 # ─── 3. Очистка места перед pull ────────────────────────────
 log "Очистка Docker (образы, кеш, остановленные контейнеры)..."
 # Удаляем остановленные контейнеры, висячие образы и build-кеш
@@ -380,6 +453,9 @@ ensure_webhook_nginx_route
 
 # ─── 6b. Проверка nginx voice-link route ─────────────────────
 ensure_voice_link_nginx_route
+
+# ─── 6c. Проверка nginx stage debug route ────────────────────
+ensure_stage_debug_nginx_route
 
 # ─── 6c. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
