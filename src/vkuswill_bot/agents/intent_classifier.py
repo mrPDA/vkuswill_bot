@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import hashlib
 import logging
+import re
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
@@ -18,13 +21,58 @@ _VALID_PROFILES: frozenset[str] = frozenset(
 )
 
 _CLASSIFY_PROMPT_STUB = (
-    "Определи намерение покупателя в магазине ВкусВилл. Ответь ОДНИМ словом.\n"
-    "- recipe — рецепт\n- cart — купить\n- meal_plan — план питания\n"
-    "- status — статус\n- linking — привязка\n- general — другое\n\nСообщение: {text}"
+    "Определи intent пользователя для маршрутизации в боте ВкусВилл.\n"
+    "Верни только JSON без markdown и без дополнительного текста:\n"
+    "{{"
+    '"profile":"meal_plan","confidence":0.93,'
+    '"reason":"запрос меню на неделю для нескольких человек"'
+    "}}\n\n"
+    "Допустимые profile:\n"
+    "- recipe: одно конкретное блюдо, рецепт или ингредиенты для одного блюда.\n"
+    "- meal_plan: меню, рацион, план питания, корзина на день, несколько дней или неделю,"
+    " питание для семьи или нескольких человек, подбор нескольких блюд.\n"
+    "- cart: купить, добавить в корзину или подобрать готовые товары"
+    " без задачи составить рацион.\n"
+    "- status: статус заказа, доставки, корзины или уже оформленного заказа.\n"
+    "- linking: привязка аккаунта, кода, номера телефона, Алисы"
+    " или другого внешнего профиля.\n"
+    "- general: любой другой запрос.\n\n"
+    "Правила:\n"
+    "1. Если есть признаки меню или рациона на период, выбирай meal_plan,"
+    " даже если пользователь пишет 'собери корзину'.\n"
+    "2. Если упомянуто одно блюдо или конкретный рецепт, выбирай recipe.\n"
+    "3. Если перечислены товары для покупки без задачи составить меню, выбирай cart.\n"
+    "4. confidence должен быть числом от 0 до 1.\n"
+    "5. reason должен быть коротким, не более 12 слов.\n\n"
+    "Примеры:\n"
+    'Сообщение: "собери корзину на неделю для 4 человек"\n'
+    'Ответ: {{"profile":"meal_plan","confidence":0.98,'
+    '"reason":"меню на неделю для нескольких человек"}}\n\n'
+    'Сообщение: "хочу приготовить карбонару"\n'
+    'Ответ: {{"profile":"recipe","confidence":0.97,'
+    '"reason":"запрос конкретного блюда"}}\n\n'
+    'Сообщение: "добавь молоко и хлеб"\n'
+    'Ответ: {{"profile":"cart","confidence":0.99,'
+    '"reason":"список товаров для покупки"}}\n\n'
+    'Сообщение: "где мой заказ"\n'
+    'Ответ: {{"profile":"status","confidence":0.99,'
+    '"reason":"запрос статуса заказа"}}\n\n'
+    'Сообщение: "как привязать аккаунт к алисе"\n'
+    'Ответ: {{"profile":"linking","confidence":0.99,'
+    '"reason":"запрос привязки аккаунта"}}\n\n'
+    "Сообщение: {text}"
 )
 
-_CLASSIFY_MAX_TOKENS = 20
+_CLASSIFY_MAX_TOKENS = 120
 _CLASSIFY_TEMPERATURE = 0.0
+
+
+@dataclass(slots=True)
+class IntentClassificationResult:
+    profile: PromptProfile | None
+    confidence: float | None = None
+    reason: str | None = None
+    raw_output: str = ""
 
 
 def _classify_prompt_bundle(text: str) -> tuple[str, dict[str, Any]]:
@@ -63,13 +111,72 @@ def _parse_profile(raw: str) -> PromptProfile | None:
     return None
 
 
+def _strip_json_fence(raw: str) -> str:
+    cleaned = raw.strip()
+    if not cleaned.startswith("```"):
+        return cleaned
+    lines = cleaned.splitlines()
+    if not lines:
+        return cleaned
+    if lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _normalize_confidence(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, (int, float)):
+        numeric = float(value)
+    elif isinstance(value, str):
+        try:
+            numeric = float(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    return max(0.0, min(1.0, numeric))
+
+
+def _parse_classification_result(raw: str) -> IntentClassificationResult:
+    cleaned = raw.strip()
+    json_payload = _strip_json_fence(cleaned)
+    if json_payload:
+        try:
+            parsed = json.loads(json_payload)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", json_payload, re.DOTALL)
+            if match is not None:
+                try:
+                    parsed = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    parsed = None
+            else:
+                parsed = None
+        if isinstance(parsed, dict):
+            raw_profile = parsed.get("profile")
+            reason = parsed.get("reason")
+            return IntentClassificationResult(
+                profile=_parse_profile(str(raw_profile)) if raw_profile is not None else None,
+                confidence=_normalize_confidence(parsed.get("confidence")),
+                reason=str(reason).strip() if isinstance(reason, str) and reason.strip() else None,
+                raw_output=raw,
+            )
+    return IntentClassificationResult(
+        profile=_parse_profile(cleaned),
+        raw_output=raw,
+    )
+
+
 async def classify_user_intent(
     text: str,
     adapter: LLMAdapterProtocol,
     model: str,
     timeout_seconds: float = 5.0,
     trace: Any | None = None,
-) -> PromptProfile | None:
+) -> IntentClassificationResult | None:
     """Classify user intent via a lightweight LLM call.
 
     Returns a PromptProfile on success, or None if classification
@@ -127,12 +234,22 @@ async def classify_user_intent(
 
     message = extract_message(response)
     content = extract_text(message)
-    profile = _parse_profile(content)
-    if profile is None:
+    result = _parse_classification_result(content)
+    if result.profile is None:
         logger.info("Intent classification returned unparsable response: %r", content)
     if generation is not None:
         generation.end(
-            output={"raw": content, "profile": profile},
-            metadata={"prompt": prompt_metadata, "resolved_profile": profile},
+            output={
+                "raw": result.raw_output,
+                "profile": result.profile,
+                "confidence": result.confidence,
+                "reason": result.reason,
+            },
+            metadata={
+                "prompt": prompt_metadata,
+                "resolved_profile": result.profile,
+                "confidence": result.confidence,
+                "reason": result.reason,
+            },
         )
-    return profile
+    return result

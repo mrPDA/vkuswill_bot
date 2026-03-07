@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from vkuswill_bot.agents.intent_classifier import (
+    IntentClassificationResult,
     _parse_profile,
     classify_user_intent,
 )
@@ -82,22 +83,40 @@ class TestClassifyUserIntent:
     async def test_returns_cart_for_order_intent(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("cart")
         result = await classify_user_intent("закажи суп", mock_adapter, "test-model")
-        assert result == "cart"
+        assert result == IntentClassificationResult(profile="cart", raw_output="cart")
 
     async def test_returns_recipe_for_cooking_intent(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("recipe")
         result = await classify_user_intent("приготовь борщ", mock_adapter, "test-model")
-        assert result == "recipe"
+        assert result == IntentClassificationResult(profile="recipe", raw_output="recipe")
 
     async def test_returns_status(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("status")
         result = await classify_user_intent("где мой заказ", mock_adapter, "test-model")
-        assert result == "status"
+        assert result == IntentClassificationResult(profile="status", raw_output="status")
+
+    async def test_parses_structured_classification_response(self, mock_adapter):
+        raw_output = (
+            '{"profile":"meal_plan","confidence":0.93,"reason":"weekly menu for several people"}'
+        )
+        mock_adapter.create_completion.return_value = _llm_response(raw_output)
+        result = await classify_user_intent(
+            "собери корзину на неделю для 4 человек",
+            mock_adapter,
+            "test-model",
+        )
+
+        assert result == IntentClassificationResult(
+            profile="meal_plan",
+            confidence=0.93,
+            reason="weekly menu for several people",
+            raw_output=raw_output,
+        )
 
     async def test_returns_none_on_invalid_response(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("something_invalid")
         result = await classify_user_intent("hello", mock_adapter, "test-model")
-        assert result is None
+        assert result == IntentClassificationResult(profile=None, raw_output="something_invalid")
 
     async def test_returns_none_on_timeout(self, mock_adapter):
         async def slow_call(**kwargs):
@@ -126,14 +145,14 @@ class TestClassifyUserIntent:
         assert call_kwargs["model"] == "my-model"
         assert call_kwargs["tools"] == []
         assert call_kwargs["tool_choice"] == "none"
-        assert call_kwargs["max_tokens"] == 20
+        assert call_kwargs["max_tokens"] == 120
         assert call_kwargs["temperature"] == 0.0
         assert "закажи суп" in call_kwargs["messages"][0]["content"]
 
     async def test_returns_none_on_empty_response(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("")
         result = await classify_user_intent("привет", mock_adapter, "test-model")
-        assert result is None
+        assert result == IntentClassificationResult(profile=None, raw_output="")
 
     async def test_records_separate_generation_in_trace(self, mock_adapter):
         mock_adapter.create_completion.return_value = _llm_response("cart")
@@ -141,11 +160,11 @@ class TestClassifyUserIntent:
 
         result = await classify_user_intent("закажи суп", mock_adapter, "test-model", trace=trace)
 
-        assert result == "cart"
+        assert result == IntentClassificationResult(profile="cart", raw_output="cart")
         assert trace.generation_calls
         generation = trace.generation_calls[-1]
         assert generation["name"] == "intent-classification"
-        assert generation["model_parameters"]["max_tokens"] == 20
+        assert generation["model_parameters"]["max_tokens"] == 120
         assert generation["model_parameters"]["temperature"] == 0.0
         assert generation["metadata"]["prompt"]["name"] == "classify-intent"
 
@@ -161,7 +180,7 @@ class TestClassifyUserIntent:
             trace=trace,
         )
 
-        assert result == "recipe"
+        assert result == IntentClassificationResult(profile="recipe", raw_output="recipe")
         generation = trace.generation_calls[-1]
         assert generation["metadata"]["prompt"]["source"] == "env"
         assert generation["metadata"]["prompt"]["label"] == "staging"
@@ -190,6 +209,9 @@ class TestBuildTurnStateIntegration:
 
         assert state.prompt_profile == "cart"
         agent._classify_intent.assert_awaited_once_with("закажи суп")
+        assert state.llm_prompt_profile == "cart"
+        assert state.llm_prompt_confidence is None
+        assert state.intent_conflict is False
 
     async def test_falls_back_to_keywords_when_llm_returns_none(self):
         from vkuswill_bot.agents.shopping_turn_types import build_turn_state
@@ -210,6 +232,7 @@ class TestBuildTurnStateIntegration:
         state = await build_turn_state(agent=agent, user_id=1, text="закажи молоко")
 
         assert state.prompt_profile == "cart"
+        assert state.llm_prompt_profile is None
 
     async def test_falls_back_to_keywords_when_llm_raises(self):
         from vkuswill_bot.agents.shopping_turn_types import build_turn_state
@@ -230,6 +253,7 @@ class TestBuildTurnStateIntegration:
         state = await build_turn_state(agent=agent, user_id=1, text="рецепт борща")
 
         assert state.prompt_profile == "recipe"
+        assert state.llm_prompt_profile is None
 
     async def test_loads_structured_profile_from_bundle_loader(self):
         from vkuswill_bot.agents.shopping_turn_types import build_turn_state
@@ -311,6 +335,41 @@ class TestBuildTurnStateIntegration:
         assert state.prompt_profile == "cart"
         assert state.cart_intent is True
 
+    async def test_tracks_conflict_metadata_when_llm_disagrees_with_heuristic(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = IntentClassificationResult(
+            profile="recipe",
+            confidence=0.41,
+            reason="mentions food preparation",
+            raw_output='{"profile":"recipe","confidence":0.41}',
+        )
+
+        state = await build_turn_state(
+            agent=agent,
+            user_id=1,
+            text="собери корзину на неделю для 4 человек",
+        )
+
+        assert state.prompt_profile == "recipe"
+        assert state.heuristic_prompt_profile == "meal_plan"
+        assert state.llm_prompt_profile == "recipe"
+        assert state.llm_prompt_confidence == pytest.approx(0.41)
+        assert state.llm_prompt_reason == "mentions food preparation"
+        assert state.intent_conflict is True
+        assert state.intent_conflict_severity == "high"
+
 
 class TestShoppingAgentClassifyIntent:
     """Verify ShoppingAgent._classify_intent respects feature flag."""
@@ -349,5 +408,5 @@ class TestShoppingAgentClassifyIntent:
             llm_adapters={"qwen_openai": mock_adapter},
         )
         result = await agent._classify_intent("закажи суп")
-        assert result == "cart"
+        assert result == IntentClassificationResult(profile="cart", raw_output="cart")
         mock_adapter.create_completion.assert_awaited_once()

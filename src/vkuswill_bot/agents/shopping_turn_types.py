@@ -7,6 +7,7 @@ import contextlib
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from vkuswill_bot.agents.intent_classifier import IntentClassificationResult
 from vkuswill_bot.agents.product_index_manager import build_product_index_from_history
 from vkuswill_bot.agents.prompt_helpers import ensure_system_prompt, resolve_prompt_profile
 from vkuswill_bot.agents.recipe_pantry import (
@@ -41,7 +42,7 @@ class ShoppingTurnAgentProtocol(Protocol):
         text: str,
         *,
         trace: Any | None = None,
-    ) -> PromptProfile | None: ...
+    ) -> PromptProfile | IntentClassificationResult | None: ...
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]: ...
     async def _load_user_preferences_bundle(
@@ -134,7 +135,11 @@ class TurnState:
     user_preferences: dict[str, str]
     user_preference_profile: dict[str, Any] = field(default_factory=dict)
     llm_prompt_profile: PromptProfile | None = None
+    llm_prompt_confidence: float | None = None
+    llm_prompt_reason: str | None = None
     heuristic_prompt_profile: PromptProfile = "general"
+    intent_conflict: bool = False
+    intent_conflict_severity: str | None = None
     cart_data_this_turn: dict[str, Any] | None = None
     manual_recovery_used: bool = False
     cart_creation_recovery_used: bool = False
@@ -148,6 +153,29 @@ class TurnState:
     total_llm_input_chars: int = 0
     mcp_call_cache: dict[str, str] = field(default_factory=dict)
     search_query_by_xml_id_this_turn: dict[int, str] = field(default_factory=dict)
+
+
+def _normalize_llm_classification(
+    result: PromptProfile | IntentClassificationResult | None,
+) -> tuple[PromptProfile | None, float | None, str | None]:
+    if isinstance(result, IntentClassificationResult):
+        return result.profile, result.confidence, result.reason
+    return result, None, None
+
+
+def _resolve_intent_conflict_severity(
+    *,
+    llm_profile: PromptProfile | None,
+    heuristic_profile: PromptProfile,
+    llm_confidence: float | None,
+) -> str | None:
+    if llm_profile is None or llm_profile == heuristic_profile or heuristic_profile == "general":
+        return None
+    if llm_confidence is None or llm_confidence < 0.5:
+        return "high"
+    if llm_confidence < 0.8:
+        return "medium"
+    return "low"
 
 
 async def build_turn_state(
@@ -182,11 +210,18 @@ async def build_turn_state(
         prefs_task = asyncio.create_task(agent._load_user_preferences(user_id))
 
     llm_profile: PromptProfile | None = None
+    llm_confidence: float | None = None
+    llm_reason: str | None = None
     with contextlib.suppress(Exception):
-        llm_profile = await classify_task
+        llm_profile, llm_confidence, llm_reason = _normalize_llm_classification(await classify_task)
 
     heuristic_profile = resolve_prompt_profile(text=text, history=history)
     prompt_profile = llm_profile or heuristic_profile
+    intent_conflict_severity = _resolve_intent_conflict_severity(
+        llm_profile=llm_profile,
+        heuristic_profile=heuristic_profile,
+        llm_confidence=llm_confidence,
+    )
     if prompt_profile == "meal_plan" and not getattr(
         agent, "_meal_plan_intent_routing_enabled", True
     ):
@@ -230,5 +265,9 @@ async def build_turn_state(
         user_preferences=user_preferences,
         user_preference_profile=user_preference_profile,
         llm_prompt_profile=llm_profile,
+        llm_prompt_confidence=llm_confidence,
+        llm_prompt_reason=llm_reason,
         heuristic_prompt_profile=heuristic_profile,
+        intent_conflict=intent_conflict_severity is not None,
+        intent_conflict_severity=intent_conflict_severity,
     )

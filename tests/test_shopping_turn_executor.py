@@ -63,6 +63,21 @@ class _MetricsSinkSpy:
         _ = outcome, latency_ms, user_id, trace_id, phase
 
 
+class _TraceSpy:
+    def __init__(self) -> None:
+        self.updates: list[dict[str, Any]] = []
+
+    def update(self, **kwargs: Any) -> None:
+        self.updates.append(kwargs)
+
+    def generation(self, **_kwargs: Any) -> Any:
+        class _Gen:
+            def end(self, **_kwargs: Any) -> None:
+                return None
+
+        return _Gen()
+
+
 class _AgentStub:
     def __init__(self, metrics_sink: _MetricsSinkSpy) -> None:
         self._history: dict[int, list[dict[str, Any]]] = {}
@@ -137,6 +152,56 @@ def _state_for_profile(profile: str, *, text: str) -> TurnState:
         user_preferences={},
         user_preference_profile={},
     )
+
+
+@pytest.mark.asyncio
+async def test_run_locked_turn_writes_intent_conflict_metadata_to_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = _MetricsSinkSpy()
+    trace = _TraceSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    agent._create_trace = lambda **kwargs: trace  # type: ignore[assignment]
+    agent._llm_temperature = 0.2
+    agent._llm_max_tokens = 900
+    text = "собери корзину на неделю для 4 человек"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        state = _state_for_profile("recipe", text=text)
+        state.llm_prompt_profile = "recipe"
+        state.llm_prompt_confidence = 0.41
+        state.llm_prompt_reason = "mentions cooking"
+        state.heuristic_prompt_profile = "meal_plan"
+        state.intent_conflict = True
+        state.intent_conflict_severity = "high"
+        return state
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent,
+        user_id=20,
+        text=text,
+        on_progress=None,
+        llm_provider="qwen_openai",
+    )
+
+    assert result == "ok"
+    assert trace.updates
+    metadata = trace.updates[0]["metadata"]
+    assert metadata["llm_prompt_profile"] == "recipe"
+    assert metadata["llm_prompt_confidence"] == pytest.approx(0.41)
+    assert metadata["llm_prompt_reason"] == "mentions cooking"
+    assert metadata["heuristic_prompt_profile"] == "meal_plan"
+    assert metadata["intent_conflict"] is True
+    assert metadata["intent_conflict_severity"] == "high"
 
 
 @pytest.mark.asyncio
