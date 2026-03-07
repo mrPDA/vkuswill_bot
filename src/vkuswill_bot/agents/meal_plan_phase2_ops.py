@@ -41,6 +41,28 @@ class Phase2SafetyOutcome:
     fallback_reason: str = ""
 
 
+@dataclass(slots=True)
+class IngredientCollectionStats:
+    total_dishes: int
+    mcp_success_dishes: int
+    fallback_attempted_dishes: int
+    fallback_success_dishes: int
+    empty_dishes: list[str]
+    mcp_rows_total: int
+    fallback_rows_total: int
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "total_dishes": self.total_dishes,
+            "mcp_success_dishes": self.mcp_success_dishes,
+            "fallback_attempted_dishes": self.fallback_attempted_dishes,
+            "fallback_success_dishes": self.fallback_success_dishes,
+            "empty_dishes": list(self.empty_dishes),
+            "mcp_rows_total": self.mcp_rows_total,
+            "fallback_rows_total": self.fallback_rows_total,
+        }
+
+
 def _positive_int(value: Any) -> int | None:
     try:
         parsed = int(value)
@@ -90,7 +112,7 @@ async def collect_ingredients_for_dishes(
     phase2_deadline_at: float,
     timeout_seconds: float,
     semaphore_limit: int = 6,
-) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], IngredientCollectionStats]:
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
     fallback_semaphore = asyncio.Semaphore(2)
     group_sizes = _group_sizes_from_request(request)
@@ -150,6 +172,8 @@ async def collect_ingredients_for_dishes(
     flat_ingredients: list[dict[str, Any]] = []
     by_dish: dict[str, list[dict[str, Any]]] = {}
     missing_fallback: list[tuple[str, int]] = []
+    mcp_success_dishes = 0
+    mcp_rows_total = 0
     for chunk in chunks:
         if isinstance(chunk, Exception):
             continue
@@ -158,6 +182,8 @@ async def collect_ingredients_for_dishes(
         if dish_key and rows:
             by_dish.setdefault(dish_key, []).extend(rows)
             flat_ingredients.extend(rows)
+            mcp_success_dishes += 1
+            mcp_rows_total += len(rows)
             continue
         if dish_key:
             missing_fallback.append((dish_name, servings))
@@ -172,6 +198,8 @@ async def collect_ingredients_for_dishes(
             *[_load_fallback(dish_name, servings) for dish_name, servings in missing_fallback],
             return_exceptions=True,
         )
+        fallback_success_dishes = 0
+        fallback_rows_total = 0
         for chunk in fallback_chunks:
             if isinstance(chunk, Exception):
                 continue
@@ -180,7 +208,27 @@ async def collect_ingredients_for_dishes(
             if dish_key and rows:
                 by_dish.setdefault(dish_key, []).extend(rows)
                 flat_ingredients.extend(rows)
-    return flat_ingredients, by_dish
+                fallback_success_dishes += 1
+                fallback_rows_total += len(rows)
+    else:
+        fallback_success_dishes = 0
+        fallback_rows_total = 0
+
+    empty_dishes = [
+        str(dish_name).strip()
+        for dish_name, _servings in missing_fallback
+        if str(dish_name).strip().lower() not in by_dish
+    ]
+    stats = IngredientCollectionStats(
+        total_dishes=len(dishes_payload),
+        mcp_success_dishes=mcp_success_dishes,
+        fallback_attempted_dishes=len(missing_fallback),
+        fallback_success_dishes=fallback_success_dishes,
+        empty_dishes=empty_dishes[:10],
+        mcp_rows_total=mcp_rows_total,
+        fallback_rows_total=fallback_rows_total,
+    )
+    return flat_ingredients, by_dish, stats
 
 
 async def enforce_phase2_safety_policy(

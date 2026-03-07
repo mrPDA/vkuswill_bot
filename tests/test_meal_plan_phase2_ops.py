@@ -323,7 +323,7 @@ async def test_collect_ingredients_for_dishes_respects_default_semaphore_limit()
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
     dishes_payload = [{"name": f"Блюдо {idx}", "servings_total": 2} for idx in range(1, 9)]
     agent = _Agent()
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=agent,
         request=request,
         state=_State(),
@@ -334,6 +334,9 @@ async def test_collect_ingredients_for_dishes_respects_default_semaphore_limit()
         timeout_seconds=1.0,
     )
 
+    assert stats.total_dishes == 8
+    assert stats.mcp_success_dishes == 8
+    assert stats.fallback_attempted_dishes == 0
     assert agent.max_inflight <= 6
     assert len(flat) == 8
     assert len(by_dish) == 8
@@ -367,7 +370,7 @@ async def test_collect_ingredients_for_dishes_returns_partial_success_when_one_c
 
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
     dishes_payload = [{"name": f"Блюдо {idx}", "servings_total": 2} for idx in range(1, 6)]
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=_Agent(),
         request=request,
         state=_State(),
@@ -378,6 +381,10 @@ async def test_collect_ingredients_for_dishes_returns_partial_success_when_one_c
         timeout_seconds=1.0,
     )
 
+    assert stats.mcp_success_dishes == 4
+    assert stats.fallback_attempted_dishes == 1
+    assert stats.fallback_success_dishes == 0
+    assert stats.empty_dishes == ["Блюдо 3"]
     assert len(flat) == 4
     assert "блюдо 3" not in by_dish
     assert len(by_dish) == 4
@@ -439,7 +446,7 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
 
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
     agent = _Agent()
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=agent,
         request=request,
         state=_State(),
@@ -454,6 +461,8 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
         {"name": "нут", "search_query": "нут", "quantity": 2.0, "unit": "уп"}
     ]
     assert by_dish == {"карри с нутом": flat}
+    assert stats.fallback_attempted_dishes == 1
+    assert stats.fallback_success_dishes == 1
     assert agent._llm_adapters["qwen_openai"].calls
 
 
@@ -504,7 +513,7 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_raises
             raise RuntimeError("tool backend unavailable")
 
     request = parse_meal_plan_request("рацион на 3 дня для 1 человека", {})
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=_Agent(),
         request=request,
         state=_State(),
@@ -519,6 +528,8 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_raises
         {"name": "рис", "search_query": "рис", "quantity": 1.0, "unit": "кг"}
     ]
     assert by_dish == {"рисовая каша": flat}
+    assert stats.fallback_attempted_dishes == 1
+    assert stats.fallback_success_dishes == 1
 
 
 @pytest.mark.asyncio
@@ -581,7 +592,7 @@ async def test_collect_ingredients_for_dishes_limits_fallback_concurrency() -> N
 
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
     agent = _Agent()
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=agent,
         request=request,
         state=_State(),
@@ -594,6 +605,8 @@ async def test_collect_ingredients_for_dishes_limits_fallback_concurrency() -> N
 
     assert len(flat) == 5
     assert len(by_dish) == 5
+    assert stats.fallback_attempted_dishes == 5
+    assert stats.fallback_success_dishes == 5
     assert agent._llm_adapters["qwen_openai"].peak <= 2
 
 
@@ -642,7 +655,7 @@ async def test_collect_ingredients_for_dishes_computes_servings_from_request_gro
             "audience_groups": ["adults", "child_2y"],
         },
     ]
-    flat, by_dish = await collect_ingredients_for_dishes(
+    flat, by_dish, stats = await collect_ingredients_for_dishes(
         agent=_Agent(),
         request=request,
         state=_State(),
@@ -653,6 +666,7 @@ async def test_collect_ingredients_for_dishes_computes_servings_from_request_gro
         timeout_seconds=1.0,
     )
 
+    assert stats.total_dishes == 3
     assert len(flat) == 3
     assert len(by_dish) == 3
     assert captured_servings == {
