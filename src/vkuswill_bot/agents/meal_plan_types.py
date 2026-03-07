@@ -189,9 +189,23 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
     child_group_id, child_count, child_age = _extract_child_group(text, people_total)
     adults_count = max(0, people_total - child_count)
 
+    segmented_adults = extract_segmented_adult_preferences(
+        text=text,
+        segmented_pattern=_SEGMENTED_ADULTS_RE,
+        diet_keywords=_DIET_KEYWORDS,
+        cuisine_keywords=_CUISINE_KEYWORDS,
+    )
     explicit_allergens = _extract_allergens(text)
-    explicit_diet = _extract_diet(text)
-    explicit_cuisines = _extract_cuisines(text)
+    explicit_diet = (
+        None
+        if any(segment.get("diet") for segment in segmented_adults)
+        else _extract_diet(text)
+    )
+    explicit_cuisines = (
+        []
+        if any(segment.get("cuisine") for segment in segmented_adults)
+        else _extract_cuisines(text)
+    )
     hard, soft, operational, preferences_trace = build_shared_constraints(
         stored_profile=stored_profile,
         explicit_allergens=explicit_allergens,
@@ -201,12 +215,6 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
     )
 
     groups: list[MealPlanRequestGroup] = []
-    segmented_adults = extract_segmented_adult_preferences(
-        text=text,
-        segmented_pattern=_SEGMENTED_ADULTS_RE,
-        diet_keywords=_DIET_KEYWORDS,
-        cuisine_keywords=_CUISINE_KEYWORDS,
-    )
     used_segmented = 0
     if adults_count > 0 and segmented_adults:
         for segment in segmented_adults:

@@ -513,6 +513,83 @@ async def test_run_meal_plan_turn_respects_timeout_policy(monkeypatch: pytest.Mo
 
 
 @pytest.mark.asyncio
+async def test_run_meal_plan_turn_bounds_phase2_by_turn_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("vkuswill_bot.agents.meal_plan_executor.TURN_DEADLINE_SECONDS", 0.03)
+    monkeypatch.setattr("vkuswill_bot.agents.meal_plan_executor.PHASE2_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(
+        "vkuswill_bot.agents.meal_plan_executor.RECIPE_INGREDIENTS_TIMEOUT_SECONDS",
+        0.2,
+    )
+
+    plan_payload = _build_plan_payload(cuisine="russian")
+
+    async def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        if name == "recipe_ingredients":
+            await asyncio.sleep(0.02)
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": "рис",
+                            "search_query": "рис",
+                            "quantity": 1,
+                            "unit": "кг",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "recipe_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "found": [{"xml_id": 501, "suggested_q": 1, "name": "Рис"}],
+                    "not_found": [],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/late"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name} {arguments}")
+
+    state = _State(history=[{"role": "user", "content": "меню на неделю для 2 человек"}])
+    trace = _TraceSpy()
+    agent = _FakeExecutorAgent(
+        llm_responses=[_llm_response(json.dumps(plan_payload, ensure_ascii=False))],
+        mcp_handler=_mcp,
+    )
+
+    original_call_llm = agent._call_llm
+
+    async def _slow_call_llm(**kwargs: Any) -> dict[str, Any]:
+        await asyncio.sleep(0.02)
+        return await original_call_llm(**kwargs)
+
+    agent._call_llm = _slow_call_llm  # type: ignore[method-assign]
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=state,
+        user_id=9901,
+        text="меню на неделю для 2 человек",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: _done(),
+    )
+
+    assert "Не удалось получить ингредиенты для плана." in result
+    assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_ingredients_empty"
+    assert all(name != "recipe_search" for name, _args in agent.mcp_calls)
+    assert all(name != "vkusvill_cart_link_create" for name, _args in agent.mcp_calls)
+
+
+@pytest.mark.asyncio
 async def test_run_meal_plan_turn_fail_softs_when_hard_constraints_remain_after_retry() -> None:
     plan_payload = _build_plan_payload(cuisine="italian")
 

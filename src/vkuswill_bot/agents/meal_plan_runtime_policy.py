@@ -26,6 +26,11 @@ def deadline_remaining(deadline_at: float) -> float:
     return max(0.0, deadline_at - time.monotonic())
 
 
+def bounded_deadline(seconds: float, *, hard_deadline_at: float) -> float:
+    """Return a child deadline that cannot outlive the enclosing hard deadline."""
+    return min(hard_deadline_at, deadline_after(seconds))
+
+
 async def call_with_timeout_retry(
     *,
     operation: Callable[[], Awaitable[T]],

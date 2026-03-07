@@ -50,6 +50,18 @@ def test_parse_meal_plan_request_supports_segmented_adult_preferences() -> None:
     assert "italian" in groups["italian_user"].soft_preferences["cuisines"]
 
 
+def test_parse_meal_plan_request_supports_single_segmented_adult_diet() -> None:
+    request = parse_meal_plan_request(
+        "Собери корзину на неделю для 4 человек. один из них вегетарианец",
+        {},
+    )
+    groups = {group.id: group for group in request.groups}
+    assert groups["vegetarian_user"].count == 1
+    assert groups["vegetarian_user"].hard_constraints["diet"] == "vegetarian"
+    assert groups["adults"].count == 3
+    assert "diet" not in groups["adults"].hard_constraints
+
+
 def test_parse_meal_plan_request_includes_preferences_trace_sources() -> None:
     profile = {
         "hard_constraints": {"diet": "vegetarian"},
