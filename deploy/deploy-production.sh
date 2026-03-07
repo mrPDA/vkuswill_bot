@@ -15,6 +15,8 @@ readonly PROD_LANGFUSE_CONTAINER_NAME="vkuswill-langfuse"
 readonly PROD_METABASE_CONTAINER_NAME="vkuswill-metabase"
 readonly PROD_HEALTH_PORT="8080"
 readonly PROD_MCP_DEFAULT_PORT="8081"
+readonly PROD_LANGFUSE_PORT="3000"
+readonly PROD_METABASE_PORT="3001"
 
 fail() {
   echo "[deploy-production] ERROR: $*" >&2
@@ -37,6 +39,8 @@ print_production_config() {
 [deploy-production] METABASE_CONTAINER_NAME=${PROD_METABASE_CONTAINER_NAME}
 [deploy-production] HEALTH_PORT=${PROD_HEALTH_PORT}
 [deploy-production] MCP_DEFAULT_PORT=${PROD_MCP_DEFAULT_PORT}
+[deploy-production] LANGFUSE_PORT=${PROD_LANGFUSE_PORT}
+[deploy-production] METABASE_PORT=${PROD_METABASE_PORT}
 EOF
 }
 
@@ -64,6 +68,8 @@ export LANGFUSE_CONTAINER_NAME="${PROD_LANGFUSE_CONTAINER_NAME}"
 export METABASE_CONTAINER_NAME="${PROD_METABASE_CONTAINER_NAME}"
 export HEALTH_PORT="${PROD_HEALTH_PORT}"
 export MCP_DEFAULT_PORT="${PROD_MCP_DEFAULT_PORT}"
+export LANGFUSE_PORT="${PROD_LANGFUSE_PORT}"
+export METABASE_PORT="${PROD_METABASE_PORT}"
 
 # Production-специфичные переменные окружения
 export DEPLOY_EXTRA_ENV="\

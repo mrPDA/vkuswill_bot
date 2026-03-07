@@ -49,6 +49,15 @@ class Config(BaseSettings):
     llm_compact_followup_prompt_enabled: bool = True
     intent_classification_enabled: bool = True
     intent_classification_timeout: float = 5.0
+    meal_plan_intent_routing_enabled: bool = False
+    meal_plan_executor_enabled: bool = False
+    meal_plan_shadow_mode_enabled: bool = False
+    meal_plan_rollout_percent: int = Field(default=100, ge=0, le=100)
+    meal_plan_allow_unvalidated_rollout: bool = False
+    meal_plan_unvalidated_rollout_reason: str = ""
+    meal_plan_unvalidated_rollout_actor: str = ""
+    meal_plan_unvalidated_rollout_expires_at: str = ""
+    meal_plan_unvalidated_rollout_max_ttl_seconds: int = Field(default=86400, ge=60, le=604800)
 
     # MCP
     mcp_server_url: str = "https://mcp001.vkusvill.ru/mcp"

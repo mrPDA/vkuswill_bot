@@ -124,6 +124,7 @@ class TestEmpty:
         parsed = json.loads(result)
         assert parsed["ok"] is True
         assert parsed["preferences"] == []
+        assert parsed["profile"]["schema_version"] == 1
         assert "Нет сохранённых" in parsed["message"]
 
 
@@ -143,6 +144,7 @@ class TestFormatting:
 
         assert parsed["ok"] is True
         assert len(parsed["preferences"]) == 1
+        assert isinstance(parsed["profile"], dict)
         assert parsed["preferences"][0]["category"] == "мороженое"
         assert parsed["preferences"][0]["preference"] == "пломбир в шоколаде на палочке"
 
@@ -532,3 +534,90 @@ class TestReadonly:
             "/tmp/nonexistent_12345.db",  # noqa: S108
         )
         assert ok is False
+
+
+# ============================================================================
+# Structured profile (meal-plan ready)
+# ============================================================================
+
+
+class TestStructuredProfile:
+    """Тесты структурированного профиля предпочтений."""
+
+    async def test_get_profile_default(self, store):
+        profile = await store.get_profile(user_id=77)
+        assert profile["schema_version"] == 1
+        assert profile["hard_constraints"] == {}
+        assert profile["soft_preferences"]["freeform_preferences"] == {}
+
+    async def test_set_diet_mapped_to_hard_constraints(self, store):
+        await store.set(1, "diet", "vegan")
+        profile = await store.get_profile(1)
+        assert profile["hard_constraints"]["diet"] == "vegan"
+
+    async def test_set_diet_alias_canonicalized_to_enum(self, store):
+        await store.set(1, "diet", "веганское")
+        profile = await store.get_profile(1)
+        assert profile["hard_constraints"]["diet"] == "vegan"
+
+    async def test_set_cuisines_mapped_to_list(self, store):
+        await store.set(1, "cuisines", "italian, asian; georgian")
+        profile = await store.get_profile(1)
+        assert profile["soft_preferences"]["cuisines"] == ["italian", "asian", "georgian"]
+
+    async def test_set_allergens_mapped_to_hard_constraints_list(self, store):
+        await store.set(1, "allergens_excluded", "nuts, lactose")
+        profile = await store.get_profile(1)
+        assert profile["hard_constraints"]["allergens_excluded"] == ["nuts", "lactose"]
+
+    async def test_unknown_category_stored_in_freeform(self, store):
+        await store.set(1, "молоко", "безлактозное 3,2%")
+        profile = await store.get_profile(1)
+        freeform = profile["soft_preferences"]["freeform_preferences"]
+        assert freeform["молоко"] == "безлактозное 3,2%"
+
+    async def test_delete_updates_structured_profile(self, store):
+        await store.set(1, "diet", "vegan")
+        await store.delete(1, "diet")
+        profile = await store.get_profile(1)
+        assert "diet" not in profile["hard_constraints"]
+
+    async def test_profile_persists_after_reopen(self, tmp_path):
+        db_path = str(tmp_path / "profile_persist.db")
+        first = PreferencesStore(db_path)
+        await first.set(5, "cuisines", "italian,asian")
+        await first.close()
+
+        second = PreferencesStore(db_path)
+        profile = await second.get_profile(5)
+        assert profile["soft_preferences"]["cuisines"] == ["italian", "asian"]
+        await second.close()
+
+    async def test_get_profile_backfills_from_legacy_preferences_when_profile_row_missing(
+        self,
+        store,
+    ):
+        db = await store._ensure_db()
+        await db.execute(
+            "INSERT INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
+            (42, "diet", "веган"),
+        )
+        await db.execute(
+            "INSERT INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
+            (42, "allergens_excluded", "nuts, lactose"),
+        )
+        await db.execute(
+            "INSERT INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
+            (42, "cuisines", "asian, georgian"),
+        )
+        await db.execute(
+            "INSERT INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
+            (42, "custom_note", "без грибов"),
+        )
+        await db.commit()
+
+        profile = await store.get_profile(42)
+        assert profile["hard_constraints"]["diet"] == "vegan"
+        assert profile["hard_constraints"]["allergens_excluded"] == ["nuts", "lactose"]
+        assert profile["soft_preferences"]["cuisines"] == ["asian", "georgian"]
+        assert profile["soft_preferences"]["freeform_preferences"]["custom_note"] == "без грибов"

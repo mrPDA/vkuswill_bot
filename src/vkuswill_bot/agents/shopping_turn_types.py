@@ -39,6 +39,10 @@ class ShoppingTurnAgentProtocol(Protocol):
     async def _classify_intent(self, text: str) -> PromptProfile | None: ...
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]: ...
+    async def _load_user_preferences_bundle(
+        self,
+        user_id: int,
+    ) -> tuple[dict[str, str], dict[str, Any]]: ...
 
     async def _get_tools(self) -> list[dict[str, Any]]: ...
 
@@ -103,6 +107,14 @@ class ShoppingTurnAgentProtocol(Protocol):
         call_cache: dict[str, str],
     ) -> tuple[dict[str, Any] | None, dict[str, Any], str]: ...
 
+    async def _recover_cart_from_recipe_ingredients_history(
+        self,
+        *,
+        history: list[dict[str, Any]],
+        llm_provider: str,
+        call_cache: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any], str]: ...
+
 
 @dataclass(slots=True)
 class TurnState:
@@ -115,6 +127,7 @@ class TurnState:
     explicit_egg_pack_request: bool
     requested_ingredients: list[dict[str, Any]]
     user_preferences: dict[str, str]
+    user_preference_profile: dict[str, Any] = field(default_factory=dict)
     cart_data_this_turn: dict[str, Any] | None = None
     manual_recovery_used: bool = False
     cart_creation_recovery_used: bool = False
@@ -149,13 +162,24 @@ async def build_turn_state(
 
     # LLM-классификация и загрузка preferences — независимы, запускаем параллельно.
     classify_task = asyncio.create_task(agent._classify_intent(text))
-    prefs_task = asyncio.create_task(agent._load_user_preferences(user_id))
+    bundle_loader = getattr(type(agent), "_load_user_preferences_bundle", None)
+    if callable(bundle_loader):
+        prefs_bundle_task = asyncio.create_task(agent._load_user_preferences_bundle(user_id))
+        prefs_task: asyncio.Task[dict[str, str]] | None = None
+    else:
+        prefs_bundle_task = None
+        prefs_task = asyncio.create_task(agent._load_user_preferences(user_id))
 
     llm_profile: PromptProfile | None = None
     with contextlib.suppress(Exception):
         llm_profile = await classify_task
 
     prompt_profile = llm_profile or resolve_prompt_profile(text=text, history=history)
+    if (
+        prompt_profile == "meal_plan"
+        and not getattr(agent, "_meal_plan_intent_routing_enabled", True)
+    ):
+        prompt_profile = "cart" if is_cart_intent(text) else "recipe"
     history = ensure_system_prompt(
         history=history,
         prompt_profile=prompt_profile,
@@ -167,9 +191,21 @@ async def build_turn_state(
     history.append({"role": "user", "content": text})
     normalized_history = agent._normalize_history(history)
 
-    user_preferences = await prefs_task
+    user_preferences: dict[str, str] = {}
+    user_preference_profile: dict[str, Any] = {}
+    if prefs_bundle_task is not None:
+        with contextlib.suppress(Exception):
+            prefs_bundle = await prefs_bundle_task
+            if isinstance(prefs_bundle, tuple) and len(prefs_bundle) == 2:
+                prefs_value, profile_value = prefs_bundle
+                if isinstance(prefs_value, dict):
+                    user_preferences = prefs_value
+                if isinstance(profile_value, dict):
+                    user_preference_profile = profile_value
+    elif prefs_task is not None:
+        user_preferences = await prefs_task
 
-    cart_intent = is_cart_intent(text) or prompt_profile in ("cart", "recipe")
+    cart_intent = is_cart_intent(text) or prompt_profile in ("cart", "recipe", "meal_plan")
 
     return TurnState(
         history=normalized_history,
@@ -181,4 +217,5 @@ async def build_turn_state(
         explicit_egg_pack_request=has_explicit_egg_pack_request(text),
         requested_ingredients=extract_structured_ingredient_requests(text),
         user_preferences=user_preferences,
+        user_preference_profile=user_preference_profile,
     )

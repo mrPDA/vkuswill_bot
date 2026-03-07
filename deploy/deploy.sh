@@ -29,6 +29,8 @@ LANGFUSE_CONTAINER_NAME="${LANGFUSE_CONTAINER_NAME:-vkuswill-langfuse}"
 METABASE_CONTAINER_NAME="${METABASE_CONTAINER_NAME:-vkuswill-metabase}"
 HEALTH_PORT="${HEALTH_PORT:-8080}"
 MCP_DEFAULT_PORT="${MCP_DEFAULT_PORT:-8081}"
+LANGFUSE_PORT="${LANGFUSE_PORT:-3000}"
+METABASE_PORT="${METABASE_PORT:-3001}"
 PUBLIC_WEBHOOK_PATH=""
 HEALTH_RETRIES=10
 HEALTH_DELAY=5
@@ -429,15 +431,16 @@ else:
 
   docker run -d \
     --name "$LANGFUSE_CONTAINER_NAME" \
+    --init \
     --restart unless-stopped \
     --network host \
     -e "DATABASE_URL=${LF_DB_URL}" \
-    -e "NEXTAUTH_URL=http://localhost:3000" \
+    -e "NEXTAUTH_URL=http://localhost:${LANGFUSE_PORT}" \
     -e "NEXTAUTH_SECRET=${LF_AUTH_SECRET}" \
     -e "SALT=${LF_SALT}" \
     -e "TELEMETRY_ENABLED=false" \
     -e "HOSTNAME=0.0.0.0" \
-    -e "PORT=3000" \
+    -e "PORT=${LANGFUSE_PORT}" \
     --log-driver json-file \
     --log-opt max-size=20m \
     --log-opt max-file=2 \
@@ -447,7 +450,7 @@ else:
   # Подождать и проверить, что контейнер жив
   sleep 5
   if docker ps -q -f "name=${LANGFUSE_CONTAINER_NAME}" | grep -q .; then
-    log "Langfuse запущен на порту 3000"
+    log "Langfuse запущен на порту ${LANGFUSE_PORT}"
   else
     warn "Langfuse контейнер упал! Логи:"
     docker logs "$LANGFUSE_CONTAINER_NAME" --tail 30 2>&1 || true
@@ -500,6 +503,7 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
 
   docker run -d \
     --name "$METABASE_CONTAINER_NAME" \
+    --init \
     --restart unless-stopped \
     --network host \
     -e "MB_DB_TYPE=postgres" \
@@ -509,7 +513,8 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
     -e "MB_DB_PASS=${MB_PASS}" \
     -e "MB_DB_HOST=${MB_HOST}" \
     -e "MB_JETTY_HOST=0.0.0.0" \
-    -e "MB_JETTY_PORT=3001" \
+    -e "MB_JETTY_PORT=${METABASE_PORT}" \
+    -e "MB_APPLICATION_DB_MAX_CONNECTION_POOL_SIZE=5" \
     -e "JAVA_TOOL_OPTIONS=-Xmx512m" \
     --memory 1g \
     --log-driver json-file \
@@ -521,7 +526,7 @@ print(u.hostname or '', u.port or 6432, unquote(u.username or ''), unquote(u.pas
   # Подождать и проверить, что контейнер жив
   sleep 5
   if docker ps -q -f "name=${METABASE_CONTAINER_NAME}" | grep -q .; then
-    log "Metabase запущен на порту 3001"
+    log "Metabase запущен на порту ${METABASE_PORT}"
   else
     warn "Metabase контейнер упал! Логи:"
     docker logs "$METABASE_CONTAINER_NAME" --tail 30 2>&1 || true
@@ -614,6 +619,7 @@ fi
 
 docker run -d \
   --name "$CONTAINER_NAME" \
+  --init \
   --restart unless-stopped \
   --network host \
   $ENV_FLAG \
@@ -647,6 +653,7 @@ deploy_mcp_server() {
   log "Запуск контейнера ${MCP_CONTAINER_NAME} на порту ${MCP_PORT}..."
   docker run -d \
     --name "$MCP_CONTAINER_NAME" \
+    --init \
     --restart unless-stopped \
     --network host \
     $ENV_FLAG \

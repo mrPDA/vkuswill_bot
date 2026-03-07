@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from typing import Any
 
 from vkuswill_bot.agents.cart_output_renderer import (
@@ -10,6 +12,9 @@ from vkuswill_bot.agents.cart_output_renderer import (
     render_stable_cart_output,
 )
 from vkuswill_bot.agents.llm_helpers import assistant_msg
+from vkuswill_bot.agents.meal_plan_response_contract import (
+    render_meal_plan_contract_response,
+)
 from vkuswill_bot.agents.recovery_hints import (
     FORCE_CART_FLOW_CONTINUATION_HINT,
     FORCE_CART_LINK_SOURCE_HINT,
@@ -22,8 +27,23 @@ from vkuswill_bot.agents.recovery_policy import (
 )
 from vkuswill_bot.agents.shopping_turn_contracts import NoToolCallsOutcome
 
+logger = logging.getLogger(__name__)
+
 
 class DefaultFinalResponseBuilder:
+    @staticmethod
+    def _render_meal_plan_response(
+        *,
+        state: Any,
+        fallback_message: str = "",
+    ) -> str:
+        return render_meal_plan_contract_response(
+            history=state.history,
+            cart_data=state.cart_data_this_turn,
+            user_preference_profile=state.user_preference_profile,
+            fallback_message=fallback_message,
+        )
+
     def handle_no_tool_calls(
         self,
         *,
@@ -81,7 +101,12 @@ class DefaultFinalResponseBuilder:
             state.history = agent._normalize_history(state.history)
             return NoToolCallsOutcome(continue_loop=True)
 
-        if state.cart_data_this_turn is not None:
+        if state.prompt_profile == "meal_plan":
+            final_text = self._render_meal_plan_response(
+                state=state,
+                fallback_message=final_text if state.cart_data_this_turn is None else "",
+            )
+        elif state.cart_data_this_turn is not None:
             agent._ensure_cart_price_summary(
                 cart_data=state.cart_data_this_turn,
                 product_index=state.product_index_this_turn,
@@ -129,6 +154,16 @@ class DefaultFinalResponseBuilder:
                 llm_provider=llm_provider,
                 call_cache=state.mcp_call_cache,
             )
+            if state.cart_data_this_turn is None:
+                (
+                    state.cart_data_this_turn,
+                    recovered_cart_args,
+                    recovered_cart_result,
+                ) = await agent._recover_cart_from_recipe_ingredients_history(
+                    history=state.history,
+                    llm_provider=llm_provider,
+                    call_cache=state.mcp_call_cache,
+                )
             if state.cart_data_this_turn is not None:
                 agent._capture_cart_snapshot(
                     user_id=user_id,
@@ -136,6 +171,29 @@ class DefaultFinalResponseBuilder:
                     args=recovered_cart_args,
                     result=recovered_cart_result,
                 )
+
+        if state.prompt_profile == "meal_plan":
+            final_text = self._render_meal_plan_response(
+                state=state,
+                fallback_message=too_many_tools_error if state.cart_data_this_turn is None else "",
+            )
+            agent._history[user_id] = agent._trim_history(
+                [*state.history, {"role": "assistant", "content": final_text}],
+            )
+            if trace is not None:
+                trace.update(
+                    output=final_text,
+                    metadata={
+                        "reason": (
+                            "max_tool_calls_meal_plan_with_cart"
+                            if state.cart_data_this_turn is not None
+                            else "max_tool_calls_meal_plan_fail_soft"
+                        ),
+                        "provider": llm_provider,
+                        "tool_calls": max_tool_calls,
+                    },
+                )
+            return final_text
 
         if state.cart_data_this_turn is not None:
             agent._ensure_cart_price_summary(
@@ -164,3 +222,67 @@ class DefaultFinalResponseBuilder:
                 metadata={"reason": "max_tool_calls", "provider": llm_provider},
             )
         return too_many_tools_error
+
+    async def try_recipe_cart_recovery(
+        self,
+        *,
+        agent: Any,
+        state: Any,
+        user_id: int,
+        llm_provider: str,
+        trace: Any | None,
+    ) -> str | None:
+        """Попытаться восстановить корзину из recipe_search или recipe_ingredients."""
+        cart_data = None
+        cart_args: dict[str, Any] = {}
+        cart_result = ""
+
+        with contextlib.suppress(Exception):
+            cart_data, cart_args, cart_result = (
+                await agent._recover_cart_from_recipe_search_history(
+                    history=state.history,
+                    llm_provider=llm_provider,
+                    call_cache=state.mcp_call_cache,
+                )
+            )
+        if cart_data is None:
+            with contextlib.suppress(Exception):
+                cart_data, cart_args, cart_result = (
+                    await agent._recover_cart_from_recipe_ingredients_history(
+                        history=state.history,
+                        llm_provider=llm_provider,
+                        call_cache=state.mcp_call_cache,
+                    )
+                )
+        if cart_data is None:
+            return None
+
+        agent._capture_cart_snapshot(
+            user_id=user_id,
+            tool_name="vkusvill_cart_link_create",
+            args=cart_args,
+            result=cart_result,
+        )
+        state.cart_data_this_turn = cart_data
+        agent._ensure_cart_price_summary(
+            cart_data=cart_data,
+            product_index=state.product_index_this_turn,
+        )
+        if state.prompt_profile == "meal_plan":
+            final_text = self._render_meal_plan_response(state=state)
+        else:
+            final_text = render_stable_cart_output(cart_data)
+        agent._history[user_id] = agent._trim_history(
+            [*state.history, {"role": "assistant", "content": final_text}],
+        )
+        if trace is not None:
+            with contextlib.suppress(Exception):
+                trace.update(
+                    output=final_text,
+                    metadata={
+                        "reason": "llm_error_recovered_with_cart",
+                        "provider": llm_provider,
+                    },
+                )
+        logger.info("Recovered cart from recipe data after LLM error for user %d", user_id)
+        return final_text

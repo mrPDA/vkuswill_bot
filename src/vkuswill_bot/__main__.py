@@ -377,6 +377,7 @@ async def main() -> None:
         dialog_manager=dialog_manager,
         tool_executor=None,
         langfuse_service=langfuse_service,
+        user_store=user_store,
     )
     logger.info("Chat engine selected: %s", config.chat_engine)
 

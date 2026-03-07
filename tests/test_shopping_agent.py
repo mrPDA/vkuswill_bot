@@ -1496,6 +1496,33 @@ async def test_applies_saved_preferences_to_search_without_extra_tool_steps() ->
 
 
 @pytest.mark.asyncio
+async def test_load_user_preference_profile_reads_structured_profile() -> None:
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={
+            "ok": True,
+            "preferences": [{"category": "молоко", "preference": "безлактозное 3,2%"}],
+            "profile": {
+                "schema_version": 1,
+                "hard_constraints": {"diet": "vegan"},
+                "soft_preferences": {"cuisines": ["italian"]},
+                "operational_preferences": {},
+            },
+        },
+    )
+    llm_script = [_FakeResponse(_FakeMessage(content="ok"))]
+    agent, _mcp = _agent(
+        llm_script=llm_script,
+        mcp_client=mcp,
+        preferences_store=prefs_store,
+    )
+
+    profile = await agent._load_user_preference_profile(42)
+    assert profile["hard_constraints"]["diet"] == "vegan"
+    assert profile["soft_preferences"]["cuisines"] == ["italian"]
+
+
+@pytest.mark.asyncio
 async def test_preference_set_handled_locally() -> None:
     """user_preferences_set обрабатывается локально через PreferencesStore."""
     mcp = _FakeMCPClient(tool_result='{"ok": true}')
@@ -3190,6 +3217,127 @@ async def test_prompt_profile_and_compact_followup_are_applied_per_step() -> Non
     assert "[PROMPT_MODE:compact_followup]" not in first_system
     assert "[PROMPT_PROFILE:cart]" in second_system
     assert "[PROMPT_MODE:compact_followup]" in second_system
+
+
+@pytest.mark.asyncio
+async def test_meal_plan_injects_structured_preference_profile_into_llm_messages() -> None:
+    mcp = _FakeMCPClient(tool_result='{"ok": true}')
+    prefs_store = _FakePreferencesStore(
+        payload={
+            "ok": True,
+            "preferences": [{"category": "диета", "preference": "vegan"}],
+            "profile": {
+                "schema_version": 1,
+                "hard_constraints": {"diet": "vegan"},
+                "soft_preferences": {"cuisines": ["italian"]},
+                "operational_preferences": {"max_cook_time_min": 30},
+            },
+        }
+    )
+    llm_client = _FakeLLMClient([_FakeResponse(_FakeMessage(content="ok"))])
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        preferences_store=prefs_store,  # type: ignore[arg-type]
+        prompt_profiles_enabled=True,
+        meal_plan_intent_routing_enabled=True,
+        meal_plan_executor_enabled=False,
+    )
+
+    result = await agent.process_message(
+        user_id=126,
+        text="собери меню на неделю для 2 человек, один ребенок 2 года с аллергией на орехи",
+    )
+
+    assert "Параметры запроса:" in result
+    assert "План по дням:" in result
+    assert "Проверка ограничений:" in result
+    assert "Перекус 1:" in result
+    assert "орехи" in result.lower()
+    assert prefs_store.calls == [126]
+    first_call_messages = llm_client.completions.calls[0]["messages"]
+    system_messages = [
+        str(message.get("content", ""))
+        for message in first_call_messages
+        if isinstance(message, dict) and message.get("role") == "system"
+    ]
+    assert any("[PROMPT_PROFILE:meal_plan]" in message for message in system_messages)
+    profile_messages = [
+        message for message in system_messages if "[USER_PREFERENCE_PROFILE]" in message
+    ]
+    assert len(profile_messages) == 1
+    assert '"diet": "vegan"' in profile_messages[0]
+    assert '"cuisines": ["italian"]' in profile_messages[0]
+    assert '"max_cook_time_min": 30' in profile_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_meal_plan_response_contract_keeps_cart_summary_when_cart_created() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/meal-plan",
+                "price_summary": {
+                    "count": 4,
+                    "total": 1234.0,
+                    "total_text": "Итого: 1 234 руб",
+                    "items": [
+                        "- Овсянка x 2 = 200 руб",
+                        "- Индейка x 1 = 500 руб",
+                    ],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    llm_client = _FakeLLMClient(
+        [
+            _FakeResponse(
+                _FakeMessage(
+                    content="",
+                    tool_calls=[
+                        _FakeToolCall(
+                            "tc-1",
+                            "vkusvill_cart_link_create",
+                            '{"products":[{"xml_id":1,"q":1}]}',
+                        )
+                    ],
+                )
+            ),
+            _FakeResponse(_FakeMessage(content="ok")),
+        ]
+    )
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+        meal_plan_intent_routing_enabled=True,
+        meal_plan_executor_enabled=False,
+    )
+
+    result = await agent.process_message(
+        user_id=127,
+        text="меню на неделю для 4 человек, один ребенок 2 года с аллергией на орехи",
+    )
+
+    assert "🍽 План питания" in result
+    assert "Корзина:" in result
+    assert "https://shop.example/cart/meal-plan" in result
+    assert "Итого: 1 234 руб" in result
+    assert "День 1:" in result
+    assert "Адаптации по группам:" in result
 
 
 @pytest.mark.asyncio

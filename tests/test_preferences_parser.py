@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 
-from vkuswill_bot.services.preferences_parser import parse_preferences
+from vkuswill_bot.services.preferences_parser import parse_preference_profile, parse_preferences
 
 
 def test_parse_preferences_returns_empty_for_invalid_json() -> None:
@@ -33,3 +33,46 @@ def test_parse_preferences_extracts_normalized_mapping() -> None:
         "milk": "козье",
         "bread": "бездрожжевой",
     }
+
+
+def test_parse_preference_profile_prefers_profile_field() -> None:
+    payload = json.dumps(
+        {
+            "ok": True,
+            "preferences": [{"category": "milk", "preference": "козье"}],
+            "profile": {
+                "schema_version": 1,
+                "hard_constraints": {"diet": "веганское"},
+                "soft_preferences": {"cuisines": ["italian"]},
+                "operational_preferences": {},
+            },
+        },
+        ensure_ascii=False,
+    )
+    parsed = parse_preference_profile(payload)
+    assert parsed["hard_constraints"]["diet"] == "vegan"
+    assert parsed["soft_preferences"]["cuisines"] == ["italian"]
+
+
+def test_parse_preference_profile_fallback_maps_known_legacy_fields() -> None:
+    payload = json.dumps(
+        {
+            "ok": True,
+            "preferences": [
+                {"category": "diet", "preference": "вегетарианское"},
+                {"category": "allergens_excluded", "preference": "nuts, lactose"},
+                {"category": "cuisines", "preference": "italian, georgian"},
+                {"category": "liked_ingredients", "preference": "tomato; basil"},
+                {"category": "max_dishes", "preference": "8"},
+                {"category": "молоко", "preference": "безлактозное"},
+            ],
+        },
+        ensure_ascii=False,
+    )
+    parsed = parse_preference_profile(payload)
+    assert parsed["hard_constraints"]["diet"] == "vegetarian"
+    assert parsed["hard_constraints"]["allergens_excluded"] == ["nuts", "lactose"]
+    assert parsed["soft_preferences"]["cuisines"] == ["italian", "georgian"]
+    assert parsed["soft_preferences"]["liked_ingredients"] == ["tomato", "basil"]
+    assert parsed["operational_preferences"]["max_dishes"] == 8
+    assert parsed["soft_preferences"]["freeform_preferences"]["молоко"] == "безлактозное"

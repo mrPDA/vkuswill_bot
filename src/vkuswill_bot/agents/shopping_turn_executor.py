@@ -1,22 +1,16 @@
 """Исполнитель одного turn-а ShoppingAgent (LLM loop + tool loop + recovery)."""
-
 from __future__ import annotations
-
 import contextlib
-import json
+import hashlib
 import logging
+import time
 from typing import TYPE_CHECKING, Any
-
 from vkuswill_bot.agents.exceptions import LLMOverloadedError
-from vkuswill_bot.agents.llm_helpers import (
-    estimate_usage_details,
-    extract_message,
-    extract_text,
-    extract_tool_calls,
-)
-from vkuswill_bot.agents.prompt_helpers import (
-    build_llm_input_messages,
-    resolve_prompt_mode,
+from vkuswill_bot.agents.meal_plan_executor import run_meal_plan_turn
+from vkuswill_bot.agents.shopping_turn_message_ops import (
+    build_turn_llm_input,
+    estimate_usage,
+    unpack_llm_response,
 )
 from vkuswill_bot.agents.shopping_final_response_builder import DefaultFinalResponseBuilder
 from vkuswill_bot.agents.shopping_tool_step_processor import DefaultToolStepProcessor
@@ -24,29 +18,31 @@ from vkuswill_bot.agents.shopping_turn_types import (
     ShoppingTurnAgentProtocol,
     build_turn_state,
 )
+from vkuswill_bot.services.meal_plan_rollout_policy import (
+    evaluate_non_prod_rollout_bypass,
+    resolve_rollout_percent,
+)
+from vkuswill_bot.services.meal_plan_trace_metadata import (
+    history_char_count,
+    resolve_metrics_trace_id,
+)
 
 if TYPE_CHECKING:
     from vkuswill_bot.services.chat_engine import ProgressCallback
-
 logger = logging.getLogger(__name__)
-
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
-_ERROR_OVERLOADED = (
-    "Сейчас очень много запросов — все ассистенты заняты. "
-    "Попробуйте через 1–2 минуты, я обязательно помогу! 🙏"
-)
-_ERROR_TOO_MANY_TOOLS = (
-    "Не удалось завершить подбор в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
-)
+_ERROR_OVERLOADED = "Сейчас много запросов, все ассистенты заняты. Попробуйте через 1–2 минуты."
+_ERROR_TOO_MANY_TOOLS = "Не удалось завершить в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
 
-
-def _history_char_count(history: list[dict[str, Any]]) -> int:
-    total = 0
-    for message in history:
-        with contextlib.suppress(Exception):
-            total += len(json.dumps(message, ensure_ascii=False))
-    return total
-
+def _is_user_in_rollout(*, user_id: int, rollout_percent: int) -> bool:
+    percent = max(0, min(100, int(rollout_percent)))
+    if percent >= 100:
+        return True
+    if percent <= 0:
+        return False
+    digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()
+    bucket = int(digest[:8], 16) % 100
+    return bucket < percent
 
 async def run_locked_turn(
     *,
@@ -55,42 +51,112 @@ async def run_locked_turn(
     text: str,
     on_progress: ProgressCallback | None,
     llm_provider: str,
+    record_routing_event: bool = True,
 ) -> str:
     """Выполнить полный цикл обработки пользовательского сообщения под user-lock."""
     state = await build_turn_state(agent=agent, user_id=user_id, text=text)
-
-    tools = await agent._get_tools()
     trace = agent._create_trace(
         user_id=user_id,
         text=text,
         llm_provider=llm_provider,
         prompt_profile=state.prompt_profile,
     )
-
     async def _progress(message: str) -> None:
         if on_progress is None:
             return
         with contextlib.suppress(Exception):
             await on_progress(message)
-
+    shadow_mode = bool(getattr(agent, "_meal_plan_shadow_mode_enabled", False))
+    rollout_percent = int(getattr(agent, "_meal_plan_rollout_percent", 100))
+    controller = getattr(agent, "_meal_plan_rollout_controller", None)
+    bypass = evaluate_non_prod_rollout_bypass(
+        enabled=bool(getattr(agent, "_meal_plan_allow_unvalidated_rollout", False)),
+        environment=str(getattr(agent, "_deployment_environment", "production")),
+        reason=str(getattr(agent, "_meal_plan_unvalidated_rollout_reason", "")),
+        actor=str(getattr(agent, "_meal_plan_unvalidated_rollout_actor", "")),
+        expires_at=str(getattr(agent, "_meal_plan_unvalidated_rollout_expires_at", "")),
+        max_ttl_seconds=int(getattr(agent, "_meal_plan_unvalidated_rollout_max_ttl_seconds", 86400)),
+    )
+    rollout_percent = await resolve_rollout_percent(
+        shadow_mode=shadow_mode,
+        configured_percent=rollout_percent,
+        controller=controller,
+        allow_unvalidated=bypass.allow_unvalidated,
+    )
+    can_use_executor = (
+        state.prompt_profile == "meal_plan"
+        and getattr(agent, "_meal_plan_executor_enabled", False)
+        and not shadow_mode
+        and _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)
+    )
+    metrics_trace_id = resolve_metrics_trace_id(trace=trace, user_id=user_id)
+    metrics_sink = getattr(agent, "_meal_plan_metrics_sink", None)
+    if record_routing_event and metrics_sink is not None:
+        with contextlib.suppress(Exception):
+            await metrics_sink.record_routing(
+                profile=state.prompt_profile,
+                executed_via_executor=can_use_executor,
+                shadow_mode=shadow_mode,
+                user_id=user_id,
+                trace_id=metrics_trace_id,
+                rollout_bypass=bypass.audit.as_dict(),
+            )
+    if can_use_executor:
+        async def _fallback_to_standard_turn(reason: str) -> str:
+            notice = f"⚠️ {reason}. Перехожу к стандартной обработке запроса."
+            previous = bool(getattr(agent, "_meal_plan_executor_enabled", False))
+            agent._meal_plan_executor_enabled = False
+            try:
+                fallback_text = await run_locked_turn(
+                    agent=agent,
+                    user_id=user_id,
+                    text=text,
+                    on_progress=on_progress,
+                    llm_provider=llm_provider,
+                    record_routing_event=False,
+                )
+            finally:
+                agent._meal_plan_executor_enabled = previous
+            return f"{notice}\n\n{fallback_text}".strip()
+        started_at = time.monotonic()
+        result = await run_meal_plan_turn(
+            agent=agent,
+            state=state,
+            user_id=user_id,
+            text=text,
+            llm_provider=llm_provider,
+            trace=trace,
+            on_progress=_progress,
+            fallback_to_standard_turn=_fallback_to_standard_turn,
+        )
+        if metrics_sink is not None:
+            with contextlib.suppress(Exception):
+                await metrics_sink.record_executor_result(
+                    outcome=(
+                        "fallback"
+                        if "Перехожу к стандартной обработке запроса." in result
+                        else "success"
+                    ),
+                    latency_ms=(time.monotonic() - started_at) * 1000,
+                    user_id=user_id,
+                    trace_id=metrics_trace_id,
+                )
+        return result
+    tools = await agent._get_tools()
     tool_step_processor: Any = DefaultToolStepProcessor()
     final_response_builder: Any = DefaultFinalResponseBuilder()
-
     await _progress("⚙️ Анализирую запрос...")
-
     for step in range(1, agent._max_tool_calls + 1):
-        prompt_mode = resolve_prompt_mode(
+        prompt_mode, llm_input = build_turn_llm_input(
+            history=state.history,
+            prompt_profile=state.prompt_profile,
             step=step,
             expecting_final_answer=state.cart_data_this_turn is not None,
             compact_followup_prompt_enabled=agent._compact_followup_prompt_enabled,
-        )
-        llm_input = build_llm_input_messages(
-            history=state.history,
-            prompt_profile=state.prompt_profile,
-            mode=prompt_mode,
             prompt_profiles_enabled=agent._prompt_profiles_enabled,
+            preference_profile=state.user_preference_profile,
         )
-        llm_input_chars = _history_char_count(llm_input)
+        llm_input_chars = history_char_count(llm_input)
         state.total_llm_input_chars += llm_input_chars
         if step > 1 and state.total_llm_input_chars > agent._max_input_chars_per_turn:
             logger.warning(
@@ -109,7 +175,6 @@ async def run_locked_turn(
                     },
                 )
             return _ERROR_TOO_MANY_TOOLS
-
         gen = None
         if trace is not None:
             gen = trace.generation(
@@ -126,15 +191,12 @@ async def run_locked_turn(
                     "compact_prompt": prompt_mode == "compact",
                 },
             )
-
         max_tokens_override = None
         if (
-            state.cart_data_this_turn is not None
-            and state.recipe_flow_started_this_turn
+            state.recipe_flow_started_this_turn
             and getattr(agent, "_llm_max_tokens_recipe", None) is not None
         ):
             max_tokens_override = agent._llm_max_tokens_recipe
-
         try:
             response = await agent._call_llm(
                 messages=llm_input,
@@ -152,14 +214,28 @@ async def run_locked_turn(
             logger.error("ShoppingAgent LLM error: %s", exc, exc_info=True)
             if gen is not None:
                 gen.end(output=str(exc), level="ERROR", status_message="LLM error")
+
+            if (
+                state.cart_data_this_turn is None
+                and state.cart_intent
+                and state.recipe_flow_started_this_turn
+            ):
+                recovered = await final_response_builder.try_recipe_cart_recovery(
+                    agent=agent,
+                    state=state,
+                    user_id=user_id,
+                    llm_provider=llm_provider,
+                    trace=trace,
+                )
+                if recovered is not None:
+                    return recovered
             agent._history[user_id] = state.history
             return _ERROR_GENERIC
-
-        message = extract_message(response)
+        message, tool_calls, final_text = unpack_llm_response(response)
         usage_details = agent._extract_usage_details(response)
         usage_source = "provider"
         if usage_details is None:
-            usage_details = estimate_usage_details(messages=llm_input, message=message)
+            usage_details = estimate_usage(messages=llm_input, message=message)
             usage_source = "estimated" if usage_details is not None else "missing"
             logger.warning(
                 "ShoppingAgent response has no usage details (provider=%s, step=%d, source=%s)",
@@ -177,10 +253,8 @@ async def run_locked_turn(
                     "prompt_profile": state.prompt_profile,
                 },
             )
-
-        tool_calls = extract_tool_calls(message)
         if not tool_calls:
-            final_text = extract_text(message) or _ERROR_GENERIC
+            final_text = final_text or _ERROR_GENERIC
             no_tool_calls_outcome = final_response_builder.handle_no_tool_calls(
                 agent=agent,
                 state=state,
@@ -195,7 +269,6 @@ async def run_locked_turn(
             if no_tool_calls_outcome.continue_loop:
                 continue
             return no_tool_calls_outcome.final_text or _ERROR_GENERIC
-
         await tool_step_processor.run_step(
             agent=agent,
             state=state,
@@ -209,7 +282,6 @@ async def run_locked_turn(
             on_progress=_progress,
             max_tool_calls=agent._max_tool_calls,
         )
-
     return await final_response_builder.finalize_after_max_steps(
         agent=agent,
         state=state,

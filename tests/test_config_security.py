@@ -139,6 +139,50 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_compact_followup_prompt_enabled is True
 
+    def test_meal_plan_intent_routing_default_disabled(self):
+        """Маршрутизация meal-plan выключена по умолчанию для безопасного rollout."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_intent_routing_enabled is False
+
+    def test_meal_plan_executor_default_disabled(self):
+        """Отдельный meal-plan executor выключен по умолчанию для staged rollout."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_executor_enabled is False
+
+    def test_meal_plan_shadow_mode_default_disabled(self):
+        """Shadow-mode по умолчанию выключен."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_shadow_mode_enabled is False
+
+    def test_meal_plan_rollout_percent_default_full(self):
+        """Rollout percent по умолчанию 100 (управляется флагами)."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_rollout_percent == 100
+
+    def test_meal_plan_allow_unvalidated_rollout_default_disabled(self):
+        """Unsafe rollout override по умолчанию выключен."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_allow_unvalidated_rollout is False
+
+    def test_meal_plan_unvalidated_rollout_audit_defaults_empty(self):
+        """Поля аудита non-prod bypass по умолчанию пустые."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_unvalidated_rollout_reason == ""
+        assert cfg.meal_plan_unvalidated_rollout_actor == ""
+        assert cfg.meal_plan_unvalidated_rollout_expires_at == ""
+
+    def test_meal_plan_unvalidated_rollout_max_ttl_default_and_bounds(self):
+        """TTL bypass-а ограничен и имеет безопасный default."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_unvalidated_rollout_max_ttl_seconds == 86400
+
     def test_debug_disabled_by_default(self):
         """Debug отключён по умолчанию."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
