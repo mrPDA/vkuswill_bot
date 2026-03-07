@@ -243,6 +243,7 @@ class Config(BaseSettings):
     feedback_bonus_cooldown_days: int = 30  # частота бонуса за feedback
     voice_link_code_ttl_minutes: int = 10  # TTL одноразового кода привязки Алисы
     voice_link_api_key: str = ""  # API key для /voice-link/* endpoint'ов (вариант 1)
+    debug_api_key: str = ""  # API key для stage-only /debug/* endpoint'ов
 
     # Промпты (переопределение через env / Lockbox для production)
     system_prompt: str = ""

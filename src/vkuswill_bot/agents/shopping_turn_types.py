@@ -22,6 +22,7 @@ from vkuswill_bot.services.prompts import PromptProfile
 class ShoppingTurnAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
     _last_cart_snapshot: dict[int, dict[str, Any]]
+    _last_trace_id: dict[int, str]
     _prompt_profiles_enabled: bool
     _compact_followup_prompt_enabled: bool
     _max_tool_calls: int

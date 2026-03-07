@@ -65,6 +65,7 @@ class _MetricsSinkSpy:
 
 class _TraceSpy:
     def __init__(self) -> None:
+        self.id = "trace-123"
         self.updates: list[dict[str, Any]] = []
 
     def update(self, **kwargs: Any) -> None:
@@ -81,6 +82,7 @@ class _TraceSpy:
 class _AgentStub:
     def __init__(self, metrics_sink: _MetricsSinkSpy) -> None:
         self._history: dict[int, list[dict[str, Any]]] = {}
+        self._last_trace_id: dict[int, str] = {}
         self._meal_plan_shadow_mode_enabled = False
         self._meal_plan_rollout_percent = 100
         self._meal_plan_rollout_controller = None
@@ -203,6 +205,7 @@ async def test_run_locked_turn_writes_intent_conflict_metadata_to_trace(
     assert metadata["intent_conflict"] is True
     assert metadata["intent_conflict_severity"] == "high"
     assert metadata["route_override_applied"] is False
+    assert agent._last_trace_id[20] == "trace-123"
 
 
 @pytest.mark.asyncio

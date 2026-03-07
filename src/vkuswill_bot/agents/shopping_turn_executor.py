@@ -66,6 +66,10 @@ async def run_locked_turn(
         llm_provider=llm_provider,
         prompt_profile=None,
     )
+    if trace is not None:
+        trace_id = str(getattr(trace, "id", "")).strip()
+        if trace_id and trace_id != "noop":
+            agent._last_trace_id[user_id] = trace_id
     state = await build_turn_state(agent=agent, user_id=user_id, text=text, trace=trace)
     if trace is not None:
         trace.update(

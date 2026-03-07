@@ -12,6 +12,7 @@ SERVICES_DIR = Path(__file__).resolve().parents[1] / "src" / "vkuswill_bot" / "s
 LAYER_BY_MODULE: dict[str, str] = {
     # Runtime
     "chat_engine_factory": "runtime",
+    "debug_api": "runtime",
     "stats_aggregator": "runtime",
     "tool_executor": "runtime",
     "tool_executor_pipeline": "runtime",

@@ -617,6 +617,19 @@ if [[ -f "$PROMPT_FILE" ]] && [[ -s "$PROMPT_FILE" ]]; then
   log "SYSTEM_PROMPT загружен из ${PROMPT_FILE} ($(wc -c < "$PROMPT_FILE") байт)"
 fi
 
+# Stage-only debug API: если отдельный DEBUG_API_KEY не задан,
+# используем VOICE_LINK_API_KEY как fallback для быстрого smoke/regression flow.
+DEBUG_API_ENV=""
+if [[ "${DEPLOY_ROOT}" == *-stg ]] && [[ -f "$ENV_FILE" ]]; then
+  debug_api_key_raw=$(grep -E '^DEBUG_API_KEY=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- || true)
+  voice_link_api_key_raw=$(grep -E '^VOICE_LINK_API_KEY=' "$ENV_FILE" | tail -1 | cut -d'=' -f2- || true)
+  if [[ -z "$debug_api_key_raw" && -n "$voice_link_api_key_raw" ]]; then
+    export DEBUG_API_KEY="$voice_link_api_key_raw"
+    DEBUG_API_ENV="-e DEBUG_API_KEY"
+    log "DEBUG_API_KEY not found in env file, using VOICE_LINK_API_KEY fallback for staging"
+  fi
+fi
+
 docker run -d \
   --name "$CONTAINER_NAME" \
   --init \
@@ -625,6 +638,7 @@ docker run -d \
   $ENV_FLAG \
   $MODEL_ENV \
   $PROMPT_ENV \
+  $DEBUG_API_ENV \
   ${DEPLOY_EXTRA_ENV:-} \
   -v "${DATA_DIR}:/app/data" \
   $SSL_MOUNT \
