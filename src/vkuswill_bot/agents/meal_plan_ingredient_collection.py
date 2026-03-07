@@ -11,6 +11,9 @@ from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 from vkuswill_bot.agents.recipe_fallback import extract_recipe_ingredients_with_llm_debug
 
+_MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 2.0
+_LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 4.0
+
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
     async def _call_mcp_tool(
@@ -120,7 +123,11 @@ async def _fallback_rows_for_dish(
             servings=servings,
             adapter=adapter,
             model=model,
-            timeout_seconds=min(float(llm_timeout), timeout_seconds),
+            timeout_seconds=min(
+                float(llm_timeout),
+                timeout_seconds,
+                _LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS,
+            ),
         )
     except Exception as exc:
         return [], {
@@ -166,8 +173,9 @@ async def collect_ingredients_for_dishes(
                         call_cache=state.mcp_call_cache,
                         user_id=user_id,
                     ),
-                    timeout_seconds=timeout_seconds,
+                    timeout_seconds=min(timeout_seconds, _MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS),
                     hard_deadline_at=phase2_deadline_at,
+                    retries=0,
                 )
             except Exception as exc:
                 return dish_name, servings, [], {
