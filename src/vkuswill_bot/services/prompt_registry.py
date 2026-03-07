@@ -122,11 +122,14 @@ class PromptRegistry:
                     cache_ttl_seconds=self._cache_ttl,
                 )
                 text = prompt_obj.compile(**variables)
-                version = str(
-                    getattr(prompt_obj, "version", "")
-                    or getattr(prompt_obj, "version_id", "")
-                    or ""
-                ).strip() or None
+                version = (
+                    str(
+                        getattr(prompt_obj, "version", "")
+                        or getattr(prompt_obj, "version_id", "")
+                        or ""
+                    ).strip()
+                    or None
+                )
                 return PromptResolution(
                     name=name,
                     text=text,
