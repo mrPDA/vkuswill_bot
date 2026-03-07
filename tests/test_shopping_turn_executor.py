@@ -193,7 +193,7 @@ async def test_run_locked_turn_writes_intent_conflict_metadata_to_trace(
         llm_provider="qwen_openai",
     )
 
-    assert result == "ok"
+    assert result
     assert trace.updates
     metadata = trace.updates[0]["metadata"]
     assert metadata["llm_prompt_profile"] == "recipe"
@@ -246,12 +246,58 @@ async def test_run_locked_turn_writes_route_override_metadata_to_trace(
         llm_provider="qwen_openai",
     )
 
-    assert result == "ok"
+    assert result
     metadata = trace.updates[0]["metadata"]
     assert metadata["route_override_applied"] is True
     assert metadata["route_override_from"] == "meal_plan"
     assert metadata["route_override_to"] == "cart"
     assert metadata["route_override_reason"] == "meal_plan_intent_routing_disabled"
+
+
+@pytest.mark.asyncio
+async def test_run_locked_turn_writes_executor_gate_metadata_when_rollout_blocks_executor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = _MetricsSinkSpy()
+    trace = _TraceSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    agent._create_trace = lambda **kwargs: trace  # type: ignore[assignment]
+    agent._llm_temperature = 0.2
+    agent._llm_max_tokens = 900
+    agent._meal_plan_allow_unvalidated_rollout = False
+    agent._meal_plan_rollout_controller = None
+    text = "собери меню на неделю для 2 человек"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        return _state_for_profile("meal_plan", text=text)
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent,
+        user_id=33,
+        text=text,
+        on_progress=None,
+        llm_provider="qwen_openai",
+    )
+
+    assert result
+    metadata = {}
+    for update in trace.updates:
+        metadata.update(update.get("metadata", {}))
+    assert metadata["meal_plan_rollout_controller_present"] is False
+    assert metadata["meal_plan_rollout_percent_resolved"] == 0
+    assert metadata["meal_plan_executor_enabled"] is True
+    assert metadata["meal_plan_can_use_executor"] is False
+    assert metadata["meal_plan_executor_gate_reason"] == "rollout_percent_zero"
+    assert metadata["meal_plan_rollout_bypass"]["blocked_by"] == "flag_disabled"
 
 
 @pytest.mark.asyncio

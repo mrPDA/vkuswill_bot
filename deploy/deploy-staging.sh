@@ -17,6 +17,8 @@ readonly STG_HEALTH_PORT="18080"
 readonly STG_MCP_DEFAULT_PORT="18081"
 readonly STG_LANGFUSE_PORT="3100"
 readonly STG_METABASE_PORT="3101"
+readonly STG_MEAL_PLAN_ROLLOUT_REASON="stage_meal_plan_executor_validation"
+readonly STG_MEAL_PLAN_ROLLOUT_ACTOR="cd_staging"
 
 fail() {
   echo "[deploy-staging] ERROR: $*" >&2
@@ -29,6 +31,14 @@ validate_staging_config() {
   [[ "${STG_MCP_CONTAINER_NAME}" == *-stg ]] || fail "STG_MCP_CONTAINER_NAME must end with -stg"
   [[ "${STG_LANGFUSE_CONTAINER_NAME}" == *-stg ]] || fail "STG_LANGFUSE_CONTAINER_NAME must end with -stg"
   [[ "${STG_METABASE_CONTAINER_NAME}" == *-stg ]] || fail "STG_METABASE_CONTAINER_NAME must end with -stg"
+}
+
+compute_rollout_expiration() {
+  python3 - <<'PY'
+from datetime import UTC, datetime, timedelta
+
+print((datetime.now(UTC) + timedelta(hours=24)).isoformat())
+PY
 }
 
 print_staging_config() {
@@ -72,12 +82,21 @@ export MCP_DEFAULT_PORT="${STG_MCP_DEFAULT_PORT}"
 export LANGFUSE_PORT="${STG_LANGFUSE_PORT}"
 export METABASE_PORT="${STG_METABASE_PORT}"
 
+STG_MEAL_PLAN_ROLLOUT_EXPIRES_AT="$(compute_rollout_expiration)"
+
 # Staging-специфичные переменные окружения, которые deploy.sh
 # добавит к docker run через DEPLOY_EXTRA_ENV (если Lockbox не содержит их)
 export DEPLOY_EXTRA_ENV="\
 -e PROMPT_LABEL=staging \
 -e PROMPT_CACHE_TTL_SECONDS=30 \
 -e LLM_PROMPT_PROFILES_ENABLED=true \
--e LLM_COMPACT_FOLLOWUP_PROMPT_ENABLED=true"
+-e LLM_COMPACT_FOLLOWUP_PROMPT_ENABLED=true \
+-e MEAL_PLAN_INTENT_ROUTING_ENABLED=true \
+-e MEAL_PLAN_EXECUTOR_ENABLED=true \
+-e MEAL_PLAN_ROLLOUT_PERCENT=100 \
+-e MEAL_PLAN_ALLOW_UNVALIDATED_ROLLOUT=true \
+-e MEAL_PLAN_UNVALIDATED_ROLLOUT_REASON=${STG_MEAL_PLAN_ROLLOUT_REASON} \
+-e MEAL_PLAN_UNVALIDATED_ROLLOUT_ACTOR=${STG_MEAL_PLAN_ROLLOUT_ACTOR} \
+-e MEAL_PLAN_UNVALIDATED_ROLLOUT_EXPIRES_AT=${STG_MEAL_PLAN_ROLLOUT_EXPIRES_AT}"
 
 exec bash "${SCRIPT_DIR}/deploy.sh" "${FORWARD_ARGS[@]}"
