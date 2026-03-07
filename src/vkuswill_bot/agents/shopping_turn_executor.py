@@ -21,6 +21,7 @@ from vkuswill_bot.agents.shopping_turn_types import (
 )
 from vkuswill_bot.services.meal_plan_rollout_policy import (
     evaluate_non_prod_rollout_bypass,
+    resolve_executor_gate_reason,
     resolve_rollout_percent,
 )
 from vkuswill_bot.services.meal_plan_trace_metadata import (
@@ -47,27 +48,6 @@ def _is_user_in_rollout(*, user_id: int, rollout_percent: int) -> bool:
     digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()
     bucket = int(digest[:8], 16) % 100
     return bucket < percent
-
-
-def _resolve_executor_gate_reason(
-    *,
-    prompt_profile: str,
-    executor_enabled: bool,
-    shadow_mode: bool,
-    rollout_percent: int,
-    is_user_in_rollout: bool,
-) -> str:
-    if prompt_profile != "meal_plan":
-        return "prompt_profile_not_meal_plan"
-    if not executor_enabled:
-        return "executor_disabled"
-    if shadow_mode:
-        return "shadow_mode_enabled"
-    if rollout_percent <= 0:
-        return "rollout_percent_zero"
-    if not is_user_in_rollout:
-        return "user_not_in_rollout_bucket"
-    return "executor_enabled"
 
 
 async def run_locked_turn(
@@ -138,7 +118,7 @@ async def run_locked_turn(
         and not shadow_mode
         and user_in_rollout
     )
-    executor_gate_reason = _resolve_executor_gate_reason(
+    executor_gate_reason = resolve_executor_gate_reason(
         prompt_profile=state.prompt_profile,
         executor_enabled=executor_enabled,
         shadow_mode=shadow_mode,

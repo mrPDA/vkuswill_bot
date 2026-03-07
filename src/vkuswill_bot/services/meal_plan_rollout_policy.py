@@ -133,3 +133,24 @@ async def resolve_rollout_percent(
         return await controller.resolve_rollout_percent(configured_percent=rollout_percent)
     except Exception:
         return rollout_percent if allow_unvalidated else 0
+
+
+def resolve_executor_gate_reason(
+    *,
+    prompt_profile: str,
+    executor_enabled: bool,
+    shadow_mode: bool,
+    rollout_percent: int,
+    is_user_in_rollout: bool,
+) -> str:
+    if prompt_profile != "meal_plan":
+        return "prompt_profile_not_meal_plan"
+    if not executor_enabled:
+        return "executor_disabled"
+    if shadow_mode:
+        return "shadow_mode_enabled"
+    if rollout_percent <= 0:
+        return "rollout_percent_zero"
+    if not is_user_in_rollout:
+        return "user_not_in_rollout_bucket"
+    return "executor_enabled"
