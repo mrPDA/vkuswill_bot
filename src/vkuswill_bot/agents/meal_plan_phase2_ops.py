@@ -16,6 +16,7 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
 )
 from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry, deadline_remaining
+from vkuswill_bot.agents.recipe_fallback import fallback_recipe_ingredients
 
 
 class MealPlanPhase2AgentProtocol(Protocol):
@@ -93,21 +94,60 @@ async def collect_ingredients_for_dishes(
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
     group_sizes = _group_sizes_from_request(request)
 
+    async def _fallback_rows_for_dish(*, dish_name: str, servings: int) -> list[dict[str, Any]]:
+        adapters = getattr(agent, "_llm_adapters", None)
+        if not isinstance(adapters, dict):
+            return []
+        adapter = adapters.get(llm_provider)
+        if adapter is None:
+            return []
+        resolve_model = getattr(agent, "_resolve_model_for_provider", None)
+        if not callable(resolve_model):
+            return []
+        try:
+            model = str(resolve_model(llm_provider)).strip()
+        except Exception:
+            return []
+        if not model:
+            return []
+        llm_timeout = getattr(agent, "_llm_timeout_seconds", timeout_seconds)
+        if not isinstance(llm_timeout, int | float) or llm_timeout <= 0:
+            llm_timeout = timeout_seconds
+        try:
+            fallback_raw = await fallback_recipe_ingredients(
+                {"dish": dish_name, "servings": servings},
+                adapter=adapter,
+                model=model,
+                timeout_seconds=min(float(llm_timeout), timeout_seconds),
+            )
+        except Exception:
+            return []
+        return extract_ingredients(fallback_raw)
+
     async def _load_ingredients(dish: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+        dish_name = str(dish["name"])
         servings = _effective_servings_for_dish(dish=dish, group_sizes=group_sizes)
         async with semaphore:
-            result = await call_with_timeout_retry(
-                operation=lambda: agent._call_mcp_tool(
-                    name="recipe_ingredients",
-                    arguments={"dish": dish["name"], "servings": servings},
-                    llm_provider=llm_provider,
-                    call_cache=state.mcp_call_cache,
-                    user_id=user_id,
-                ),
-                timeout_seconds=timeout_seconds,
-                hard_deadline_at=phase2_deadline_at,
-            )
-            return str(dish["name"]), extract_ingredients(result)
+            rows: list[dict[str, Any]] = []
+            try:
+                result = await call_with_timeout_retry(
+                    operation=lambda: agent._call_mcp_tool(
+                        name="recipe_ingredients",
+                        arguments={"dish": dish_name, "servings": servings},
+                        llm_provider=llm_provider,
+                        call_cache=state.mcp_call_cache,
+                        user_id=user_id,
+                    ),
+                    timeout_seconds=timeout_seconds,
+                    hard_deadline_at=phase2_deadline_at,
+                )
+            except Exception:
+                result = ""
+            else:
+                rows = extract_ingredients(result)
+            if not rows:
+                rows = await _fallback_rows_for_dish(dish_name=dish_name, servings=servings)
+            return dish_name, rows
 
     tasks = [_load_ingredients(dish) for dish in dishes_payload]
     chunks = await asyncio.gather(*tasks, return_exceptions=True)
@@ -118,7 +158,7 @@ async def collect_ingredients_for_dishes(
             continue
         dish_name, rows = chunk
         dish_key = str(dish_name).strip().lower()
-        if dish_key:
+        if dish_key and rows:
             by_dish.setdefault(dish_key, []).extend(rows)
         flat_ingredients.extend(rows)
     return flat_ingredients, by_dish
