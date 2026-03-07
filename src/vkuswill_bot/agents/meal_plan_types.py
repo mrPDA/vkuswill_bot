@@ -197,9 +197,7 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
     )
     explicit_allergens = _extract_allergens(text)
     explicit_diet = (
-        None
-        if any(segment.get("diet") for segment in segmented_adults)
-        else _extract_diet(text)
+        None if any(segment.get("diet") for segment in segmented_adults) else _extract_diet(text)
     )
     explicit_cuisines = (
         []
