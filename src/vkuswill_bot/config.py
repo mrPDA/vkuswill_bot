@@ -50,7 +50,7 @@ class Config(BaseSettings):
     intent_classification_enabled: bool = True
     intent_classification_timeout: float = 5.0
     meal_plan_intent_routing_enabled: bool = True
-    meal_plan_executor_enabled: bool = False
+    meal_plan_executor_enabled: bool = True
     meal_plan_shadow_mode_enabled: bool = False
     meal_plan_rollout_percent: int = Field(default=100, ge=0, le=100)
     meal_plan_allow_unvalidated_rollout: bool = False
