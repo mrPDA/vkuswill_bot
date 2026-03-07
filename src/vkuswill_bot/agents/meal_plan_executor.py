@@ -81,6 +81,7 @@ async def run_meal_plan_turn(
     trace: Any | None,
     on_progress: ProgressReporter,
     fallback_to_standard_turn: FallbackToStandardTurn | None = None,
+    diagnostics: dict[str, Any] | None = None,
 ) -> str:
     """Execute meal-plan flow outside generic tool-loop."""
     started_at = time.monotonic()
@@ -182,7 +183,7 @@ async def run_meal_plan_turn(
     )
 
     await on_progress("🥗 Подбираю ингредиенты...")
-    flat_ingredients, ingredients_by_dish = await collect_ingredients_for_dishes(
+    flat_ingredients, ingredients_by_dish, ingredient_stats = await collect_ingredients_for_dishes(
         agent=agent,
         request=request,
         state=state,
@@ -192,6 +193,8 @@ async def run_meal_plan_turn(
         phase2_deadline_at=phase2_deadline_at,
         timeout_seconds=RECIPE_INGREDIENTS_TIMEOUT_SECONDS,
     )
+    if isinstance(diagnostics, dict):
+        diagnostics["meal_plan_ingredient_collection"] = ingredient_stats.as_dict()
 
     if not flat_ingredients:
         return finalize_fail_soft(
@@ -208,6 +211,7 @@ async def run_meal_plan_turn(
             phase1_started_at=started_at,
             phase2_started_at=phase2_started_at,
             soft_coverage_by_group=soft_coverage_by_group,
+            extra_metadata={"ingredient_collection": ingredient_stats.as_dict()},
         )
 
     phase2_safety = await enforce_phase2_safety_policy(

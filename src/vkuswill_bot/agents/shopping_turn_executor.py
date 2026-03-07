@@ -190,6 +190,7 @@ async def run_locked_turn(
             trace=trace,
             on_progress=_progress,
             fallback_to_standard_turn=_fallback_to_standard_turn,
+            diagnostics=diagnostics,
         )
         diagnostics["execution_path"] = "meal_plan_executor"
         diagnostics["executor_result"] = (
