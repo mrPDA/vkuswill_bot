@@ -189,6 +189,12 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.debug is False
 
+    def test_debug_api_key_default_empty(self):
+        """Stage debug API по умолчанию выключен отсутствием ключа."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.debug_api_key == ""
+
     def test_max_tool_calls_reasonable(self):
         """Лимит вызовов инструментов разумный (не > 50)."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):

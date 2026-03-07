@@ -30,10 +30,14 @@ class ShoppingAgentRuntimeMixin:
     async def reset_conversation(self, user_id: int) -> None:
         self._history.pop(user_id, None)
         self._last_cart_snapshot.pop(user_id, None)
+        self._last_trace_id.pop(user_id, None)
         self._active_users.pop(user_id, None)
 
     async def get_last_cart_snapshot(self, user_id: int) -> dict[str, object] | None:
         return self._last_cart_snapshot.get(user_id)
+
+    async def get_last_trace_id(self, user_id: int) -> str | None:
+        return self._last_trace_id.get(user_id)
 
     async def process_message(
         self,
@@ -59,6 +63,7 @@ class ShoppingAgentRuntimeMixin:
             stale_user_id, _ = self._active_users.popitem(last=False)
             self._history.pop(stale_user_id, None)
             self._last_cart_snapshot.pop(stale_user_id, None)
+            self._last_trace_id.pop(stale_user_id, None)
 
     async def _process_locked(
         self,

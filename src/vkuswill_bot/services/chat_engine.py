@@ -33,3 +33,6 @@ class ChatEngineProtocol(Protocol):
 
     async def get_last_cart_snapshot(self, user_id: int) -> dict[str, Any] | None:
         """Вернуть последний снимок корзины для post-processing и voice API."""
+
+    async def get_last_trace_id(self, user_id: int) -> str | None:
+        """Вернуть trace_id последнего turn-а пользователя, если он доступен."""

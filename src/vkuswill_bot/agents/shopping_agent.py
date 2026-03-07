@@ -185,6 +185,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._mcp_tool_names: set[str] = set()
         self._history: dict[int, list[dict[str, Any]]] = {}
         self._last_cart_snapshot: dict[int, dict[str, Any]] = {}
+        self._last_trace_id: dict[int, str] = {}
         self._active_users: OrderedDict[int, None] = OrderedDict()
 
         self._providers_in_use = self._compute_providers_in_use()

@@ -33,6 +33,7 @@ from vkuswill_bot.bot.middlewares import ThrottlingMiddleware, UserMiddleware
 from vkuswill_bot.config import config
 from vkuswill_bot.services.chat_engine import ChatEngineProtocol
 from vkuswill_bot.services.chat_engine_factory import create_chat_engine
+from vkuswill_bot.services.debug_api import register_debug_routes, should_enable_debug_api
 from vkuswill_bot.services.langfuse_tracing import LangfuseService
 from vkuswill_bot.services.mcp_client import VkusvillMCPClient
 from vkuswill_bot.services.prompt_registry import init_registry
@@ -519,6 +520,13 @@ async def _run_webhook(
 
     # Health check
     app.router.add_get("/health", _health_handler)
+    if should_enable_debug_api(api_key=config.debug_api_key, environment=config.prompt_label):
+        register_debug_routes(
+            app,
+            chat_engine=chat_engine,
+            api_key=config.debug_api_key,
+        )
+        logger.info("Stage debug API enabled")
     # Voice linking API (вариант 1: Alice Function -> VM API -> PostgreSQL)
     register_voice_link_routes(
         app,
