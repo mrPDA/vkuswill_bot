@@ -92,6 +92,7 @@ async def collect_ingredients_for_dishes(
     semaphore_limit: int = 6,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
+    fallback_semaphore = asyncio.Semaphore(2)
     group_sizes = _group_sizes_from_request(request)
 
     async def _fallback_rows_for_dish(*, dish_name: str, servings: int) -> list[dict[str, Any]]:
@@ -124,11 +125,10 @@ async def collect_ingredients_for_dishes(
             return []
         return extract_ingredients(fallback_raw)
 
-    async def _load_ingredients(dish: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
+    async def _load_ingredients(dish: dict[str, Any]) -> tuple[str, int, list[dict[str, Any]]]:
         dish_name = str(dish["name"])
         servings = _effective_servings_for_dish(dish=dish, group_sizes=group_sizes)
         async with semaphore:
-            rows: list[dict[str, Any]] = []
             try:
                 result = await call_with_timeout_retry(
                     operation=lambda: agent._call_mcp_tool(
@@ -142,25 +142,44 @@ async def collect_ingredients_for_dishes(
                     hard_deadline_at=phase2_deadline_at,
                 )
             except Exception:
-                result = ""
-            else:
-                rows = extract_ingredients(result)
-            if not rows:
-                rows = await _fallback_rows_for_dish(dish_name=dish_name, servings=servings)
-            return dish_name, rows
+                return dish_name, servings, []
+            return dish_name, servings, extract_ingredients(result)
 
     tasks = [_load_ingredients(dish) for dish in dishes_payload]
     chunks = await asyncio.gather(*tasks, return_exceptions=True)
     flat_ingredients: list[dict[str, Any]] = []
     by_dish: dict[str, list[dict[str, Any]]] = {}
+    missing_fallback: list[tuple[str, int]] = []
     for chunk in chunks:
         if isinstance(chunk, Exception):
             continue
-        dish_name, rows = chunk
+        dish_name, servings, rows = chunk
         dish_key = str(dish_name).strip().lower()
         if dish_key and rows:
             by_dish.setdefault(dish_key, []).extend(rows)
-        flat_ingredients.extend(rows)
+            flat_ingredients.extend(rows)
+            continue
+        if dish_key:
+            missing_fallback.append((dish_name, servings))
+
+    async def _load_fallback(dish_name: str, servings: int) -> tuple[str, list[dict[str, Any]]]:
+        async with fallback_semaphore:
+            rows = await _fallback_rows_for_dish(dish_name=dish_name, servings=servings)
+            return dish_name, rows
+
+    if missing_fallback:
+        fallback_chunks = await asyncio.gather(
+            *[_load_fallback(dish_name, servings) for dish_name, servings in missing_fallback],
+            return_exceptions=True,
+        )
+        for chunk in fallback_chunks:
+            if isinstance(chunk, Exception):
+                continue
+            dish_name, rows = chunk
+            dish_key = str(dish_name).strip().lower()
+            if dish_key and rows:
+                by_dish.setdefault(dish_key, []).extend(rows)
+                flat_ingredients.extend(rows)
     return flat_ingredients, by_dish
 
 
