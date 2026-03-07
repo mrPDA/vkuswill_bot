@@ -412,6 +412,8 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
             self.calls: list[dict[str, Any]] = []
 
         async def create_completion(self, **kwargs: Any) -> dict[str, Any]:
+            content = str(kwargs["messages"][0]["content"])
+            dishes = json.loads(content.split("Список блюд:\n", 1)[1])
             self.calls.append(kwargs)
             return {
                 "choices": [
@@ -419,12 +421,17 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "ingredients": [
+                                    "dishes": [
                                         {
-                                            "name": "нут",
-                                            "search_query": "нут",
-                                            "quantity": 2,
-                                            "unit": "уп",
+                                            "dish": dishes[0]["dish"],
+                                            "ingredients": [
+                                                {
+                                                    "name": "нут",
+                                                    "search_query": "нут",
+                                                    "quantity": 2,
+                                                    "unit": "уп",
+                                                }
+                                            ],
                                         }
                                     ]
                                 },
@@ -485,18 +492,25 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
 async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_raises() -> None:
     class _Adapter:
         async def create_completion(self, **kwargs: Any) -> dict[str, Any]:
+            content = str(kwargs["messages"][0]["content"])
+            dishes = json.loads(content.split("Список блюд:\n", 1)[1])
             return {
                 "choices": [
                     {
                         "message": {
                             "content": json.dumps(
                                 {
-                                    "ingredients": [
+                                    "dishes": [
                                         {
-                                            "name": "рис",
-                                            "search_query": "рис",
-                                            "quantity": 1,
-                                            "unit": "кг",
+                                            "dish": dishes[0]["dish"],
+                                            "ingredients": [
+                                                {
+                                                    "name": "рис",
+                                                    "search_query": "рис",
+                                                    "quantity": 1,
+                                                    "unit": "кг",
+                                                }
+                                            ],
                                         }
                                     ]
                                 },
@@ -560,20 +574,26 @@ async def test_collect_ingredients_for_dishes_limits_fallback_concurrency() -> N
             try:
                 await asyncio.sleep(0.01)
                 content = str(kwargs["messages"][0]["content"])
-                ingredient_name = content.split("«", 1)[1].split("»", 1)[0]
+                dishes = json.loads(content.split("Список блюд:\n", 1)[1])
                 return {
                     "choices": [
                         {
                             "message": {
                                 "content": json.dumps(
                                     {
-                                        "ingredients": [
+                                        "dishes": [
                                             {
-                                                "name": ingredient_name,
-                                                "search_query": ingredient_name,
-                                                "quantity": 1,
-                                                "unit": "шт",
+                                                "dish": str(row["dish"]),
+                                                "ingredients": [
+                                                    {
+                                                        "name": str(row["dish"]),
+                                                        "search_query": str(row["dish"]),
+                                                        "quantity": 1,
+                                                        "unit": "шт",
+                                                    }
+                                                ],
                                             }
+                                            for row in dishes
                                         ]
                                     },
                                     ensure_ascii=False,

@@ -7,12 +7,14 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 
 from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
+from vkuswill_bot.agents.recipe_batch_fallback import extract_recipe_ingredients_batch_with_llm
 from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
-from vkuswill_bot.agents.recipe_fallback import extract_recipe_ingredients_with_llm_debug
 
 _MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 2.0
-_LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 10.0
+_BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 40.0
+_BATCH_RECIPE_EXTRACTION_CHUNK_SIZE = 5
+_BATCH_RECIPE_EXTRACTION_CONCURRENCY = 2
 
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
@@ -91,55 +93,70 @@ def _effective_servings_for_dish(*, dish: dict[str, Any], group_sizes: dict[str,
     return 1
 
 
-async def _fallback_rows_for_dish(
+async def _batch_fallback_rows(
     *,
     agent: Any,
-    dish_name: str,
-    servings: int,
+    missing_fallback: list[tuple[str, int]],
     llm_provider: str,
     timeout_seconds: float,
-) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     adapters = getattr(agent, "_llm_adapters", None)
     if not isinstance(adapters, dict):
-        return [], {"status": "adapter_registry_missing"}
+        return {}, [{"status": "adapter_registry_missing"}]
     adapter = adapters.get(llm_provider)
     if adapter is None:
-        return [], {"status": "adapter_missing", "llm_provider": llm_provider}
+        return {}, [{"status": "adapter_missing", "llm_provider": llm_provider}]
     resolve_model = getattr(agent, "_resolve_model_for_provider", None)
     if not callable(resolve_model):
-        return [], {"status": "model_resolver_missing"}
+        return {}, [{"status": "model_resolver_missing"}]
     try:
         model = str(resolve_model(llm_provider)).strip()
     except Exception as exc:
-        return [], {"status": "model_resolve_error", "error_type": type(exc).__name__}
+        return {}, [{"status": "model_resolve_error", "error_type": type(exc).__name__}]
     if not model:
-        return [], {"status": "model_missing"}
+        return {}, [{"status": "model_missing"}]
     llm_timeout = getattr(agent, "_llm_timeout_seconds", timeout_seconds)
     if not isinstance(llm_timeout, int | float) or llm_timeout <= 0:
         llm_timeout = timeout_seconds
-    try:
-        debug = await extract_recipe_ingredients_with_llm_debug(
-            dish=dish_name,
-            servings=servings,
-            adapter=adapter,
-            model=model,
-            timeout_seconds=min(
-                float(llm_timeout),
-                timeout_seconds,
-                _LLM_RECIPE_EXTRACTION_TIMEOUT_SECONDS,
-            ),
-        )
-    except Exception as exc:
-        return [], {
-            "status": "exception",
-            "error_type": type(exc).__name__,
-            "error_message": str(exc)[:240],
-        }
-    status = "success" if debug.rows else "empty"
-    payload = debug.as_dict()
-    payload["status"] = status
-    payload["model"] = model
-    return debug.rows, payload
+    semaphore = asyncio.Semaphore(_BATCH_RECIPE_EXTRACTION_CONCURRENCY)
+    batch_timeout = min(
+        float(llm_timeout),
+        timeout_seconds,
+        _BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS,
+    )
+    aggregated: dict[str, list[dict[str, Any]]] = {}
+    failures: list[dict[str, Any]] = []
+
+    async def _run_chunk(
+        chunk: list[tuple[str, int]],
+    ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
+        async with semaphore:
+            return await extract_recipe_ingredients_batch_with_llm(
+                dishes=[{"dish": dish_name, "servings": servings} for dish_name, servings in chunk],
+                adapter=adapter,
+                model=model,
+                timeout_seconds=batch_timeout,
+            )
+
+    chunks = [
+        missing_fallback[idx : idx + _BATCH_RECIPE_EXTRACTION_CHUNK_SIZE]
+        for idx in range(0, len(missing_fallback), _BATCH_RECIPE_EXTRACTION_CHUNK_SIZE)
+    ]
+    gathered = await asyncio.gather(
+        *[_run_chunk(chunk) for chunk in chunks],
+        return_exceptions=True,
+    )
+    for chunk_result in gathered:
+        if isinstance(chunk_result, Exception):
+            failures.append({"status": "exception", "error_type": type(chunk_result).__name__})
+            continue
+        rows_by_dish, debug = chunk_result
+        for dish_key, rows in rows_by_dish.items():
+            if rows:
+                aggregated[dish_key] = rows
+        if debug.get("status") != "success" and len(failures) < 5:
+            failures.append(debug)
+    return aggregated, failures[:5]
 
 
 async def collect_ingredients_for_dishes(
@@ -155,7 +172,6 @@ async def collect_ingredients_for_dishes(
     semaphore_limit: int = 6,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], IngredientCollectionStats]:
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
-    fallback_semaphore = asyncio.Semaphore(4)
     group_sizes = _group_sizes_from_request(request)
 
     async def _load_ingredients(
@@ -227,41 +243,23 @@ async def collect_ingredients_for_dishes(
             if len(mcp_sample_failures) < 5:
                 mcp_sample_failures.append({"dish": dish_name, **mcp_debug})
 
-    async def _load_fallback(
-        dish_name: str,
-        servings: int,
-    ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
-        async with fallback_semaphore:
-            rows, debug = await _fallback_rows_for_dish(
-                agent=agent,
-                dish_name=dish_name,
-                servings=servings,
-                llm_provider=llm_provider,
-                timeout_seconds=timeout_seconds,
-            )
-            return dish_name, rows, debug
-
     if missing_fallback:
-        fallback_chunks = await asyncio.gather(
-            *[_load_fallback(dish_name, servings) for dish_name, servings in missing_fallback],
-            return_exceptions=True,
+        batch_rows_by_dish, fallback_sample_failures = await _batch_fallback_rows(
+            agent=agent,
+            missing_fallback=missing_fallback,
+            llm_provider=llm_provider,
+            timeout_seconds=timeout_seconds,
         )
         fallback_success_dishes = 0
         fallback_rows_total = 0
-        fallback_sample_failures: list[dict[str, Any]] = []
-        for chunk in fallback_chunks:
-            if isinstance(chunk, Exception):
-                continue
-            dish_name, rows, fallback_debug = chunk
+        for dish_name, _servings in missing_fallback:
             dish_key = str(dish_name).strip().lower()
-            if dish_key and rows:
+            rows = batch_rows_by_dish.get(dish_key, [])
+            if rows:
                 by_dish.setdefault(dish_key, []).extend(rows)
                 flat_ingredients.extend(rows)
                 fallback_success_dishes += 1
                 fallback_rows_total += len(rows)
-                continue
-            if len(fallback_sample_failures) < 5:
-                fallback_sample_failures.append({"dish": dish_name, **fallback_debug})
     else:
         fallback_success_dishes = 0
         fallback_rows_total = 0
