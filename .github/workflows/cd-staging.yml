@@ -128,10 +128,12 @@ jobs:
             "docker login cr.yandex --username json_key --password-stdin"
 
       - name: Run staging deploy
+        env:
+          DEBUG_API_KEY_STG: ${{ secrets.DEBUG_API_KEY_STG }}
         run: |
           FULL_IMAGE="${{ env.CR_REGISTRY }}/${{ env.IMAGE_NAME }}:${{ needs.build-and-push.outputs.image_tag }}"
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST_STG }}" \
-            "bash ${{ env.DEPLOY_DIR }}/deploy-staging.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID_STG }}' --model 'GigaChat-2-Max'"
+            "DEBUG_API_KEY_STG='${DEBUG_API_KEY_STG}' bash ${{ env.DEPLOY_DIR }}/deploy-staging.sh --image '${FULL_IMAGE}' --tag '${{ needs.build-and-push.outputs.image_tag }}' --lockbox '${{ secrets.LOCKBOX_SECRET_ID_STG }}' --model 'GigaChat-2-Max'"
 
       - name: Health check (staging)
         timeout-minutes: 3
