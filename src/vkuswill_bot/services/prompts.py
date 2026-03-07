@@ -6,9 +6,11 @@
 
 from __future__ import annotations
 
+import json
 import logging
+import re
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from vkuswill_bot.services.prompt_registry import get_registry
 
@@ -36,6 +38,20 @@ _FALLBACK_RECIPE_PROMPT = (
     "- Если ингредиент — вода, соль, сахар, молотый перец — всё равно включи в список."
 )
 
+_FALLBACK_MEAL_PLAN_GENERATION_PROMPT = (
+    "Составь meal plan в JSON-формате для параметров ниже.\n"
+    "Учитывай hard_constraints строго, soft_preferences — максимально возможно.\n"
+    "Верни только JSON с полями schema_version=1 и dishes[].\n"
+    "Сгенерируй 7..10 уникальных блюд, без повторов названий.\n"
+    "Постарайся обеспечить soft_preferences coverage >= 0.70 по каждой группе.\n"
+    "Параметры запроса:\n{request_payload}\n\n"
+    "Формат dishes[]:\n"
+    '- name: string\n'
+    '- day: int\n'
+    '- meal_type: "breakfast"|"lunch"|"dinner"|"snack_1"|"snack_2"|"snack_3"\n'
+    "- servings_total: int >= 1\n- audience_groups: string[]\n- cuisine_tags: string[]"
+)
+
 _FALLBACK_PROFILE_CORE = (
     "Ты — продавец-консультант ВкусВилл в Telegram-боте. "
     "Отвечай только по продуктам, корзине и заказу ВкусВилл."
@@ -45,6 +61,7 @@ _FALLBACK_PROFILES: dict[str, str] = {
     "general": "[PROMPT_PROFILE:general]\nЦель: помочь подобрать товары.",
     "cart": "[PROMPT_PROFILE:cart]\nЦель: собрать корзину.",
     "recipe": "[PROMPT_PROFILE:recipe]\nЦель: собрать ингредиенты для блюда.",
+    "meal_plan": "[PROMPT_PROFILE:meal_plan]\nЦель: собрать план питания и корзину.",
     "status": "[PROMPT_PROFILE:status]\nЦель: ответ по статусу.",
     "linking": "[PROMPT_PROFILE:linking]\nЦель: помочь с привязкой аккаунта.",
 }
@@ -103,11 +120,25 @@ def get_recipe_extraction_prompt() -> str:
     return _FALLBACK_RECIPE_PROMPT
 
 
+def get_meal_plan_generation_prompt(*, request_payload: dict[str, Any]) -> str:
+    """Получить промпт генерации meal plan: registry -> fallback-stub."""
+    payload_text = json.dumps(request_payload, ensure_ascii=False)
+    registry = get_registry()
+    if registry is not None:
+        result = registry.get(
+            "meal-plan-generation",
+            request_payload=payload_text,
+        )
+        if result:
+            return result
+    return _FALLBACK_MEAL_PLAN_GENERATION_PROMPT.format(request_payload=payload_text)
+
+
 SYSTEM_PROMPT = _FALLBACK_SYSTEM_PROMPT
 
 RECIPE_EXTRACTION_PROMPT = _FALLBACK_RECIPE_PROMPT
 
-PromptProfile = Literal["general", "cart", "recipe", "status", "linking"]
+PromptProfile = Literal["general", "cart", "recipe", "meal_plan", "status", "linking"]
 PromptMode = Literal["start", "compact", "finalize"]
 
 
@@ -150,6 +181,20 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "проверь статус",
     )
     linking_markers = ("привяз", "код", "алис", "voice", "отвяз")
+    meal_plan_strong_markers = (
+        "план питания",
+        "рацион",
+    )
+    meal_plan_period_markers = (
+        "меню на",
+        "на неделю",
+        "недельн",
+    )
+    has_days_period = re.search(r"на\s+\d+\s+д", low) is not None
+    has_people_count = re.search(r"для\s+\d+\s+(чел|человек)", low) is not None
+    has_period_marker = has_days_period or any(
+        marker in low for marker in meal_plan_period_markers
+    )
     cart_markers = (
         "купи",
         "закажи",
@@ -164,12 +209,16 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "объедин",
     )
 
-    if any(marker in low for marker in strong_recipe_markers):
-        return "recipe"
     if any(marker in low for marker in status_markers):
         return "status"
     if any(marker in low for marker in linking_markers):
         return "linking"
+    if any(marker in low for marker in meal_plan_strong_markers):
+        return "meal_plan"
+    if has_period_marker and has_people_count:
+        return "meal_plan"
+    if any(marker in low for marker in strong_recipe_markers):
+        return "recipe"
     if any(marker in low for marker in cart_markers):
         return "cart"
     if any(marker in low for marker in dish_name_markers):
@@ -303,7 +352,8 @@ LOCAL_TOOLS: list[dict] = [
         "name": "user_preferences_get",
         "description": (
             "Получить сохранённые предпочтения пользователя. "
-            "Вызывай перед поиском товаров, чтобы учесть вкусы."
+            "Вызывай перед поиском товаров и meal-plan, чтобы учесть вкусы. "
+            "Ответ содержит legacy preferences и структурированный profile."
         ),
         "parameters": {"type": "object", "properties": {}},
     },
@@ -318,12 +368,17 @@ LOCAL_TOOLS: list[dict] = [
             "properties": {
                 "category": {
                     "type": "string",
-                    "description": "Категория продукта, например: мороженое, молоко, хлеб, сыр",
+                    "description": (
+                        "Категория предпочтения. Примеры: мороженое, молоко, хлеб, сыр, "
+                        "diet, allergens_excluded, cuisines, liked_ingredients, "
+                        "disliked_ingredients, meal_types."
+                    ),
                 },
                 "preference": {
                     "type": "string",
                     "description": (
-                        "Конкретное описание предпочтения, например: пломбир в шоколаде на палочке"
+                        "Конкретное описание предпочтения, например: пломбир в шоколаде на "
+                        "палочке, vegan, italian, nuts,lactose"
                     ),
                 },
             },

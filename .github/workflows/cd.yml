@@ -242,7 +242,7 @@ jobs:
         if: always()
         run: rm -f ~/.ssh/deploy_key
 
-  # ─── 4. Уведомление в Telegram ────────────────────────────────
+  # ─── 4. Уведомление в Telegram (отдельный deploy-бот) ─────────
   notify:
     name: Notify
     runs-on: ubuntu-latest
@@ -252,13 +252,19 @@ jobs:
     steps:
       - name: Send Telegram notification
         env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.ADMIN_CHAT_ID }}
+          # DEPLOY_BOT_TOKEN — отдельный бот для DevOps-уведомлений (рекомендуется)
+          # Fallback на BOT_TOKEN для обратной совместимости
+          DEPLOY_BOT_TOKEN: ${{ secrets.DEPLOY_BOT_TOKEN || secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.DEPLOY_CHAT_ID || secrets.ADMIN_CHAT_ID }}
           TAG: ${{ needs.build-and-push.outputs.image_tag }}
           DEPLOY_STATUS: ${{ needs.deploy.result }}
         run: |
-          if [ -z "$BOT_TOKEN" ]; then
-            echo "BOT_TOKEN не задан, пропускаем уведомление"
+          if [ -z "$DEPLOY_BOT_TOKEN" ]; then
+            echo "DEPLOY_BOT_TOKEN и BOT_TOKEN не заданы, пропускаем уведомление"
+            exit 0
+          fi
+          if [ -z "$CHAT_ID" ]; then
+            echo "DEPLOY_CHAT_ID и ADMIN_CHAT_ID не заданы, пропускаем уведомление"
             exit 0
           fi
 
@@ -273,7 +279,7 @@ jobs:
           MESSAGE="${EMOJI} <b>VkusVill Bot Deploy</b>%0A%0A${TEXT}%0ARepo: ${GITHUB_REPOSITORY}%0ACommit: ${GITHUB_SHA:0:7}"
 
           curl -s -X POST \
-            "https://api.telegram.org/bot${BOT_TOKEN}/sendMessage" \
+            "https://api.telegram.org/bot${DEPLOY_BOT_TOKEN}/sendMessage" \
             -d "chat_id=${CHAT_ID}" \
             -d "text=${MESSAGE}" \
             -d "parse_mode=HTML" \

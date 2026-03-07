@@ -12,12 +12,14 @@ from vkuswill_bot.services.prompts import PromptProfile
 
 logger = logging.getLogger(__name__)
 
-_VALID_PROFILES: frozenset[str] = frozenset({"recipe", "cart", "status", "linking", "general"})
+_VALID_PROFILES: frozenset[str] = frozenset(
+    {"recipe", "cart", "meal_plan", "status", "linking", "general"}
+)
 
 _CLASSIFY_PROMPT_STUB = (
     "Определи намерение покупателя в магазине ВкусВилл. Ответь ОДНИМ словом.\n"
-    "- recipe — рецепт\n- cart — купить\n- status — статус\n"
-    "- linking — привязка\n- general — другое\n\nСообщение: {text}"
+    "- recipe — рецепт\n- cart — купить\n- meal_plan — план питания\n"
+    "- status — статус\n- linking — привязка\n- general — другое\n\nСообщение: {text}"
 )
 
 _CLASSIFY_MAX_TOKENS = 20

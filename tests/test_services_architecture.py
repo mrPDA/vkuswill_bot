@@ -21,6 +21,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "dialog_manager": "domain",
     "nutrition_service": "domain",
     "preferences_parser": "domain",
+    "preferences_runtime_loader": "domain",
     "recipe_search": "domain",
     "search_processor": "domain",
     # IO
@@ -40,6 +41,9 @@ LAYER_BY_MODULE: dict[str, str] = {
     "dialog_types": "shared",
     "langfuse_tracing": "shared",
     "llm_adapters": "shared",
+    "meal_plan_metrics": "shared",
+    "meal_plan_rollout_policy": "shared",
+    "meal_plan_trace_metadata": "shared",
     "pii_utils": "shared",
     "prompt_registry": "shared",
     "prompts": "shared",

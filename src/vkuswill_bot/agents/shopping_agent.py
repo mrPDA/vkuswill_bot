@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
@@ -12,6 +13,11 @@ from vkuswill_bot.agents.shopping_agent_runtime_mixin import ShoppingAgentRuntim
 from vkuswill_bot.agents.shopping_agent_service_mixin import ShoppingAgentServiceMixin
 from vkuswill_bot.agents.tool_result_compactor import ToolResultCompactor
 from vkuswill_bot.services.prompts import PromptProfile
+from vkuswill_bot.services.meal_plan_metrics import (
+    MealPlanRolloutController,
+    PostgresMealPlanMetricsReader,
+    get_meal_plan_metrics_sink,
+)
 from vkuswill_bot.services.llm_adapters import (
     LLMAdapterProtocol,
     OpenAICompatibleLLMAdapter,
@@ -24,6 +30,7 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.langfuse_tracing import LangfuseService
     from vkuswill_bot.services.mcp_client import VkusvillMCPClient
     from vkuswill_bot.services.preferences_store import PreferencesStore
+    from vkuswill_bot.services.user_store import UserStore
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
 _DEFAULT_MAX_TOOL_CALLS = 20
@@ -76,6 +83,18 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         intent_classification_enabled: bool = False,
         intent_classification_timeout: float = 5.0,
         llm_queue_timeout_seconds: float = 15.0,
+        meal_plan_intent_routing_enabled: bool = False,
+        meal_plan_executor_enabled: bool = False,
+        meal_plan_shadow_mode_enabled: bool = False,
+        meal_plan_rollout_percent: int = 100,
+        meal_plan_allow_unvalidated_rollout: bool = False,
+        meal_plan_unvalidated_rollout_reason: str = "",
+        meal_plan_unvalidated_rollout_actor: str = "",
+        meal_plan_unvalidated_rollout_expires_at: str = "",
+        meal_plan_unvalidated_rollout_max_ttl_seconds: int = 86400,
+        deployment_environment: str = "production",
+        user_store: UserStore | None = None,
+        meal_plan_metrics_sink: Any | None = None,
     ) -> None:
         self._llm_provider = normalize_llm_provider(llm_provider)
         self._llm_routing_strategy = llm_routing_strategy.strip().lower()
@@ -111,6 +130,48 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._preferences_store = preferences_store
         self._intent_classification_enabled = bool(intent_classification_enabled)
         self._intent_classification_timeout = max(1.0, intent_classification_timeout)
+        self._meal_plan_intent_routing_enabled = bool(meal_plan_intent_routing_enabled)
+        self._meal_plan_executor_enabled = bool(meal_plan_executor_enabled)
+        self._meal_plan_shadow_mode_enabled = bool(meal_plan_shadow_mode_enabled)
+        self._meal_plan_rollout_percent = max(0, min(100, int(meal_plan_rollout_percent)))
+        self._meal_plan_allow_unvalidated_rollout = bool(meal_plan_allow_unvalidated_rollout)
+        self._meal_plan_unvalidated_rollout_reason = str(meal_plan_unvalidated_rollout_reason).strip()
+        self._meal_plan_unvalidated_rollout_actor = str(meal_plan_unvalidated_rollout_actor).strip()
+        self._meal_plan_unvalidated_rollout_expires_at = str(
+            meal_plan_unvalidated_rollout_expires_at
+        ).strip()
+        self._meal_plan_unvalidated_rollout_max_ttl_seconds = max(
+            1, int(meal_plan_unvalidated_rollout_max_ttl_seconds)
+        )
+        env = str(deployment_environment).strip().lower()
+        self._deployment_environment = env or "production"
+        self._user_store = user_store
+        self._meal_plan_rollout_controller = None
+        pool = getattr(self._user_store, "_pool", None)
+        if pool is not None:
+            self._meal_plan_rollout_controller = MealPlanRolloutController(
+                metrics_reader=PostgresMealPlanMetricsReader(pool=pool),
+            )
+        if meal_plan_metrics_sink is not None:
+            self._meal_plan_metrics_sink = meal_plan_metrics_sink
+        else:
+            async def _metrics_event_logger(
+                event_user_id: int,
+                event_type: str,
+                metadata: dict[str, Any],
+            ) -> None:
+                if self._user_store is None:
+                    return
+                with contextlib.suppress(Exception):
+                    await self._user_store.log_event(
+                        user_id=event_user_id,
+                        event_type=event_type,
+                        metadata=metadata,
+                    )
+
+            self._meal_plan_metrics_sink = get_meal_plan_metrics_sink(
+                event_logger=_metrics_event_logger if self._user_store is not None else None,
+            )
         self._api_semaphore = asyncio.Semaphore(max(1, llm_max_concurrent))
         self._llm_queue_timeout_seconds = max(1.0, llm_queue_timeout_seconds)
         self._langfuse = langfuse_service

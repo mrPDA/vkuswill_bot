@@ -30,6 +30,16 @@ def _cfg(**overrides: object) -> SimpleNamespace:
         "intent_classification_enabled": False,
         "intent_classification_timeout": 5.0,
         "llm_queue_timeout_seconds": 15.0,
+        "meal_plan_intent_routing_enabled": False,
+        "meal_plan_executor_enabled": False,
+        "meal_plan_shadow_mode_enabled": False,
+        "meal_plan_rollout_percent": 100,
+        "meal_plan_allow_unvalidated_rollout": False,
+        "meal_plan_unvalidated_rollout_reason": "",
+        "meal_plan_unvalidated_rollout_actor": "",
+        "meal_plan_unvalidated_rollout_expires_at": "",
+        "meal_plan_unvalidated_rollout_max_ttl_seconds": 86400,
+        "prompt_label": "production",
     }
     base.update(overrides)
     return SimpleNamespace(**base)
@@ -134,6 +144,16 @@ def test_create_chat_engine_shopping_success() -> None:
         intent_classification_enabled=cfg.intent_classification_enabled,
         intent_classification_timeout=cfg.intent_classification_timeout,
         llm_queue_timeout_seconds=cfg.llm_queue_timeout_seconds,
+        meal_plan_intent_routing_enabled=cfg.meal_plan_intent_routing_enabled,
+        meal_plan_executor_enabled=cfg.meal_plan_executor_enabled,
+        meal_plan_shadow_mode_enabled=cfg.meal_plan_shadow_mode_enabled,
+        meal_plan_rollout_percent=cfg.meal_plan_rollout_percent,
+        meal_plan_allow_unvalidated_rollout=cfg.meal_plan_allow_unvalidated_rollout,
+        meal_plan_unvalidated_rollout_reason=cfg.meal_plan_unvalidated_rollout_reason,
+        meal_plan_unvalidated_rollout_actor=cfg.meal_plan_unvalidated_rollout_actor,
+        meal_plan_unvalidated_rollout_expires_at=cfg.meal_plan_unvalidated_rollout_expires_at,
+        meal_plan_unvalidated_rollout_max_ttl_seconds=cfg.meal_plan_unvalidated_rollout_max_ttl_seconds,
+        deployment_environment=cfg.prompt_label,
     )
 
 
@@ -155,3 +175,20 @@ def test_create_chat_engine_shopping_passes_prompt_profile_flags() -> None:
     kwargs = shopping_cls.call_args.kwargs
     assert kwargs["prompt_profiles_enabled"] is True
     assert kwargs["compact_followup_prompt_enabled"] is False
+
+
+def test_create_chat_engine_passes_user_store_when_provided() -> None:
+    cfg = _cfg()
+    deps = _deps()
+    deps["user_store"] = object()
+    shopping_cls = MagicMock()
+    fake_module = SimpleNamespace(ShoppingAgent=shopping_cls)
+
+    with patch(
+        "vkuswill_bot.services.chat_engine_factory.importlib.import_module",
+        return_value=fake_module,
+    ):
+        create_chat_engine(cfg=cfg, **deps)
+
+    kwargs = shopping_cls.call_args.kwargs
+    assert kwargs["user_store"] is deps["user_store"]

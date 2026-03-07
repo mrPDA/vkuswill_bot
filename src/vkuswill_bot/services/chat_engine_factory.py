@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.preferences_store import PreferencesStore
     from vkuswill_bot.services.recipe_store import RecipeStore
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
+    from vkuswill_bot.services.user_store import UserStore
 
 
 def create_chat_engine(
@@ -27,6 +28,7 @@ def create_chat_engine(
     dialog_manager: DialogManager | RedisDialogManager,
     tool_executor: Any = None,
     langfuse_service: LangfuseService,
+    user_store: UserStore | None = None,
 ) -> ChatEngineProtocol:
     """Создать ShoppingAgent chat engine (legacy GigaChat удалён)."""
 
@@ -54,25 +56,40 @@ def create_chat_engine(
             "ShoppingAgent is unavailable",
         ) from exc
 
-    return shopping_agent_cls(
-        llm_base_url=cfg.llm_base_url,
-        llm_api_key=cfg.llm_api_key,
-        llm_model=cfg.llm_model.strip(),
-        llm_max_concurrent=cfg.llm_max_concurrent,
-        llm_provider=provider,
-        llm_routing_strategy=routing_strategy,
-        mcp_client=mcp_client,
-        dialog_manager=dialog_manager,
-        max_tool_calls=cfg.max_tool_calls,
-        max_history=cfg.max_history_messages,
-        langfuse_service=langfuse_service,
-        llm_max_tokens=cfg.llm_max_tokens,
-        llm_max_tokens_recipe=cfg.llm_max_tokens_recipe,
-        llm_temperature=cfg.llm_temperature,
-        prompt_profiles_enabled=cfg.llm_prompt_profiles_enabled,
-        compact_followup_prompt_enabled=cfg.llm_compact_followup_prompt_enabled,
-        preferences_store=preferences_store,
-        intent_classification_enabled=cfg.intent_classification_enabled,
-        intent_classification_timeout=cfg.intent_classification_timeout,
-        llm_queue_timeout_seconds=cfg.llm_queue_timeout_seconds,
-    )
+    kwargs: dict[str, Any] = {
+        "llm_base_url": cfg.llm_base_url,
+        "llm_api_key": cfg.llm_api_key,
+        "llm_model": cfg.llm_model.strip(),
+        "llm_max_concurrent": cfg.llm_max_concurrent,
+        "llm_provider": provider,
+        "llm_routing_strategy": routing_strategy,
+        "mcp_client": mcp_client,
+        "dialog_manager": dialog_manager,
+        "max_tool_calls": cfg.max_tool_calls,
+        "max_history": cfg.max_history_messages,
+        "langfuse_service": langfuse_service,
+        "llm_max_tokens": cfg.llm_max_tokens,
+        "llm_max_tokens_recipe": cfg.llm_max_tokens_recipe,
+        "llm_temperature": cfg.llm_temperature,
+        "prompt_profiles_enabled": cfg.llm_prompt_profiles_enabled,
+        "compact_followup_prompt_enabled": cfg.llm_compact_followup_prompt_enabled,
+        "preferences_store": preferences_store,
+        "intent_classification_enabled": cfg.intent_classification_enabled,
+        "intent_classification_timeout": cfg.intent_classification_timeout,
+        "llm_queue_timeout_seconds": cfg.llm_queue_timeout_seconds,
+        "meal_plan_intent_routing_enabled": cfg.meal_plan_intent_routing_enabled,
+        "meal_plan_executor_enabled": cfg.meal_plan_executor_enabled,
+        "meal_plan_shadow_mode_enabled": cfg.meal_plan_shadow_mode_enabled,
+        "meal_plan_rollout_percent": cfg.meal_plan_rollout_percent,
+        "meal_plan_allow_unvalidated_rollout": cfg.meal_plan_allow_unvalidated_rollout,
+        "meal_plan_unvalidated_rollout_reason": cfg.meal_plan_unvalidated_rollout_reason,
+        "meal_plan_unvalidated_rollout_actor": cfg.meal_plan_unvalidated_rollout_actor,
+        "meal_plan_unvalidated_rollout_expires_at": cfg.meal_plan_unvalidated_rollout_expires_at,
+        "meal_plan_unvalidated_rollout_max_ttl_seconds": (
+            cfg.meal_plan_unvalidated_rollout_max_ttl_seconds
+        ),
+        "deployment_environment": cfg.prompt_label,
+    }
+    if user_store is not None:
+        kwargs["user_store"] = user_store
+    return shopping_agent_cls(**kwargs)

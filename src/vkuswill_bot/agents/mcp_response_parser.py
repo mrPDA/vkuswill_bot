@@ -159,3 +159,41 @@ def has_recipe_search_candidates(history: list[dict[str, Any]]) -> bool:
     """Проверить, есть ли товары из recipe_search в истории."""
     products, _ = extract_recipe_products_from_history(history)
     return bool(products)
+
+
+def extract_all_recipe_ingredients_from_history(
+    history: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Извлечь и дедуплицировать ингредиенты из всех recipe_ingredients tool-результатов."""
+    seen_queries: set[str] = set()
+    collected: list[dict[str, Any]] = []
+
+    for msg in history:
+        if msg.get("role") != "tool" or msg.get("name") != "recipe_ingredients":
+            continue
+        payload = parse_json_payload(msg.get("content"))
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            continue
+
+        ingredients = payload.get("ingredients")
+        if not isinstance(ingredients, list):
+            data = payload.get("data")
+            if isinstance(data, dict):
+                ingredients = data.get("ingredients")
+            if not isinstance(ingredients, list):
+                continue
+
+        for row in ingredients[:30]:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            query = str(row.get("search_query", "")).strip() or name
+            key = query.lower()
+            if key in seen_queries:
+                continue
+            seen_queries.add(key)
+            collected.append(row)
+
+    return collected

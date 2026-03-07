@@ -1,5 +1,4 @@
 """Service/helper mixin for ShoppingAgent."""
-
 from __future__ import annotations
 
 import asyncio
@@ -14,9 +13,9 @@ from vkuswill_bot.agents.mcp_helpers import (
     with_virtual_preference_tools,
     with_virtual_recipe_tools,
 )
-from vkuswill_bot.agents.mcp_response_parser import (
-    extract_cart_data,
-    extract_recipe_products_from_history,
+from vkuswill_bot.agents.recipe_cart_recovery import (
+    recover_cart_from_recipe_ingredients,
+    recover_cart_from_recipe_search,
 )
 from vkuswill_bot.agents.mcp_tool_gateway import McpToolGateway
 from vkuswill_bot.agents.shopping_agent_state_ops import (
@@ -24,9 +23,8 @@ from vkuswill_bot.agents.shopping_agent_state_ops import (
     ensure_cart_summary,
     should_start_fresh,
 )
-from vkuswill_bot.services.cart_processor import CartProcessor
 from vkuswill_bot.services.llm_adapters import extract_usage_details
-from vkuswill_bot.services.preferences_parser import parse_preferences
+from vkuswill_bot.services.preferences_runtime_loader import load_user_preferences_bundle
 from vkuswill_bot.services.prompts import PromptProfile
 
 if TYPE_CHECKING:
@@ -34,8 +32,18 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-
 class ShoppingAgentServiceMixin:
+    async def _load_user_preferences_bundle(
+        self,
+        user_id: int,
+    ) -> tuple[dict[str, str], dict[str, Any]]:
+        """Загрузить preferences в двух форматах за один вызов хранилища."""
+        return await load_user_preferences_bundle(
+            preferences_store=self._preferences_store,
+            user_id=user_id,
+            logger=logger,
+        )
+
     def _create_trace(
         self,
         *,
@@ -64,7 +72,6 @@ class ShoppingAgentServiceMixin:
     async def _get_tools(self) -> list[dict[str, Any]]:
         if self._tools_cache is not None:
             return self._tools_cache
-
         raw_tools = await self._mcp_client.get_tools()
         self._mcp_tool_names = {
             str(tool.get("name", "")).strip()
@@ -89,7 +96,6 @@ class ShoppingAgentServiceMixin:
                     },
                 }
             )
-
         self._tools_cache = normalized
         return normalized
 
@@ -184,21 +190,14 @@ class ShoppingAgentServiceMixin:
             gateway = self._create_mcp_gateway()
             self._mcp_gateway = gateway
         return await gateway.call_tool(
-            name=name,
-            arguments=arguments,
-            llm_provider=llm_provider,
-            call_cache=call_cache,
+            name=name, arguments=arguments, llm_provider=llm_provider, call_cache=call_cache
         )
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]:
-        if self._preferences_store is None:
-            return {}
-        try:
-            raw = await self._preferences_store.get_formatted(user_id)
-        except Exception as exc:
-            logger.warning("Failed to load user preferences for %s: %s", user_id, exc)
-            return {}
-        return parse_preferences(raw)
+        return (await self._load_user_preferences_bundle(user_id))[0]
+
+    async def _load_user_preference_profile(self, user_id: int) -> dict[str, Any]:
+        return (await self._load_user_preferences_bundle(user_id))[1]
 
     def _capture_cart_snapshot(
         self,
@@ -254,28 +253,27 @@ class ShoppingAgentServiceMixin:
         llm_provider: str,
         call_cache: dict[str, str],
     ) -> tuple[dict[str, Any] | None, dict[str, Any], str]:
-        products, _not_found_count = extract_recipe_products_from_history(history)
-        if not products:
-            return None, {}, ""
-
-        cart_args = CartProcessor.fix_cart_args({"products": products})
-        cart_result = await self._call_mcp_tool(
-            name="vkusvill_cart_link_create",
-            arguments=cart_args,
+        return await recover_cart_from_recipe_search(
+            history=history,
+            call_mcp_tool=self._call_mcp_tool,
             llm_provider=llm_provider,
             call_cache=call_cache,
         )
-        cart_data = extract_cart_data(
-            tool_name="vkusvill_cart_link_create",
-            tool_result=cart_result,
+
+    async def _recover_cart_from_recipe_ingredients_history(
+        self,
+        *,
+        history: list[dict[str, Any]],
+        llm_provider: str,
+        call_cache: dict[str, str],
+    ) -> tuple[dict[str, Any] | None, dict[str, Any], str]:
+        """Восстановить корзину из recipe_ingredients, вызвав recipe_search + cart_link_create."""
+        return await recover_cart_from_recipe_ingredients(
+            history=history,
+            call_mcp_tool=self._call_mcp_tool,
+            llm_provider=llm_provider,
+            call_cache=call_cache,
         )
-        if cart_data is None:
-            return None, cart_args, cart_result
-        if "products" not in cart_data:
-            cart_data["products"] = cart_args.get("products", [])
-        if "requested_products" not in cart_data:
-            cart_data["requested_products"] = cart_args.get("products", [])
-        return cart_data, cart_args, cart_result
 
     def _ensure_cart_price_summary(
         self,

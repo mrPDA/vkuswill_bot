@@ -31,6 +31,7 @@ class TestParseProfile:
         [
             ("cart", "cart"),
             ("recipe", "recipe"),
+            ("meal_plan", "meal_plan"),
             ("status", "status"),
             ("linking", "linking"),
             ("general", "general"),
@@ -174,6 +175,84 @@ class TestBuildTurnStateIntegration:
         state = await build_turn_state(agent=agent, user_id=1, text="рецепт борща")
 
         assert state.prompt_profile == "recipe"
+
+    async def test_loads_structured_profile_from_bundle_loader(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        class _BundleAgent:
+            def __init__(self) -> None:
+                self._history: dict[int, list[dict[str, str]]] = {}
+                self._last_cart_snapshot: dict[int, dict[str, str]] = {}
+                self._prompt_profiles_enabled = True
+                self._compact_followup_prompt_enabled = True
+                self._max_tool_calls = 5
+                self._max_input_chars_per_turn = 250000
+                self._llm_routing_strategy = "single_provider"
+
+            def _should_start_fresh_context(self, *, text: str, history):  # type: ignore[no-untyped-def]
+                return True
+
+            def _normalize_history(self, history):  # type: ignore[no-untyped-def]
+                return history
+
+            async def _classify_intent(self, text: str):  # type: ignore[no-untyped-def]
+                return "cart"
+
+            async def _load_user_preferences(self, user_id: int):  # type: ignore[no-untyped-def]
+                return {"legacy": "value"}
+
+            async def _load_user_preferences_bundle(self, user_id: int):  # type: ignore[no-untyped-def]
+                return (
+                    {"молоко": "безлактозное"},
+                    {"schema_version": 1, "hard_constraints": {"diet": "vegan"}},
+                )
+
+        state = await build_turn_state(agent=_BundleAgent(), user_id=1, text="закажи молоко")
+        assert state.user_preferences == {"молоко": "безлактозное"}
+        assert state.user_preference_profile["hard_constraints"]["diet"] == "vegan"
+
+    async def test_meal_plan_profile_marks_cart_intent(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = "meal_plan"
+
+        state = await build_turn_state(agent=agent, user_id=1, text="собери меню на неделю")
+
+        assert state.prompt_profile == "meal_plan"
+        assert state.cart_intent is True
+
+    async def test_meal_plan_profile_falls_back_when_intent_routing_disabled(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._meal_plan_intent_routing_enabled = False
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = "meal_plan"
+
+        state = await build_turn_state(agent=agent, user_id=1, text="собери меню на неделю для 2 человек")
+
+        assert state.prompt_profile == "cart"
+        assert state.cart_intent is True
 
 
 class TestShoppingAgentClassifyIntent:

@@ -15,6 +15,8 @@ readonly STG_LANGFUSE_CONTAINER_NAME="vkuswill-langfuse-stg"
 readonly STG_METABASE_CONTAINER_NAME="vkuswill-metabase-stg"
 readonly STG_HEALTH_PORT="18080"
 readonly STG_MCP_DEFAULT_PORT="18081"
+readonly STG_LANGFUSE_PORT="3100"
+readonly STG_METABASE_PORT="3101"
 
 fail() {
   echo "[deploy-staging] ERROR: $*" >&2
@@ -38,6 +40,8 @@ print_staging_config() {
 [deploy-staging] METABASE_CONTAINER_NAME=${STG_METABASE_CONTAINER_NAME}
 [deploy-staging] HEALTH_PORT=${STG_HEALTH_PORT}
 [deploy-staging] MCP_DEFAULT_PORT=${STG_MCP_DEFAULT_PORT}
+[deploy-staging] LANGFUSE_PORT=${STG_LANGFUSE_PORT}
+[deploy-staging] METABASE_PORT=${STG_METABASE_PORT}
 EOF
 }
 
@@ -65,6 +69,8 @@ export LANGFUSE_CONTAINER_NAME="${STG_LANGFUSE_CONTAINER_NAME}"
 export METABASE_CONTAINER_NAME="${STG_METABASE_CONTAINER_NAME}"
 export HEALTH_PORT="${STG_HEALTH_PORT}"
 export MCP_DEFAULT_PORT="${STG_MCP_DEFAULT_PORT}"
+export LANGFUSE_PORT="${STG_LANGFUSE_PORT}"
+export METABASE_PORT="${STG_METABASE_PORT}"
 
 # Staging-специфичные переменные окружения, которые deploy.sh
 # добавит к docker run через DEPLOY_EXTRA_ENV (если Lockbox не содержит их)
