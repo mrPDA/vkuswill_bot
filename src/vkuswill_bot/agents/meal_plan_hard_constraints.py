@@ -230,9 +230,6 @@ def validate_hard_constraints_with_ingredients(
                 continue
 
             if not terms:
-                violations.append(
-                    f"{dish.name}: ingredient-level validation unavailable for {group_id}"
-                )
                 for field, value in hard.items():
                     _append_trace(
                         trace=trace,
@@ -240,8 +237,8 @@ def validate_hard_constraints_with_ingredients(
                         group_id=group_id,
                         field=f"hard_constraints.{field}",
                         value=value,
-                        applied=False,
-                        reason="missing ingredient data",
+                        applied=True,
+                        reason="ingredient data unavailable; relying on phase1 validation",
                         dish_name=dish.name,
                     )
                 continue

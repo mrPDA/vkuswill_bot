@@ -111,6 +111,34 @@ def test_validate_hard_constraints_with_ingredients_detects_hidden_violation() -
     )
 
 
+def test_validate_hard_constraints_with_ingredients_relies_on_phase1_when_rows_missing() -> None:
+    request = parse_meal_plan_request("меню на неделю для 2 человек, вегетарианское", {})
+    dishes = [
+        MealPlanDish(
+            name="Овощное рагу",
+            day=1,
+            meal_type="lunch",
+            servings_total=2,
+            audience_groups=["adults"],
+            cuisine_tags=["russian"],
+        )
+    ]
+
+    violations, trace = validate_hard_constraints_with_ingredients(
+        request=request,
+        dishes=dishes,
+        ingredients_by_dish={},
+    )
+
+    assert violations == []
+    assert any(
+        row.get("field") == "hard_constraints.diet"
+        and row.get("applied") is True
+        and "phase1" in str(row.get("reason", ""))
+        for row in trace
+    )
+
+
 def test_build_applied_preferences_trace_includes_sources_and_coverage() -> None:
     request = parse_meal_plan_request(
         "меню на неделю для 2 человек с итальянской кухней",
