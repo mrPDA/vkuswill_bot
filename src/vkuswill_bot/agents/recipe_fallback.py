@@ -6,6 +6,7 @@ import asyncio
 import json
 import logging
 import time
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -17,7 +18,7 @@ from vkuswill_bot.agents.recipe_runtime import (
     fallback_borscht_ingredients,
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
-from vkuswill_bot.services.prompts import get_recipe_extraction_prompt
+from vkuswill_bot.services.prompts import get_recipe_extraction_prompt_with_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -26,8 +27,30 @@ SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
 _RECIPE_FALLBACK_MAX_TOKENS = 900
 _RECIPE_FALLBACK_TEMPERATURE = 0.1
+@dataclass(slots=True)
+class RecipeExtractionDebug:
+    rows: list[dict[str, Any]]
+    attempts: int
+    raw_preview: str
+    parsed_type: str
+    error_type: str | None = None
+    error_message: str | None = None
+    prompt_metadata: dict[str, Any] | None = None
 
-
+    def as_dict(self) -> dict[str, Any]:
+        payload = {
+            "rows": len(self.rows),
+            "attempts": self.attempts,
+            "parsed_type": self.parsed_type,
+            "raw_preview": self.raw_preview,
+        }
+        if self.error_type:
+            payload["error_type"] = self.error_type
+        if self.error_message:
+            payload["error_message"] = self.error_message
+        if self.prompt_metadata:
+            payload["prompt"] = self.prompt_metadata
+        return payload
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
@@ -35,8 +58,6 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
-
-
 async def extract_recipe_ingredients_with_llm(
     *,
     dish: str,
@@ -46,15 +67,48 @@ async def extract_recipe_ingredients_with_llm(
     timeout_seconds: float,
 ) -> list[dict[str, Any]]:
     """Извлечь ингредиенты блюда через LLM-запрос."""
+    debug = await extract_recipe_ingredients_with_llm_debug(
+        dish=dish,
+        servings=servings,
+        adapter=adapter,
+        model=model,
+        timeout_seconds=timeout_seconds,
+    )
+    return debug.rows
+async def extract_recipe_ingredients_with_llm_debug(
+    *,
+    dish: str,
+    servings: int,
+    adapter: Any,
+    model: str,
+    timeout_seconds: float,
+) -> RecipeExtractionDebug:
+    """Извлечь ингредиенты блюда через LLM-запрос с debug metadata."""
     if adapter is None:
-        return []
-
-    prompt = get_recipe_extraction_prompt().format(dish=dish, servings=servings)
+        return RecipeExtractionDebug(
+            rows=[],
+            attempts=0,
+            raw_preview="",
+            parsed_type="adapter_missing",
+            error_type="adapter_missing",
+        )
+    prompt_template, prompt_metadata = get_recipe_extraction_prompt_with_metadata()
+    prompt = prompt_template.format(dish=dish, servings=servings)
     started_at = time.monotonic()
+    last_raw_preview = ""
+    last_parsed_type = "empty"
+    last_error_type: str | None = None
+    last_error_message: str | None = None
+    attempts = 0
 
     async def _call_and_parse(prompt_text: str) -> list[dict[str, Any]]:
+        nonlocal attempts, last_raw_preview, last_parsed_type, last_error_type, last_error_message
+        attempts += 1
         remaining = timeout_seconds - (time.monotonic() - started_at)
         if remaining <= 0:
+            last_parsed_type = "timeout_before_call"
+            last_error_type = "timeout"
+            last_error_message = "deadline_exceeded_before_call"
             return []
         try:
             response = await asyncio.wait_for(
@@ -68,14 +122,18 @@ async def extract_recipe_ingredients_with_llm(
                 ),
                 timeout=remaining,
             )
-        except Exception:
+        except Exception as exc:
+            last_parsed_type = "exception"
+            last_error_type = type(exc).__name__
+            last_error_message = str(exc)[:240]
             return []
-
         message = extract_message(response)
         content = extract_text(message)
+        last_raw_preview = content[:400]
         parsed = parse_json_payload(content)
         if isinstance(parsed, dict):
             parsed = parsed.get("ingredients")
+        last_parsed_type = type(parsed).__name__
         if not isinstance(parsed, list):
             return []
 
@@ -100,20 +158,32 @@ async def extract_recipe_ingredients_with_llm(
                 ingredient["optional"] = True
             enrich_recipe_equivalents(ingredient)
             normalized.append(ingredient)
-
         return normalized
 
     rows = await _call_and_parse(prompt)
     if rows:
-        return rows
+        return RecipeExtractionDebug(
+            rows=rows,
+            attempts=attempts,
+            raw_preview=last_raw_preview,
+            parsed_type=last_parsed_type,
+            prompt_metadata=prompt_metadata,
+        )
     retry_prompt = (
         f"{prompt}\n\n"
         "Предыдущий ответ не удалось распарсить.\n"
         "Верни только валидный JSON-массив ингредиентов без markdown и пояснений."
     )
-    return await _call_and_parse(retry_prompt)
-
-
+    rows = await _call_and_parse(retry_prompt)
+    return RecipeExtractionDebug(
+        rows=rows,
+        attempts=attempts,
+        raw_preview=last_raw_preview,
+        parsed_type=last_parsed_type,
+        error_type=last_error_type,
+        error_message=last_error_message,
+        prompt_metadata=prompt_metadata,
+    )
 async def fallback_recipe_ingredients(
     arguments: dict[str, Any],
     *,
@@ -171,8 +241,6 @@ async def fallback_recipe_ingredients(
         },
         ensure_ascii=False,
     )
-
-
 async def fallback_recipe_search(
     arguments: dict[str, Any],
     *,

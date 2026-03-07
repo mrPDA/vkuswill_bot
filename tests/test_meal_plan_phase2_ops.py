@@ -147,6 +147,8 @@ async def test_phase2_recomputes_safety_payload_after_retry_filter(
                 empty_dishes=[],
                 mcp_rows_total=len(retry_flat),
                 fallback_rows_total=0,
+                mcp_sample_failures=[],
+                fallback_sample_failures=[],
             ),
         )
 
