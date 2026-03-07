@@ -21,6 +21,7 @@ Workflow:
 Файлы промптов (prompts/*.txt):
     system_prompt.txt           — основной системный промпт
     recipe_extraction.txt       — промпт извлечения рецептов
+    meal_plan_generation_prompt.txt — промпт генерации meal plan
     profile_core.txt            — базовые правила бота
     profile_general.txt         — профиль: general
     profile_cart.txt            — профиль: cart
@@ -53,6 +54,7 @@ PROMPTS_DIR = PROJECT_ROOT / "prompts"
 PROMPT_FILES: dict[str, str] = {
     "system-prompt": "system_prompt.txt",
     "recipe-extraction": "recipe_extraction.txt",
+    "meal-plan-generation": "meal_plan_generation_prompt.txt",
     "profile-core": "profile_core.txt",
     "profile-general": "profile_general.txt",
     "profile-cart": "profile_cart.txt",
@@ -98,6 +100,14 @@ def _collect_prompts() -> dict[str, str]:
             if text:
                 prompts["recipe-extraction"] = text
                 missing = [m for m in missing if not m.startswith("recipe-extraction")]
+
+    if "meal-plan-generation" not in prompts:
+        legacy = PROMPTS_DIR / "meal_plan_generation.txt"
+        if legacy.is_file():
+            text = legacy.read_text(encoding="utf-8").strip()
+            if text:
+                prompts["meal-plan-generation"] = text
+                missing = [m for m in missing if not m.startswith("meal-plan-generation")]
 
     if missing:
         print(f"WARNING: {len(missing)} prompts not found in {PROMPTS_DIR}/:")
