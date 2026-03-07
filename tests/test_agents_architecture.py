@@ -27,6 +27,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "meal_plan_execution_helpers": "runtime",
     "meal_plan_cart_ops": "runtime",
     "meal_plan_phase2_ops": "runtime",
+    "meal_plan_ingredient_collection": "runtime",
     "mcp_tool_gateway": "runtime",
     # Policy
     "prompt_helpers": "policy",

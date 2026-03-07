@@ -15,6 +15,7 @@ from vkuswill_bot.agents.meal_plan_phase2_ops import (
     collect_ingredients_for_dishes,
     enforce_phase2_safety_policy,
 )
+from vkuswill_bot.agents.meal_plan_ingredient_collection import IngredientCollectionStats
 from vkuswill_bot.agents.meal_plan_cart_ops import maybe_create_cart_from_products
 from vkuswill_bot.agents.meal_plan_types import MealPlan, MealPlanDish, parse_meal_plan_request
 
@@ -134,8 +135,20 @@ async def test_phase2_recomputes_safety_payload_after_retry_filter(
 
     async def _fake_collect_ingredients_for_dishes(
         **kwargs: Any,
-    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
-        return retry_flat, retry_by_dish
+    ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], IngredientCollectionStats]:
+        return (
+            retry_flat,
+            retry_by_dish,
+            IngredientCollectionStats(
+                total_dishes=len(retry_plan.dishes),
+                mcp_success_dishes=len(retry_plan.dishes),
+                fallback_attempted_dishes=0,
+                fallback_success_dishes=0,
+                empty_dishes=[],
+                mcp_rows_total=len(retry_flat),
+                fallback_rows_total=0,
+            ),
+        )
 
     monkeypatch.setattr(
         "vkuswill_bot.agents.meal_plan_phase2_ops.generate_meal_plan",
