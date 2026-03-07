@@ -352,28 +352,21 @@ ensure_stage_debug_nginx_route() {
     return 0
   fi
 
-  if grep -qE 'location[[:space:]]+/debug/' "$NGINX_CONF"; then
-    log "Nginx route /debug/ уже настроен"
-    return 0
-  fi
-
   if ! sudo -n true 2>/dev/null; then
     warn "Нет прав sudo без пароля, пропускаем автоматическое добавление /debug/ в nginx"
     return 0
   fi
 
-  log "Добавление nginx route /debug/ в ${NGINX_CONF}..."
+  log "Проверка nginx route /debug/ в ${NGINX_CONF}..."
 
   if ! sudo python3 - "$NGINX_CONF" "$HEALTH_PORT" <<'PYCODE'
 import pathlib
+import re
 import sys
 
 conf_path = pathlib.Path(sys.argv[1])
 health_port = sys.argv[2]
 content = conf_path.read_text()
-
-if "location /debug/" in content:
-    sys.exit(0)
 
 block = f"""    # Stage-only debug API for direct ShoppingAgent scenario runs
     location /debug/ {{
@@ -382,9 +375,25 @@ block = f"""    # Stage-only debug API for direct ShoppingAgent scenario runs
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 180s;
+        proxy_send_timeout 180s;
     }}
 
 """
+
+pattern = re.compile(r"(?ms)^    # Stage-only debug API for direct ShoppingAgent scenario runs\n    location /debug/ \{.*?^    \}\n\n")
+match = pattern.search(content)
+if match:
+    current_block = match.group(0)
+    if (
+        f"proxy_pass http://127.0.0.1:{health_port}/debug/;" in current_block
+        and "proxy_read_timeout 180s;" in current_block
+        and "proxy_send_timeout 180s;" in current_block
+    ):
+        sys.exit(0)
+    content = content[: match.start()] + block + content[match.end() :]
+    conf_path.write_text(content)
+    sys.exit(0)
 
 marker = "    # Voice-link API для привязки аккаунта в Alice Skill"
 if marker in content:
