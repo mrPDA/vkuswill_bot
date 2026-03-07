@@ -377,6 +377,46 @@ async def test_run_locked_turn_ignores_unvalidated_rollout_override_in_productio
 
 
 @pytest.mark.asyncio
+async def test_run_locked_turn_uses_executor_when_stage_bypass_overrides_controller(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _BlockingController:
+        async def resolve_rollout_percent(self, *, configured_percent: int) -> int:
+            _ = configured_percent
+            return 0
+
+    metrics = _MetricsSinkSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    agent._meal_plan_rollout_controller = _BlockingController()
+    text = "собери меню на неделю для 2 человек"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        return _state_for_profile("meal_plan", text=text)
+
+    async def _fake_run_meal_plan_turn(**_kwargs: Any) -> str:
+        return "executor-ok"
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+    monkeypatch.setattr(executor_mod, "run_meal_plan_turn", _fake_run_meal_plan_turn)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent, user_id=121, text=text, on_progress=None, llm_provider="qwen_openai"
+    )
+
+    assert result == "executor-ok"
+    assert len(metrics.routing_calls) == 1
+    assert metrics.routing_calls[0].executed_via_executor is True
+    assert metrics.routing_calls[0].rollout_bypass.get("active") is True
+
+
+@pytest.mark.asyncio
 async def test_run_locked_turn_blocks_expired_non_prod_rollout_bypass(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

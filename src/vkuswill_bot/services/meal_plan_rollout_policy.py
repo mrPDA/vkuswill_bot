@@ -127,12 +127,14 @@ async def resolve_rollout_percent(
     rollout_percent = int(configured_percent)
     if shadow_mode:
         return rollout_percent
+    if allow_unvalidated:
+        return rollout_percent
     if controller is None:
-        return rollout_percent if allow_unvalidated else 0
+        return 0
     try:
         return await controller.resolve_rollout_percent(configured_percent=rollout_percent)
     except Exception:
-        return rollout_percent if allow_unvalidated else 0
+        return 0
 
 
 def resolve_executor_gate_reason(
