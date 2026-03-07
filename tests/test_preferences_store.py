@@ -560,6 +560,15 @@ class TestStructuredProfile:
         profile = await store.get_profile(1)
         assert profile["hard_constraints"]["diet"] == "vegan"
 
+    async def test_set_scoped_diet_note_does_not_become_global_hard_constraint(self, store):
+        await store.set(1, "diet", "vegetarian for one person in family")
+        profile = await store.get_profile(1)
+        assert "diet" not in profile["hard_constraints"]
+        assert (
+            profile["soft_preferences"]["freeform_preferences"]["diet_scope_note"]
+            == "vegetarian for one person in family"
+        )
+
     async def test_set_cuisines_mapped_to_list(self, store):
         await store.set(1, "cuisines", "italian, asian; georgian")
         profile = await store.get_profile(1)
@@ -621,3 +630,33 @@ class TestStructuredProfile:
         assert profile["hard_constraints"]["allergens_excluded"] == ["nuts", "lactose"]
         assert profile["soft_preferences"]["cuisines"] == ["asian", "georgian"]
         assert profile["soft_preferences"]["freeform_preferences"]["custom_note"] == "без грибов"
+
+    async def test_get_profile_repairs_existing_polluted_diet_profile_for_scoped_note(self, store):
+        db = await store._ensure_db()
+        await db.execute(
+            "INSERT INTO preferences (user_id, category, preference) VALUES (?, ?, ?)",
+            (51, "diet", "vegetarian for one person in family"),
+        )
+        await db.execute(
+            "INSERT INTO preference_profiles (user_id, profile_json) VALUES (?, ?)",
+            (
+                51,
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "hard_constraints": {"diet": "vegetarian"},
+                        "soft_preferences": {"freeform_preferences": {}},
+                        "operational_preferences": {},
+                    },
+                    ensure_ascii=False,
+                ),
+            ),
+        )
+        await db.commit()
+
+        profile = await store.get_profile(51)
+        assert "diet" not in profile["hard_constraints"]
+        assert (
+            profile["soft_preferences"]["freeform_preferences"]["diet_scope_note"]
+            == "vegetarian for one person in family"
+        )

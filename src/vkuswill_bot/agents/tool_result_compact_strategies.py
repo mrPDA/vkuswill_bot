@@ -5,6 +5,8 @@ from __future__ import annotations
 import contextlib
 from typing import Any
 
+from vkuswill_bot.services.preference_scope import split_scoped_preferences
+
 from vkuswill_bot.agents.tool_value_utils import (
     _safe_float,
     extract_price_value,
@@ -268,6 +270,26 @@ def compact_cart_link(payload: dict[str, Any]) -> dict[str, Any]:
         result["error"] = payload.get("error")
     if "message" in payload:
         result["message"] = payload.get("message")
+    return result
+
+
+def compact_preferences_get(payload: dict[str, Any]) -> dict[str, Any]:
+    result: dict[str, Any] = {"ok": payload.get("ok")}
+    regular, scoped = split_scoped_preferences(payload.get("preferences"))
+    if regular:
+        result["preferences"] = regular[:20]
+    if scoped:
+        result["scoped_preferences"] = [{**row, "scope": "group_specific"} for row in scoped[:10]]
+        result["scoped_preferences_note"] = (
+            "Эти ограничения относятся к части семьи и не являются "
+            "глобальным запретом для всей корзины."
+        )
+    profile = payload.get("profile")
+    if isinstance(profile, dict):
+        result["profile"] = profile
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        result["message"] = message
     return result
 
 
