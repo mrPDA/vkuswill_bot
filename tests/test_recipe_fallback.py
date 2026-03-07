@@ -82,6 +82,8 @@ async def test_extract_recipe_ingredients_with_llm_normalizes_rows() -> None:
 
     assert adapter.calls
     assert adapter.calls[0]["tool_choice"] == "none"
+    assert adapter.calls[0]["max_tokens"] == 900
+    assert adapter.calls[0]["temperature"] == 0.1
     assert rows[0]["name"] == "Свёкла"
     assert rows[0]["quantity"] == 0.5
     assert rows[0]["search_query"] == "Свёкла"
@@ -132,6 +134,79 @@ async def test_fallback_recipe_ingredients_returns_error_for_non_borscht_without
     payload = json.loads(raw)
     assert payload["ok"] is False
     assert payload["error"] == "Не удалось получить рецепт"
+
+
+@pytest.mark.asyncio
+async def test_extract_recipe_ingredients_with_llm_retries_once_on_parse_failure() -> None:
+    adapter = _FakeAdapter(
+        response={
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {
+                                "ingredients": [
+                                    {
+                                        "name": "Киноа",
+                                        "quantity": 1,
+                                        "unit": "уп",
+                                        "search_query": "киноа",
+                                    }
+                                ]
+                            },
+                            ensure_ascii=False,
+                        )
+                    }
+                }
+            ]
+        }
+    )
+    adapter.response = {"choices": [{"message": {"content": "not-json"}}]}
+    second_response = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "ingredients": [
+                                {
+                                    "name": "Киноа",
+                                    "quantity": 1,
+                                    "unit": "уп",
+                                    "search_query": "киноа",
+                                }
+                            ]
+                        },
+                        ensure_ascii=False,
+                    )
+                }
+            }
+        ]
+    }
+
+    async def _create_completion(**kwargs: Any) -> dict[str, Any]:
+        adapter.calls.append(kwargs)
+        return adapter.response if len(adapter.calls) == 1 else second_response
+
+    adapter.create_completion = _create_completion  # type: ignore[method-assign]
+
+    rows = await extract_recipe_ingredients_with_llm(
+        dish="Киноа с овощами",
+        servings=2,
+        adapter=adapter,
+        model="test-model",
+        timeout_seconds=0.5,
+    )
+
+    assert len(adapter.calls) == 2
+    assert rows == [
+        {
+            "name": "Киноа",
+            "quantity": 1.0,
+            "unit": "уп",
+            "search_query": "киноа",
+        }
+    ]
 
 
 @pytest.mark.asyncio

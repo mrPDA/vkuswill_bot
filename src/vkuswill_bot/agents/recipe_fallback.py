@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 # Type alias for an async product-search function.
 SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
+_RECIPE_FALLBACK_MAX_TOKENS = 900
+_RECIPE_FALLBACK_TEMPERATURE = 0.1
 
 
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
@@ -47,50 +50,68 @@ async def extract_recipe_ingredients_with_llm(
         return []
 
     prompt = get_recipe_extraction_prompt().format(dish=dish, servings=servings)
-    try:
-        response = await asyncio.wait_for(
-            adapter.create_completion(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                tools=[],
-                tool_choice="none",
-            ),
-            timeout=timeout_seconds,
-        )
-    except Exception:
-        return []
+    started_at = time.monotonic()
 
-    message = extract_message(response)
-    content = extract_text(message)
-    parsed = parse_json_payload(content)
-    if isinstance(parsed, dict):
-        parsed = parsed.get("ingredients")
-    if not isinstance(parsed, list):
-        return []
+    async def _call_and_parse(prompt_text: str) -> list[dict[str, Any]]:
+        remaining = timeout_seconds - (time.monotonic() - started_at)
+        if remaining <= 0:
+            return []
+        try:
+            response = await asyncio.wait_for(
+                adapter.create_completion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt_text}],
+                    tools=[],
+                    tool_choice="none",
+                    max_tokens=_RECIPE_FALLBACK_MAX_TOKENS,
+                    temperature=_RECIPE_FALLBACK_TEMPERATURE,
+                ),
+                timeout=remaining,
+            )
+        except Exception:
+            return []
 
-    normalized: list[dict[str, Any]] = []
-    for row in parsed[:30]:
-        if not isinstance(row, dict):
-            continue
-        name = str(row.get("name", "")).strip()
-        if not name:
-            continue
-        unit = str(row.get("unit", "шт")).strip() or "шт"
-        quantity = _safe_float(row.get("quantity"), default=1.0)
-        if quantity <= 0:
-            quantity = 1.0
-        ingredient: dict[str, Any] = {
-            "name": name,
-            "quantity": round(quantity, 3),
-            "unit": unit,
-            "search_query": str(row.get("search_query", "")).strip() or name,
-        }
-        if bool(row.get("optional", False)):
-            ingredient["optional"] = True
-        enrich_recipe_equivalents(ingredient)
-        normalized.append(ingredient)
+        message = extract_message(response)
+        content = extract_text(message)
+        parsed = parse_json_payload(content)
+        if isinstance(parsed, dict):
+            parsed = parsed.get("ingredients")
+        if not isinstance(parsed, list):
+            return []
 
-    return normalized
+        normalized: list[dict[str, Any]] = []
+        for row in parsed[:30]:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "")).strip()
+            if not name:
+                continue
+            unit = str(row.get("unit", "шт")).strip() or "шт"
+            quantity = _safe_float(row.get("quantity"), default=1.0)
+            if quantity <= 0:
+                quantity = 1.0
+            ingredient: dict[str, Any] = {
+                "name": name,
+                "quantity": round(quantity, 3),
+                "unit": unit,
+                "search_query": str(row.get("search_query", "")).strip() or name,
+            }
+            if bool(row.get("optional", False)):
+                ingredient["optional"] = True
+            enrich_recipe_equivalents(ingredient)
+            normalized.append(ingredient)
+
+        return normalized
+
+    rows = await _call_and_parse(prompt)
+    if rows:
+        return rows
+    retry_prompt = (
+        f"{prompt}\n\n"
+        "Предыдущий ответ не удалось распарсить.\n"
+        "Верни только валидный JSON-массив ингредиентов без markdown и пояснений."
+    )
+    return await _call_and_parse(retry_prompt)
 
 
 async def fallback_recipe_ingredients(
