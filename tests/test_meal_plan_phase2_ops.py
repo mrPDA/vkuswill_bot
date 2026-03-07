@@ -384,6 +384,144 @@ async def test_collect_ingredients_for_dishes_returns_partial_success_when_one_c
 
 
 @pytest.mark.asyncio
+async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payload_empty() -> None:
+    class _Adapter:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create_completion(self, **kwargs: Any) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "ingredients": [
+                                        {
+                                            "name": "нут",
+                                            "search_query": "нут",
+                                            "quantity": 2,
+                                            "unit": "уп",
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class _Agent:
+        def __init__(self) -> None:
+            self._llm_adapters = {"qwen_openai": _Adapter()}
+            self._llm_timeout_seconds = 5.0
+
+        def _resolve_model_for_provider(self, llm_provider: str) -> str:
+            assert llm_provider == "qwen_openai"
+            return "test-model"
+
+        async def _call_mcp_tool(
+            self,
+            *,
+            name: str,
+            arguments: dict[str, Any],
+            llm_provider: str,
+            call_cache: dict[str, str] | None = None,
+            user_id: int | None = None,
+        ) -> str:
+            assert name == "recipe_ingredients"
+            return json.dumps(
+                {"ok": False, "message": "recipe_ingredients unavailable and no fallback recipe"},
+                ensure_ascii=False,
+            )
+
+    request = parse_meal_plan_request("меню на неделю для 2 человек", {})
+    agent = _Agent()
+    flat, by_dish = await collect_ingredients_for_dishes(
+        agent=agent,
+        request=request,
+        state=_State(),
+        user_id=12,
+        llm_provider="qwen_openai",
+        dishes_payload=[{"name": "Карри с нутом", "servings_total": 2}],
+        phase2_deadline_at=time.monotonic() + 5.0,
+        timeout_seconds=1.0,
+    )
+
+    assert flat == [
+        {"name": "нут", "search_query": "нут", "quantity": 2.0, "unit": "уп"}
+    ]
+    assert by_dish == {"карри с нутом": flat}
+    assert agent._llm_adapters["qwen_openai"].calls
+
+
+@pytest.mark.asyncio
+async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_raises() -> None:
+    class _Adapter:
+        async def create_completion(self, **kwargs: Any) -> dict[str, Any]:
+            return {
+                "choices": [
+                    {
+                        "message": {
+                            "content": json.dumps(
+                                {
+                                    "ingredients": [
+                                        {
+                                            "name": "рис",
+                                            "search_query": "рис",
+                                            "quantity": 1,
+                                            "unit": "кг",
+                                        }
+                                    ]
+                                },
+                                ensure_ascii=False,
+                            )
+                        }
+                    }
+                ]
+            }
+
+    class _Agent:
+        def __init__(self) -> None:
+            self._llm_adapters = {"qwen_openai": _Adapter()}
+            self._llm_timeout_seconds = 5.0
+
+        def _resolve_model_for_provider(self, llm_provider: str) -> str:
+            assert llm_provider == "qwen_openai"
+            return "test-model"
+
+        async def _call_mcp_tool(
+            self,
+            *,
+            name: str,
+            arguments: dict[str, Any],
+            llm_provider: str,
+            call_cache: dict[str, str] | None = None,
+            user_id: int | None = None,
+        ) -> str:
+            raise RuntimeError("tool backend unavailable")
+
+    request = parse_meal_plan_request("рацион на 3 дня для 1 человека", {})
+    flat, by_dish = await collect_ingredients_for_dishes(
+        agent=_Agent(),
+        request=request,
+        state=_State(),
+        user_id=13,
+        llm_provider="qwen_openai",
+        dishes_payload=[{"name": "Рисовая каша", "servings_total": 1}],
+        phase2_deadline_at=time.monotonic() + 5.0,
+        timeout_seconds=1.0,
+    )
+
+    assert flat == [
+        {"name": "рис", "search_query": "рис", "quantity": 1.0, "unit": "кг"}
+    ]
+    assert by_dish == {"рисовая каша": flat}
+
+
+@pytest.mark.asyncio
 async def test_collect_ingredients_for_dishes_computes_servings_from_request_groups() -> None:
     captured_servings: dict[str, int] = {}
 
