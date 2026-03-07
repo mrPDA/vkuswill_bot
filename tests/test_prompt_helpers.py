@@ -35,7 +35,11 @@ def test_resolve_prompt_mode() -> None:
 
 
 def test_ensure_system_prompt_inserts_and_replaces(monkeypatch: Any) -> None:
-    monkeypatch.setattr(prompt_helpers, "resolve_system_prompt", lambda **_kwargs: "SYS")
+    monkeypatch.setattr(
+        prompt_helpers,
+        "resolve_system_prompt_bundle",
+        lambda **_kwargs: ("SYS", {"source": "test"}),
+    )
 
     inserted = prompt_helpers.ensure_system_prompt(
         history=[{"role": "user", "content": "hi"}],
@@ -67,6 +71,23 @@ def test_build_llm_input_messages_delegates_to_ensure_system_prompt(monkeypatch:
         prompt_profiles_enabled=False,
     )
     assert result == [{"role": "system", "content": "patched"}]
+
+
+def test_build_llm_input_messages_with_metadata(monkeypatch: Any) -> None:
+    monkeypatch.setattr(
+        prompt_helpers,
+        "ensure_system_prompt_with_metadata",
+        lambda **_kwargs: ([{"role": "system", "content": "patched"}], {"source": "env"}),
+    )
+
+    result, metadata = prompt_helpers.build_llm_input_messages_with_metadata(
+        history=[{"role": "user", "content": "x"}],
+        prompt_profile="general",
+        mode="start",
+        prompt_profiles_enabled=False,
+    )
+    assert result == [{"role": "system", "content": "patched"}]
+    assert metadata == {"source": "env"}
 
 
 def test_resolve_prompt_profile_uses_followup_when_general(monkeypatch: Any) -> None:

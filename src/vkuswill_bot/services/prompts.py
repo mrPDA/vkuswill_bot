@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import re
@@ -86,20 +87,39 @@ def _load_prompt_file(filename: str) -> str | None:
 
 def get_system_prompt() -> str:
     """Получить системный промпт: Langfuse → env → файл → fallback-stub."""
+    return get_system_prompt_with_metadata()[0]
+
+
+def get_system_prompt_with_metadata() -> tuple[str, dict[str, Any]]:
+    """Получить системный промпт вместе с источником для trace/debug."""
     registry = get_registry()
     if registry is not None:
-        result = registry.get("system-prompt")
-        if result:
-            return result
+        resolution = registry.resolve("system-prompt")
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
 
     from vkuswill_bot.config import config
 
     if config.system_prompt:
-        return config.system_prompt
+        text = config.system_prompt
+        return text, {
+            "name": "system-prompt",
+            "source": "config",
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        }
     file_prompt = _load_prompt_file("system_prompt.txt")
     if file_prompt:
-        return file_prompt
-    return _FALLBACK_SYSTEM_PROMPT
+        return file_prompt, {
+            "name": "system-prompt",
+            "source": "file",
+            "path": str(_PROJECT_ROOT / "prompts" / "system_prompt.txt"),
+            "sha256": hashlib.sha256(file_prompt.encode("utf-8")).hexdigest()[:16],
+        }
+    return _FALLBACK_SYSTEM_PROMPT, {
+        "name": "system-prompt",
+        "source": "stub",
+        "sha256": hashlib.sha256(_FALLBACK_SYSTEM_PROMPT.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def get_recipe_extraction_prompt() -> str:
@@ -144,12 +164,24 @@ PromptMode = Literal["start", "compact", "finalize"]
 
 def _get_profile_part(registry_name: str, fallback: str) -> str:
     """Load a profile/mode prompt from registry with fallback to stub."""
+    return _get_profile_part_with_metadata(registry_name, fallback)[0]
+
+
+def _get_profile_part_with_metadata(
+    registry_name: str,
+    fallback: str,
+) -> tuple[str, dict[str, Any]]:
+    """Load a profile/mode prompt and return provenance metadata."""
     registry = get_registry()
     if registry is not None:
-        result = registry.get(registry_name)
-        if result:
-            return result
-    return fallback
+        resolution = registry.resolve(registry_name)
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
+    return fallback, {
+        "name": registry_name,
+        "source": "stub",
+        "sha256": hashlib.sha256(fallback.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def detect_prompt_profile(text: str) -> PromptProfile:
@@ -231,17 +263,37 @@ def get_profiled_system_prompt(
     mode: PromptMode | None = None,
 ) -> str:
     """Скомпоновать профильный system-prompt для конкретного режима."""
+    return get_profiled_system_prompt_with_metadata(
+        profile=profile,
+        compact=compact,
+        mode=mode,
+    )[0]
+
+
+def get_profiled_system_prompt_with_metadata(
+    *,
+    profile: PromptProfile,
+    compact: bool = False,
+    mode: PromptMode | None = None,
+) -> tuple[str, dict[str, Any]]:
+    """Скомпоновать профильный system-prompt и metadata по его частям."""
     resolved_mode: PromptMode = mode or ("compact" if compact else "start")
 
-    core = _get_profile_part("profile-core", _FALLBACK_PROFILE_CORE)
-    profile_text = _get_profile_part(
+    core, core_meta = _get_profile_part_with_metadata("profile-core", _FALLBACK_PROFILE_CORE)
+    profile_text, profile_meta = _get_profile_part_with_metadata(
         f"profile-{profile}", _FALLBACK_PROFILES.get(profile, _FALLBACK_PROFILES["general"])
     )
-    mode_text = _get_profile_part(
+    mode_text, mode_meta = _get_profile_part_with_metadata(
         f"mode-{resolved_mode}", _FALLBACK_MODES.get(resolved_mode, _FALLBACK_MODES["start"])
     )
-
-    return "\n\n".join([core, profile_text, mode_text])
+    text = "\n\n".join([core, profile_text, mode_text])
+    return text, {
+        "strategy": "profiled",
+        "profile": profile,
+        "mode": resolved_mode,
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        "components": [core_meta, profile_meta, mode_meta],
+    }
 
 
 # ---- Описания инструментов для function calling ----

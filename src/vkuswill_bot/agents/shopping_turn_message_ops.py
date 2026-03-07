@@ -12,7 +12,7 @@ from vkuswill_bot.agents.llm_helpers import (
 )
 from vkuswill_bot.agents.meal_plan_prompt_context import inject_meal_plan_profile_context
 from vkuswill_bot.agents.prompt_helpers import (
-    build_llm_input_messages,
+    build_llm_input_messages_with_metadata,
     resolve_prompt_mode,
 )
 
@@ -26,23 +26,27 @@ def build_turn_llm_input(
     compact_followup_prompt_enabled: bool,
     prompt_profiles_enabled: bool,
     preference_profile: dict[str, Any],
-) -> tuple[str, list[dict[str, Any]]]:
+ ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Build per-step LLM input with resolved prompt mode and profile context injection."""
     prompt_mode = resolve_prompt_mode(
         step=step,
         expecting_final_answer=expecting_final_answer,
         compact_followup_prompt_enabled=compact_followup_prompt_enabled,
     )
-    llm_input = build_llm_input_messages(
+    llm_input, prompt_metadata = build_llm_input_messages_with_metadata(
         history=history,
         prompt_profile=prompt_profile,
         mode=prompt_mode,
         prompt_profiles_enabled=prompt_profiles_enabled,
     )
-    return prompt_mode, inject_meal_plan_profile_context(
-        llm_input=llm_input,
-        prompt_profile=prompt_profile,
-        preference_profile=preference_profile,
+    return (
+        prompt_mode,
+        inject_meal_plan_profile_context(
+            llm_input=llm_input,
+            prompt_profile=prompt_profile,
+            preference_profile=preference_profile,
+        ),
+        prompt_metadata,
     )
 
 

@@ -9,8 +9,8 @@ from vkuswill_bot.services.prompts import (
     PromptMode,
     PromptProfile,
     detect_prompt_profile,
-    get_profiled_system_prompt,
-    get_system_prompt,
+    get_profiled_system_prompt_with_metadata,
+    get_system_prompt_with_metadata,
 )
 
 
@@ -37,9 +37,28 @@ def resolve_system_prompt(
     prompt_profiles_enabled: bool,
 ) -> str:
     """Получить текст system-prompt с учётом профиля и режима."""
+    return resolve_system_prompt_bundle(
+        prompt_profile=prompt_profile,
+        mode=mode,
+        prompt_profiles_enabled=prompt_profiles_enabled,
+    )[0]
+
+
+def resolve_system_prompt_bundle(
+    *,
+    prompt_profile: PromptProfile,
+    mode: PromptMode,
+    prompt_profiles_enabled: bool,
+) -> tuple[str, dict[str, Any]]:
+    """Получить system-prompt и provenance metadata для tracing."""
     if not prompt_profiles_enabled:
-        return get_system_prompt()
-    return get_profiled_system_prompt(profile=prompt_profile, mode=mode)
+        text, metadata = get_system_prompt_with_metadata()
+        return text, {
+            "strategy": "full_system_prompt",
+            "components": [metadata],
+            "sha256": metadata.get("sha256"),
+        }
+    return get_profiled_system_prompt_with_metadata(profile=prompt_profile, mode=mode)
 
 
 def ensure_system_prompt(
@@ -50,7 +69,23 @@ def ensure_system_prompt(
     prompt_profiles_enabled: bool,
 ) -> list[dict[str, Any]]:
     """Обеспечить первый system-message с нужной версией промпта."""
-    prompt = resolve_system_prompt(
+    return ensure_system_prompt_with_metadata(
+        prompt_profile=prompt_profile,
+        history=history,
+        mode=mode,
+        prompt_profiles_enabled=prompt_profiles_enabled,
+    )[0]
+
+
+def ensure_system_prompt_with_metadata(
+    *,
+    history: list[dict[str, Any]] | None,
+    prompt_profile: PromptProfile,
+    mode: PromptMode,
+    prompt_profiles_enabled: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Обеспечить первый system-message и вернуть metadata по prompt source."""
+    prompt, metadata = resolve_system_prompt_bundle(
         prompt_profile=prompt_profile,
         mode=mode,
         prompt_profiles_enabled=prompt_profiles_enabled,
@@ -58,8 +93,8 @@ def ensure_system_prompt(
     prepared = list(history) if history is not None else []
     if prepared and prepared[0].get("role") == "system":
         prepared[0] = {"role": "system", "content": prompt}
-        return prepared
-    return [{"role": "system", "content": prompt}, *prepared]
+        return prepared, metadata
+    return [{"role": "system", "content": prompt}, *prepared], metadata
 
 
 def build_llm_input_messages(
@@ -71,6 +106,22 @@ def build_llm_input_messages(
 ) -> list[dict[str, Any]]:
     """Построить финальный список сообщений для LLM."""
     return ensure_system_prompt(
+        history=history,
+        prompt_profile=prompt_profile,
+        mode=mode,
+        prompt_profiles_enabled=prompt_profiles_enabled,
+    )
+
+
+def build_llm_input_messages_with_metadata(
+    *,
+    history: list[dict[str, Any]],
+    prompt_profile: PromptProfile,
+    mode: PromptMode,
+    prompt_profiles_enabled: bool,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Построить список сообщений для LLM и metadata по system prompt."""
+    return ensure_system_prompt_with_metadata(
         history=history,
         prompt_profile=prompt_profile,
         mode=mode,

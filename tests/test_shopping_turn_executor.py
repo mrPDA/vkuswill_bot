@@ -92,7 +92,7 @@ class _AgentStub:
         user_id: int,
         text: str,
         llm_provider: str,
-        prompt_profile: str,
+        prompt_profile: str | None,
     ) -> None:
         _ = user_id, text, llm_provider, prompt_profile
         return None
@@ -148,9 +148,15 @@ async def test_run_locked_turn_does_not_duplicate_routing_event_on_internal_fall
     text = "собери меню на неделю для 2 человек"
     state_calls = 0
 
-    async def _fake_build_turn_state(*, agent: Any, user_id: int, text: str) -> TurnState:
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
         nonlocal state_calls
-        _ = agent, user_id
+        _ = agent, user_id, trace
         state_calls += 1
         if state_calls == 1:
             return _state_for_profile("meal_plan", text=text)
@@ -184,8 +190,14 @@ async def test_run_locked_turn_ignores_unvalidated_rollout_override_in_productio
     agent._deployment_environment = "production"
     text = "собери меню на неделю для 2 человек"
 
-    async def _fake_build_turn_state(*, agent: Any, user_id: int, text: str) -> TurnState:
-        _ = agent, user_id
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
         return _state_for_profile("meal_plan", text=text)
 
     monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
@@ -211,8 +223,14 @@ async def test_run_locked_turn_blocks_expired_non_prod_rollout_bypass(
     ).isoformat()
     text = "собери меню на неделю для 2 человек"
 
-    async def _fake_build_turn_state(*, agent: Any, user_id: int, text: str) -> TurnState:
-        _ = agent, user_id
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
         return _state_for_profile("meal_plan", text=text)
 
     monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)

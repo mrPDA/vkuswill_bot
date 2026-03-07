@@ -59,13 +59,22 @@ async def run_locked_turn(
     record_routing_event: bool = True,
 ) -> str:
     """Выполнить полный цикл обработки пользовательского сообщения под user-lock."""
-    state = await build_turn_state(agent=agent, user_id=user_id, text=text)
     trace = agent._create_trace(
         user_id=user_id,
         text=text,
         llm_provider=llm_provider,
-        prompt_profile=state.prompt_profile,
+        prompt_profile=None,
     )
+    state = await build_turn_state(agent=agent, user_id=user_id, text=text, trace=trace)
+    if trace is not None:
+        trace.update(
+            metadata={
+                "provider": llm_provider,
+                "prompt_profile": state.prompt_profile,
+                "llm_prompt_profile": state.llm_prompt_profile,
+                "heuristic_prompt_profile": state.heuristic_prompt_profile,
+            }
+        )
 
     async def _progress(message: str) -> None:
         if on_progress is None:
@@ -158,7 +167,7 @@ async def run_locked_turn(
     final_response_builder: Any = DefaultFinalResponseBuilder()
     await _progress("⚙️ Анализирую запрос...")
     for step in range(1, agent._max_tool_calls + 1):
-        prompt_mode, llm_input = build_turn_llm_input(
+        prompt_mode, llm_input, prompt_metadata = build_turn_llm_input(
             history=state.history,
             prompt_profile=state.prompt_profile,
             step=step,
@@ -186,6 +195,12 @@ async def run_locked_turn(
                     },
                 )
             return _ERROR_TOO_MANY_TOOLS
+        max_tokens_override = None
+        if (
+            state.recipe_flow_started_this_turn
+            and getattr(agent, "_llm_max_tokens_recipe", None) is not None
+        ):
+            max_tokens_override = agent._llm_max_tokens_recipe
         gen = None
         if trace is not None:
             gen = trace.generation(
@@ -200,14 +215,15 @@ async def run_locked_turn(
                     "prompt_profile": state.prompt_profile,
                     "prompt_mode": prompt_mode,
                     "compact_prompt": prompt_mode == "compact",
+                    "temperature": agent._llm_temperature,
+                    "max_tokens": (
+                        max_tokens_override
+                        if max_tokens_override is not None
+                        else getattr(agent, "_llm_max_tokens", None)
+                    ),
                 },
+                metadata={"prompt": prompt_metadata},
             )
-        max_tokens_override = None
-        if (
-            state.recipe_flow_started_this_turn
-            and getattr(agent, "_llm_max_tokens_recipe", None) is not None
-        ):
-            max_tokens_override = agent._llm_max_tokens_recipe
         try:
             response = await agent._call_llm(
                 messages=llm_input,

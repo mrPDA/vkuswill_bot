@@ -36,7 +36,12 @@ class ShoppingTurnAgentProtocol(Protocol):
 
     def _normalize_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
 
-    async def _classify_intent(self, text: str) -> PromptProfile | None: ...
+    async def _classify_intent(
+        self,
+        text: str,
+        *,
+        trace: Any | None = None,
+    ) -> PromptProfile | None: ...
 
     async def _load_user_preferences(self, user_id: int) -> dict[str, str]: ...
     async def _load_user_preferences_bundle(
@@ -52,7 +57,7 @@ class ShoppingTurnAgentProtocol(Protocol):
         user_id: int,
         text: str,
         llm_provider: str,
-        prompt_profile: PromptProfile,
+        prompt_profile: PromptProfile | None,
     ) -> Any | None: ...
 
     def _resolve_model_for_provider(self, llm_provider: str) -> str: ...
@@ -128,6 +133,8 @@ class TurnState:
     requested_ingredients: list[dict[str, Any]]
     user_preferences: dict[str, str]
     user_preference_profile: dict[str, Any] = field(default_factory=dict)
+    llm_prompt_profile: PromptProfile | None = None
+    heuristic_prompt_profile: PromptProfile = "general"
     cart_data_this_turn: dict[str, Any] | None = None
     manual_recovery_used: bool = False
     cart_creation_recovery_used: bool = False
@@ -148,6 +155,7 @@ async def build_turn_state(
     agent: ShoppingTurnAgentProtocol,
     user_id: int,
     text: str,
+    trace: Any | None = None,
 ) -> TurnState:
     history = agent._history.get(user_id)
     previous_cart_snapshot = agent._last_cart_snapshot.get(user_id)
@@ -161,7 +169,10 @@ async def build_turn_state(
         history = None
 
     # LLM-классификация и загрузка preferences — независимы, запускаем параллельно.
-    classify_task = asyncio.create_task(agent._classify_intent(text))
+    if trace is None:
+        classify_task = asyncio.create_task(agent._classify_intent(text))
+    else:
+        classify_task = asyncio.create_task(agent._classify_intent(text, trace=trace))
     bundle_loader = getattr(type(agent), "_load_user_preferences_bundle", None)
     if callable(bundle_loader):
         prefs_bundle_task = asyncio.create_task(agent._load_user_preferences_bundle(user_id))
@@ -174,7 +185,8 @@ async def build_turn_state(
     with contextlib.suppress(Exception):
         llm_profile = await classify_task
 
-    prompt_profile = llm_profile or resolve_prompt_profile(text=text, history=history)
+    heuristic_profile = resolve_prompt_profile(text=text, history=history)
+    prompt_profile = llm_profile or heuristic_profile
     if prompt_profile == "meal_plan" and not getattr(
         agent, "_meal_plan_intent_routing_enabled", True
     ):
@@ -217,4 +229,6 @@ async def build_turn_state(
         requested_ingredients=extract_structured_ingredient_requests(text),
         user_preferences=user_preferences,
         user_preference_profile=user_preference_profile,
+        llm_prompt_profile=llm_profile,
+        heuristic_prompt_profile=heuristic_profile,
     )

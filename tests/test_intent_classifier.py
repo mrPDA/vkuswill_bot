@@ -12,6 +12,24 @@ from vkuswill_bot.agents.intent_classifier import (
     classify_user_intent,
 )
 from vkuswill_bot.services.prompts import PromptProfile
+from vkuswill_bot.services.prompt_registry import init_registry, reset_registry
+
+
+class _TraceGenerationSpy:
+    def __init__(self) -> None:
+        self.end_calls: list[dict] = []
+
+    def end(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.end_calls.append(kwargs)
+
+
+class _TraceSpy:
+    def __init__(self) -> None:
+        self.generation_calls: list[dict] = []
+
+    def generation(self, **kwargs):  # type: ignore[no-untyped-def]
+        self.generation_calls.append(kwargs)
+        return _TraceGenerationSpy()
 
 
 def _llm_response(content: str) -> dict:
@@ -50,6 +68,12 @@ class TestParseProfile:
 
 
 class TestClassifyUserIntent:
+    @pytest.fixture(autouse=True)
+    def _cleanup_registry(self):
+        reset_registry()
+        yield
+        reset_registry()
+
     @pytest.fixture
     def mock_adapter(self) -> AsyncMock:
         adapter = AsyncMock()
@@ -110,6 +134,37 @@ class TestClassifyUserIntent:
         mock_adapter.create_completion.return_value = _llm_response("")
         result = await classify_user_intent("привет", mock_adapter, "test-model")
         assert result is None
+
+    async def test_records_separate_generation_in_trace(self, mock_adapter):
+        mock_adapter.create_completion.return_value = _llm_response("cart")
+        trace = _TraceSpy()
+
+        result = await classify_user_intent("закажи суп", mock_adapter, "test-model", trace=trace)
+
+        assert result == "cart"
+        assert trace.generation_calls
+        generation = trace.generation_calls[-1]
+        assert generation["name"] == "intent-classification"
+        assert generation["model_parameters"]["max_tokens"] == 20
+        assert generation["model_parameters"]["temperature"] == 0.0
+        assert generation["metadata"]["prompt"]["name"] == "classify-intent"
+
+    async def test_uses_registry_prompt_metadata_in_trace(self, mock_adapter):
+        mock_adapter.create_completion.return_value = _llm_response("recipe")
+        init_registry(env_overrides={"classify-intent": "Classify {text}"}, label="staging")
+        trace = _TraceSpy()
+
+        result = await classify_user_intent(
+            "приготовь суп",
+            mock_adapter,
+            "test-model",
+            trace=trace,
+        )
+
+        assert result == "recipe"
+        generation = trace.generation_calls[-1]
+        assert generation["metadata"]["prompt"]["source"] == "env"
+        assert generation["metadata"]["prompt"]["label"] == "staging"
 
 
 class TestBuildTurnStateIntegration:

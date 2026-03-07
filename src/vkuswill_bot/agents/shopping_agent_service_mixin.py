@@ -52,22 +52,24 @@ class ShoppingAgentServiceMixin:
         user_id: int,
         text: str,
         llm_provider: str,
-        prompt_profile: PromptProfile,
+        prompt_profile: PromptProfile | None,
     ) -> Any | None:
         if self._langfuse is None:
             return None
         with contextlib.suppress(Exception):
+            tags = [
+                "shopping_agent",
+                "telegram_or_voice",
+                llm_provider,
+            ]
+            if prompt_profile is not None:
+                tags.append(f"profile:{prompt_profile}")
             return self._langfuse.trace(
                 name="chat",
                 user_id=str(user_id),
                 session_id=str(user_id),
                 input=text,
-                tags=[
-                    "shopping_agent",
-                    "telegram_or_voice",
-                    llm_provider,
-                    f"profile:{prompt_profile}",
-                ],
+                tags=tags,
             )
         return None
 

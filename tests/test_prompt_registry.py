@@ -11,6 +11,7 @@ from vkuswill_bot.services.prompt_registry import (
     PromptRegistry,
     get_registry,
     init_registry,
+    PromptResolution,
     reset_registry,
 )
 
@@ -239,6 +240,18 @@ class TestLangfuseIntegration:
             label="production",
             cache_ttl_seconds=300,
         )
+
+    def test_resolve_returns_provenance_metadata(self):
+        langfuse = _make_langfuse_mock({"test": "From Langfuse"})
+        registry = PromptRegistry(langfuse_client=langfuse, label="staging")
+
+        resolution = registry.resolve("test")
+
+        assert isinstance(resolution, PromptResolution)
+        assert resolution.text == "From Langfuse"
+        assert resolution.source == "langfuse"
+        assert resolution.label == "staging"
+        assert resolution.as_dict()["sha256"]
 
 
 # ============================================================================
