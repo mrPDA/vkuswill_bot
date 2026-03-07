@@ -93,9 +93,10 @@ class OpenAICompatibleLLMAdapter:
         request: dict[str, Any] = {
             "model": model,
             "messages": messages,
-            "tools": tools,
-            "tool_choice": tool_choice,
         }
+        if tools:
+            request["tools"] = tools
+            request["tool_choice"] = tool_choice
         if max_tokens is not None:
             request["max_tokens"] = max_tokens
         if temperature is not None:

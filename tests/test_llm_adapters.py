@@ -97,6 +97,25 @@ async def test_openai_adapter_normalizes_response_shape() -> None:
     request = adapter._client.completions.calls[0]
     assert request["max_tokens"] == 777
     assert request["temperature"] == 0.3
+    assert "tools" not in request
+    assert "tool_choice" not in request
+
+
+@pytest.mark.asyncio
+async def test_openai_adapter_preserves_tools_when_present() -> None:
+    adapter = OpenAICompatibleLLMAdapter(client=_FakeOpenAIClient(_FakeOpenAIResponse()))
+    result = await adapter.create_completion(
+        model="gpt://folder/model/latest",
+        messages=[{"role": "user", "content": "найди молоко"}],
+        tools=[{"type": "function", "function": {"name": "search", "parameters": {}}}],
+        tool_choice="auto",
+    )
+
+    message = result["choices"][0]["message"]
+    assert message["content"] == "Готово"
+    request = adapter._client.completions.calls[0]
+    assert request["tools"][0]["function"]["name"] == "search"
+    assert request["tool_choice"] == "auto"
 
 
 def test_create_llm_adapter_and_provider_normalization() -> None:
