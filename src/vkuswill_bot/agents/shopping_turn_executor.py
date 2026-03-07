@@ -49,6 +49,27 @@ def _is_user_in_rollout(*, user_id: int, rollout_percent: int) -> bool:
     return bucket < percent
 
 
+def _resolve_executor_gate_reason(
+    *,
+    prompt_profile: str,
+    executor_enabled: bool,
+    shadow_mode: bool,
+    rollout_percent: int,
+    is_user_in_rollout: bool,
+) -> str:
+    if prompt_profile != "meal_plan":
+        return "prompt_profile_not_meal_plan"
+    if not executor_enabled:
+        return "executor_disabled"
+    if shadow_mode:
+        return "shadow_mode_enabled"
+    if rollout_percent <= 0:
+        return "rollout_percent_zero"
+    if not is_user_in_rollout:
+        return "user_not_in_rollout_bucket"
+    return "executor_enabled"
+
+
 async def run_locked_turn(
     *,
     agent: ShoppingTurnAgentProtocol,
@@ -109,14 +130,39 @@ async def run_locked_turn(
         controller=controller,
         allow_unvalidated=bypass.allow_unvalidated,
     )
+    user_in_rollout = _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)
+    executor_enabled = bool(getattr(agent, "_meal_plan_executor_enabled", False))
     can_use_executor = (
         state.prompt_profile == "meal_plan"
-        and getattr(agent, "_meal_plan_executor_enabled", False)
+        and executor_enabled
         and not shadow_mode
-        and _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)
+        and user_in_rollout
+    )
+    executor_gate_reason = _resolve_executor_gate_reason(
+        prompt_profile=state.prompt_profile,
+        executor_enabled=executor_enabled,
+        shadow_mode=shadow_mode,
+        rollout_percent=rollout_percent,
+        is_user_in_rollout=user_in_rollout,
     )
     metrics_trace_id = resolve_metrics_trace_id(trace=trace, user_id=user_id)
     metrics_sink = getattr(agent, "_meal_plan_metrics_sink", None)
+    if trace is not None:
+        trace.update(
+            metadata={
+                "meal_plan_shadow_mode": shadow_mode,
+                "meal_plan_rollout_percent_configured": int(
+                    getattr(agent, "_meal_plan_rollout_percent", 100)
+                ),
+                "meal_plan_rollout_percent_resolved": rollout_percent,
+                "meal_plan_rollout_controller_present": controller is not None,
+                "meal_plan_rollout_bypass": bypass.audit.as_dict(),
+                "meal_plan_executor_enabled": executor_enabled,
+                "meal_plan_user_in_rollout": user_in_rollout,
+                "meal_plan_can_use_executor": can_use_executor,
+                "meal_plan_executor_gate_reason": executor_gate_reason,
+            }
+        )
     if record_routing_event and metrics_sink is not None:
         with contextlib.suppress(Exception):
             await metrics_sink.record_routing(
