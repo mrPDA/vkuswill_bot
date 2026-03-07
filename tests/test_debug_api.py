@@ -71,6 +71,12 @@ class _DummyChatEngine:
         }
 
 
+class _FailingChatEngine(_DummyChatEngine):
+    async def process_message(self, user_id: int, text: str) -> str:
+        await super().process_message(user_id, text)
+        raise RuntimeError("executor exploded")
+
+
 @pytest.mark.asyncio
 async def test_run_shopping_handler_requires_auth() -> None:
     req = _DummyRequest(
@@ -120,6 +126,24 @@ async def test_run_shopping_handler_can_skip_reset_history() -> None:
     body = _read_json(resp)
     assert body["history_reset"] is False
     assert engine.reset_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_run_shopping_handler_returns_debug_context_on_exception() -> None:
+    engine = _FailingChatEngine()
+    req = _DummyRequest(
+        headers={"X-Debug-Api-Key": "secret"},
+        app={"debug_api_key": "secret", "debug_chat_engine": engine},
+        payload={"user_id": 42, "text": "закажи молоко", "reset_history": True},
+    )
+    resp = await _run_shopping_handler(req)  # type: ignore[arg-type]
+    assert resp.status == 502
+    body = _read_json(resp)
+    assert body["error"] == "llm_error"
+    assert body["exception_type"] == "RuntimeError"
+    assert body["exception_message"] == "executor exploded"
+    assert body["trace_id"] == "trace-42"
+    assert body["diagnostics"]["prompt_profile"] == "cart"
 
 
 @pytest.mark.asyncio

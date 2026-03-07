@@ -120,6 +120,29 @@ def _snapshot_total(snapshot: dict[str, Any] | None) -> float | None:
     return None
 
 
+async def _read_debug_state(
+    chat_engine: ChatEngineProtocol,
+    *,
+    user_id: int,
+) -> tuple[dict[str, Any] | None, str | None, dict[str, Any] | None]:
+    cart_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
+    trace_id_getter = getattr(chat_engine, "get_last_trace_id", None)
+    diagnostics_getter = getattr(chat_engine, "get_last_turn_diagnostics", None)
+    trace_id: str | None = None
+    diagnostics: dict[str, Any] | None = None
+    if callable(trace_id_getter):
+        with contextlib.suppress(Exception):
+            resolved = await trace_id_getter(user_id)
+            if resolved is not None:
+                trace_id = str(resolved).strip() or None
+    if callable(diagnostics_getter):
+        with contextlib.suppress(Exception):
+            resolved = await diagnostics_getter(user_id)
+            if isinstance(resolved, dict):
+                diagnostics = resolved
+    return cart_snapshot, trace_id, diagnostics
+
+
 async def _run_shopping_handler(request: web.Request) -> web.Response:
     if not _is_authorized(request):
         return _json_error(401, "unauthorized", "Invalid API key")
@@ -148,25 +171,25 @@ async def _run_shopping_handler(request: web.Request) -> web.Response:
 
     try:
         response_text = await chat_engine.process_message(user_id=user_id, text=text)
-    except Exception:
+    except Exception as exc:
         logger.exception("debug run-shopping failed: user_id=%s", user_id)
-        return _json_error(502, "llm_error", "Debug shopping failed")
+        cart_snapshot, trace_id, diagnostics = await _read_debug_state(chat_engine, user_id=user_id)
+        return web.json_response(
+            {
+                "ok": False,
+                "error": "llm_error",
+                "message": "Debug shopping failed",
+                "exception_type": type(exc).__name__,
+                "exception_message": str(exc),
+                "trace_id": trace_id,
+                "cart_snapshot": cart_snapshot,
+                "diagnostics": diagnostics,
+            },
+            status=502,
+            dumps=lambda body: json.dumps(body, ensure_ascii=False),
+        )
 
-    cart_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
-    trace_id_getter = getattr(chat_engine, "get_last_trace_id", None)
-    diagnostics_getter = getattr(chat_engine, "get_last_turn_diagnostics", None)
-    trace_id: str | None = None
-    diagnostics: dict[str, Any] | None = None
-    if callable(trace_id_getter):
-        with contextlib.suppress(Exception):
-            resolved = await trace_id_getter(user_id)
-            if resolved is not None:
-                trace_id = str(resolved).strip() or None
-    if callable(diagnostics_getter):
-        with contextlib.suppress(Exception):
-            resolved = await diagnostics_getter(user_id)
-            if isinstance(resolved, dict):
-                diagnostics = resolved
+    cart_snapshot, trace_id, diagnostics = await _read_debug_state(chat_engine, user_id=user_id)
 
     cart_link = (
         str(cart_snapshot.get("link")).strip()
