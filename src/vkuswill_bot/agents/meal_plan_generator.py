@@ -22,6 +22,7 @@ from vkuswill_bot.agents.meal_plan_types import (
 from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt
 
 _MEAL_TYPES = frozenset({"breakfast", "lunch", "dinner", "snack_1", "snack_2", "snack_3"})
+_MEAL_PLAN_GENERATION_MAX_TOKENS = 1200
 
 
 class MealPlanGeneratorAgentProtocol(Protocol):
@@ -171,12 +172,17 @@ async def generate_meal_plan(
     prompt = get_meal_plan_generation_prompt(
         request_payload=request_payload,
     )
+    max_tokens = getattr(agent, "_llm_max_tokens_recipe", None)
+    if isinstance(max_tokens, int):
+        max_tokens = min(max_tokens, _MEAL_PLAN_GENERATION_MAX_TOKENS)
+    else:
+        max_tokens = _MEAL_PLAN_GENERATION_MAX_TOKENS
     messages = [{"role": "user", "content": prompt}]
     response = await agent._call_llm(
         messages=messages,
         tools=[],
         llm_provider=llm_provider,
-        max_tokens_override=getattr(agent, "_llm_max_tokens_recipe", None),
+        max_tokens_override=max_tokens,
     )
     message = extract_message(response)
     raw_text = extract_text(message).strip()
@@ -200,7 +206,7 @@ async def generate_meal_plan(
         messages=retry_messages,
         tools=[],
         llm_provider=llm_provider,
-        max_tokens_override=getattr(agent, "_llm_max_tokens_recipe", None),
+        max_tokens_override=max_tokens,
     )
     retry_message = extract_message(retry_response)
     retry_text = extract_text(retry_message).strip()
