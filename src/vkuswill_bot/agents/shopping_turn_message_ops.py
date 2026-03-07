@@ -26,7 +26,7 @@ def build_turn_llm_input(
     compact_followup_prompt_enabled: bool,
     prompt_profiles_enabled: bool,
     preference_profile: dict[str, Any],
- ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
+) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Build per-step LLM input with resolved prompt mode and profile context injection."""
     prompt_mode = resolve_prompt_mode(
         step=step,
