@@ -35,9 +35,9 @@ validate_staging_config() {
 
 compute_rollout_expiration() {
   python3 - <<'PY'
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
-print((datetime.now(UTC) + timedelta(hours=24)).isoformat())
+print((datetime.now(timezone.utc) + timedelta(hours=24)).isoformat())
 PY
 }
 
