@@ -1,5 +1,3 @@
-"""Fallback-реализации recipe_ingredients и recipe_search для ShoppingAgent."""
-
 from __future__ import annotations
 
 import asyncio
@@ -21,8 +19,6 @@ from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalcula
 from vkuswill_bot.services.prompts import get_recipe_extraction_prompt_with_metadata
 
 logger = logging.getLogger(__name__)
-
-# Type alias for an async product-search function.
 SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
 _RECIPE_FALLBACK_MAX_TOKENS = 900
@@ -66,7 +62,6 @@ async def extract_recipe_ingredients_with_llm(
     model: str,
     timeout_seconds: float,
 ) -> list[dict[str, Any]]:
-    """Извлечь ингредиенты блюда через LLM-запрос."""
     debug = await extract_recipe_ingredients_with_llm_debug(
         dish=dish,
         servings=servings,
@@ -83,7 +78,6 @@ async def extract_recipe_ingredients_with_llm_debug(
     model: str,
     timeout_seconds: float,
 ) -> RecipeExtractionDebug:
-    """Извлечь ингредиенты блюда через LLM-запрос с debug metadata."""
     if adapter is None:
         return RecipeExtractionDebug(
             rows=[],
@@ -169,6 +163,16 @@ async def extract_recipe_ingredients_with_llm_debug(
             parsed_type=last_parsed_type,
             prompt_metadata=prompt_metadata,
         )
+    if last_error_type is not None and not last_raw_preview:
+        return RecipeExtractionDebug(
+            rows=[],
+            attempts=attempts,
+            raw_preview=last_raw_preview,
+            parsed_type=last_parsed_type,
+            error_type=last_error_type,
+            error_message=last_error_message,
+            prompt_metadata=prompt_metadata,
+        )
     retry_prompt = (
         f"{prompt}\n\n"
         "Предыдущий ответ не удалось распарсить.\n"
@@ -191,7 +195,6 @@ async def fallback_recipe_ingredients(
     model: str,
     timeout_seconds: float,
 ) -> str:
-    """Fallback для recipe_ingredients: извлечь рецепт через LLM."""
     dish = str(arguments.get("dish", "")).strip()
     if not dish:
         return json.dumps(
@@ -247,7 +250,6 @@ async def fallback_recipe_search(
     search_fn: SearchFn,
     max_concurrent: int = _DEFAULT_FALLBACK_SEARCH_CONCURRENCY,
 ) -> str:
-    """Fallback для recipe_search: поиск каждого ингредиента через vkusvill_products_search."""
     ingredients = arguments.get("ingredients")
     if not isinstance(ingredients, list) or not ingredients:
         return json.dumps(
