@@ -119,11 +119,7 @@ async def _batch_fallback_rows(
     if not isinstance(llm_timeout, int | float) or llm_timeout <= 0:
         llm_timeout = timeout_seconds
     semaphore = asyncio.Semaphore(_BATCH_RECIPE_EXTRACTION_CONCURRENCY)
-    batch_timeout = min(
-        float(llm_timeout),
-        timeout_seconds,
-        _BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS,
-    )
+    batch_timeout = min(float(llm_timeout), _BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS)
     aggregated: dict[str, list[dict[str, Any]]] = {}
     failures: list[dict[str, Any]] = []
 
