@@ -218,10 +218,22 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
             cuisine = segment.get("cuisine")
             if diet:
                 group_hard["diet"] = diet
-                preferences_trace.append({"source": "explicit", "field": f"groups.{segment['id']}.hard_constraints.diet", "value": diet})
+                preferences_trace.append(
+                    {
+                        "source": "explicit",
+                        "field": f"groups.{segment['id']}.hard_constraints.diet",
+                        "value": diet,
+                    }
+                )
             if cuisine:
                 group_soft["cuisines"] = _merge_unique([cuisine], group_soft.get("cuisines", []))
-                preferences_trace.append({"source": "explicit", "field": f"groups.{segment['id']}.soft_preferences.cuisines", "value": [cuisine]})
+                preferences_trace.append(
+                    {
+                        "source": "explicit",
+                        "field": f"groups.{segment['id']}.soft_preferences.cuisines",
+                        "value": [cuisine],
+                    }
+                )
             groups.append(
                 MealPlanRequestGroup(
                     id=segment["id"],

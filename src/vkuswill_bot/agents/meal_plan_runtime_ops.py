@@ -189,11 +189,7 @@ def request_payload_for_renderer(
         if not source:
             continue
         source_counts[source] = source_counts.get(source, 0) + 1
-    applied_trace = [
-        row
-        for row in request.applied_preferences_trace
-        if isinstance(row, dict)
-    ]
+    applied_trace = [row for row in request.applied_preferences_trace if isinstance(row, dict)]
     applied_summary = {
         "total": len(applied_trace),
         "applied": sum(1 for row in applied_trace if row.get("applied") is True),

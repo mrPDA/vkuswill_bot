@@ -1,4 +1,5 @@
 """Исполнитель одного turn-а ShoppingAgent (LLM loop + tool loop + recovery)."""
+
 from __future__ import annotations
 import contextlib
 import hashlib
@@ -32,7 +33,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 _ERROR_GENERIC = "Не удалось обработать запрос. Попробуйте позже."
 _ERROR_OVERLOADED = "Сейчас много запросов, все ассистенты заняты. Попробуйте через 1–2 минуты."
-_ERROR_TOO_MANY_TOOLS = "Не удалось завершить в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
+_ERROR_TOO_MANY_TOOLS = (
+    "Не удалось завершить в пределах лимита шагов. Уточните запрос и попробуйте ещё раз."
+)
+
 
 def _is_user_in_rollout(*, user_id: int, rollout_percent: int) -> bool:
     percent = max(0, min(100, int(rollout_percent)))
@@ -43,6 +47,7 @@ def _is_user_in_rollout(*, user_id: int, rollout_percent: int) -> bool:
     digest = hashlib.sha256(str(user_id).encode("utf-8")).hexdigest()
     bucket = int(digest[:8], 16) % 100
     return bucket < percent
+
 
 async def run_locked_turn(
     *,
@@ -61,11 +66,13 @@ async def run_locked_turn(
         llm_provider=llm_provider,
         prompt_profile=state.prompt_profile,
     )
+
     async def _progress(message: str) -> None:
         if on_progress is None:
             return
         with contextlib.suppress(Exception):
             await on_progress(message)
+
     shadow_mode = bool(getattr(agent, "_meal_plan_shadow_mode_enabled", False))
     rollout_percent = int(getattr(agent, "_meal_plan_rollout_percent", 100))
     controller = getattr(agent, "_meal_plan_rollout_controller", None)
@@ -75,7 +82,9 @@ async def run_locked_turn(
         reason=str(getattr(agent, "_meal_plan_unvalidated_rollout_reason", "")),
         actor=str(getattr(agent, "_meal_plan_unvalidated_rollout_actor", "")),
         expires_at=str(getattr(agent, "_meal_plan_unvalidated_rollout_expires_at", "")),
-        max_ttl_seconds=int(getattr(agent, "_meal_plan_unvalidated_rollout_max_ttl_seconds", 86400)),
+        max_ttl_seconds=int(
+            getattr(agent, "_meal_plan_unvalidated_rollout_max_ttl_seconds", 86400)
+        ),
     )
     rollout_percent = await resolve_rollout_percent(
         shadow_mode=shadow_mode,
@@ -102,6 +111,7 @@ async def run_locked_turn(
                 rollout_bypass=bypass.audit.as_dict(),
             )
     if can_use_executor:
+
         async def _fallback_to_standard_turn(reason: str) -> str:
             notice = f"⚠️ {reason}. Перехожу к стандартной обработке запроса."
             previous = bool(getattr(agent, "_meal_plan_executor_enabled", False))
@@ -118,6 +128,7 @@ async def run_locked_turn(
             finally:
                 agent._meal_plan_executor_enabled = previous
             return f"{notice}\n\n{fallback_text}".strip()
+
         started_at = time.monotonic()
         result = await run_meal_plan_turn(
             agent=agent,

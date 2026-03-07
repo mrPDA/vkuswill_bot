@@ -70,10 +70,7 @@ def evaluate_non_prod_rollout_bypass(
 ) -> RolloutBypassDecision:
     env = environment.strip().lower() or "production"
     now = now_utc if isinstance(now_utc, datetime) else datetime.now(UTC)
-    if now.tzinfo is None:
-        now = now.replace(tzinfo=UTC)
-    else:
-        now = now.astimezone(UTC)
+    now = now.replace(tzinfo=UTC) if now.tzinfo is None else now.astimezone(UTC)
 
     reason_text = reason.strip()
     actor_text = actor.strip()

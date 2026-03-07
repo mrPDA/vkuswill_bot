@@ -1,4 +1,5 @@
 """Service/helper mixin for ShoppingAgent."""
+
 from __future__ import annotations
 
 import asyncio
@@ -31,6 +32,7 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.llm_adapters import LLMAdapterProtocol
 
 logger = logging.getLogger(__name__)
+
 
 class ShoppingAgentServiceMixin:
     async def _load_user_preferences_bundle(

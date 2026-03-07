@@ -249,7 +249,9 @@ class TestBuildTurnStateIntegration:
         agent._load_user_preferences.return_value = {}
         agent._classify_intent.return_value = "meal_plan"
 
-        state = await build_turn_state(agent=agent, user_id=1, text="собери меню на неделю для 2 человек")
+        state = await build_turn_state(
+            agent=agent, user_id=1, text="собери меню на неделю для 2 человек"
+        )
 
         assert state.prompt_profile == "cart"
         assert state.cart_intent is True

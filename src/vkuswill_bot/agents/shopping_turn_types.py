@@ -175,9 +175,8 @@ async def build_turn_state(
         llm_profile = await classify_task
 
     prompt_profile = llm_profile or resolve_prompt_profile(text=text, history=history)
-    if (
-        prompt_profile == "meal_plan"
-        and not getattr(agent, "_meal_plan_intent_routing_enabled", True)
+    if prompt_profile == "meal_plan" and not getattr(
+        agent, "_meal_plan_intent_routing_enabled", True
     ):
         prompt_profile = "cart" if is_cart_intent(text) else "recipe"
     history = ensure_system_prompt(

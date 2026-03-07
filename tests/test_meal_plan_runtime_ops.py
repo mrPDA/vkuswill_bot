@@ -9,7 +9,12 @@ def test_aggregate_ingredients_deduplicates_by_search_query_and_unit() -> None:
     aggregated = aggregate_ingredients(
         [
             {"name": "Молоко", "search_query": "Молоко", "quantity": 200, "unit": "мл"},
-            {"name": "молоко пастеризованное", "search_query": "молоко", "quantity": 400, "unit": "мл"},
+            {
+                "name": "молоко пастеризованное",
+                "search_query": "молоко",
+                "quantity": 400,
+                "unit": "мл",
+            },
             {"name": "Рис", "search_query": "рис", "quantity": 1, "unit": "кг"},
         ]
     )

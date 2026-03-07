@@ -36,6 +36,8 @@ from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
 
 ProgressReporter = Callable[[str], Awaitable[None]]
 FallbackToStandardTurn = Callable[[str], Awaitable[str]]
+
+
 class MealPlanExecutorAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
 
@@ -66,6 +68,8 @@ class MealPlanExecutorAgentProtocol(Protocol):
         args: dict[str, Any],
         result: str,
     ) -> None: ...
+
+
 async def run_meal_plan_turn(
     *,
     agent: MealPlanExecutorAgentProtocol,

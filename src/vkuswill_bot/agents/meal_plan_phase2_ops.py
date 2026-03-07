@@ -17,6 +17,7 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
 from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry, deadline_remaining
 
+
 class MealPlanPhase2AgentProtocol(Protocol):
     async def _call_mcp_tool(
         self,
@@ -27,6 +28,7 @@ class MealPlanPhase2AgentProtocol(Protocol):
         call_cache: dict[str, str] | None = None,
         user_id: int | None = None,
     ) -> str: ...
+
 
 @dataclass(slots=True)
 class Phase2SafetyOutcome:
@@ -67,9 +69,7 @@ def _effective_servings_for_dish(*, dish: dict[str, Any], group_sizes: dict[str,
         audience = [str(group_id).strip() for group_id in audience_raw if str(group_id).strip()]
     if group_sizes and audience:
         computed = sum(
-            group_sizes[group_id]
-            for group_id in dict.fromkeys(audience)
-            if group_id in group_sizes
+            group_sizes[group_id] for group_id in dict.fromkeys(audience) if group_id in group_sizes
         )
         if computed > 0:
             return computed
@@ -122,6 +122,7 @@ async def collect_ingredients_for_dishes(
             by_dish.setdefault(dish_key, []).extend(rows)
         flat_ingredients.extend(rows)
     return flat_ingredients, by_dish
+
 
 async def enforce_phase2_safety_policy(
     *,
@@ -278,4 +279,3 @@ async def enforce_phase2_safety_policy(
         soft_coverage_by_group=retry_coverage,
         request_payload=retry_payload,
     )
-

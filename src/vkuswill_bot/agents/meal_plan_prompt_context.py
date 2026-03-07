@@ -45,4 +45,3 @@ def inject_meal_plan_profile_context(
     if llm_input and llm_input[0].get("role") == "system":
         return [llm_input[0], context_message, *llm_input[1:]]
     return [context_message, *llm_input]
-
