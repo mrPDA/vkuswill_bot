@@ -223,7 +223,12 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
             )
         self._mcp_gateway = self._create_mcp_gateway()
 
-    async def _classify_intent(self, text: str) -> PromptProfile | None:
+    async def _classify_intent(
+        self,
+        text: str,
+        *,
+        trace: Any | None = None,
+    ) -> PromptProfile | None:
         """Classify user intent via LLM. Returns None to fall back to keywords."""
         if not self._intent_classification_enabled:
             return None
@@ -235,4 +240,5 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
             adapter,
             self._model,
             timeout_seconds=self._intent_classification_timeout,
+            trace=trace,
         )

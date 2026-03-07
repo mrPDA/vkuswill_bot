@@ -78,7 +78,12 @@ class LangfuseTrace:
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Обновить trace (например, итоговый ответ)."""
-        self._trace.update(output=output, metadata=metadata)
+        kwargs: dict[str, Any] = {}
+        if output is not None:
+            kwargs["output"] = output
+        if metadata is not None:
+            kwargs["metadata"] = metadata
+        self._trace.update(**kwargs)
 
 
 class LangfuseGeneration:

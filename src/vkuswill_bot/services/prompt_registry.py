@@ -11,7 +11,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +23,36 @@ _PROJECT_ROOT = Path(__file__).resolve().parents[3]
 _DEFAULT_PROMPTS_DIR = _PROJECT_ROOT / "prompts"
 
 _registry: PromptRegistry | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PromptResolution:
+    """Resolved prompt text plus provenance metadata for observability."""
+
+    name: str
+    text: str
+    source: str
+    label: str | None = None
+    version: str | None = None
+    path: str | None = None
+
+    @property
+    def sha256(self) -> str:
+        return hashlib.sha256(self.text.encode("utf-8")).hexdigest()[:16]
+
+    def as_dict(self) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "name": self.name,
+            "source": self.source,
+            "sha256": self.sha256,
+        }
+        if self.label:
+            payload["label"] = self.label
+        if self.version:
+            payload["version"] = self.version
+        if self.path:
+            payload["path"] = self.path
+        return payload
 
 
 def _safe_format(text: str, variables: dict[str, str]) -> str:
@@ -77,6 +109,10 @@ class PromptRegistry:
         Variables are substituted via Langfuse compile() (``{{var}}``)
         or Python str.format() (``{var}``) for env/file/stub tiers.
         """
+        return self.resolve(name, **variables).text
+
+    def resolve(self, name: str, /, **variables: str) -> PromptResolution:
+        """Resolve prompt text and provenance metadata."""
         # Tier 1: Langfuse Prompt Management
         if self._langfuse is not None:
             try:
@@ -85,7 +121,19 @@ class PromptRegistry:
                     label=self._label,
                     cache_ttl_seconds=self._cache_ttl,
                 )
-                return prompt_obj.compile(**variables)
+                text = prompt_obj.compile(**variables)
+                version = str(
+                    getattr(prompt_obj, "version", "")
+                    or getattr(prompt_obj, "version_id", "")
+                    or ""
+                ).strip() or None
+                return PromptResolution(
+                    name=name,
+                    text=text,
+                    source="langfuse",
+                    label=self._label,
+                    version=version,
+                )
             except Exception:
                 logger.debug(
                     "Langfuse prompt '%s' (label=%s) unavailable, falling through",
@@ -96,27 +144,49 @@ class PromptRegistry:
         # Tier 2: Environment override (Config / Lockbox)
         env_text = self._env_overrides.get(name)
         if env_text:
-            return _safe_format(env_text, variables)
+            return PromptResolution(
+                name=name,
+                text=_safe_format(env_text, variables),
+                source="env",
+                label=self._label,
+            )
 
         # Tier 3: Local file (prompts/*.txt, gitignored)
-        file_text = self._try_file(name)
+        file_path, file_text = self._try_file(name)
         if file_text:
-            return _safe_format(file_text, variables)
+            return PromptResolution(
+                name=name,
+                text=_safe_format(file_text, variables),
+                source="file",
+                label=self._label,
+                path=str(file_path) if file_path is not None else None,
+            )
 
         # Tier 4: Code fallback stub
         stub = self._fallbacks.get(name, "")
-        return _safe_format(stub, variables) if stub else ""
+        if stub:
+            return PromptResolution(
+                name=name,
+                text=_safe_format(stub, variables),
+                source="stub",
+                label=self._label,
+            )
+        return PromptResolution(name=name, text="", source="missing", label=self._label)
 
-    def _try_file(self, name: str) -> str | None:
+    def describe(self, name: str, /, **variables: str) -> dict[str, Any]:
+        """Return serializable resolution metadata for tracing/debugging."""
+        return self.resolve(name, **variables).as_dict()
+
+    def _try_file(self, name: str) -> tuple[Path | None, str | None]:
         """Attempt to load prompt from prompts/{name}.txt file."""
         filename = name.replace("-", "_") + ".txt"
         path = self._prompts_dir / filename
         if path.is_file():
             try:
-                return path.read_text(encoding="utf-8").strip()
+                return path, path.read_text(encoding="utf-8").strip()
             except OSError:
                 logger.warning("Failed to read prompt file %s", path)
-        return None
+        return None, None
 
 
 def init_registry(

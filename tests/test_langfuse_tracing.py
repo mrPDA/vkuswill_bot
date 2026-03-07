@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from vkuswill_bot.services.langfuse_tracing import LangfuseGeneration
+from vkuswill_bot.services.langfuse_tracing import LangfuseGeneration, LangfuseTrace
 
 
 class _GenerationSpy:
@@ -12,6 +12,14 @@ class _GenerationSpy:
         self.calls: list[dict[str, Any]] = []
 
     def end(self, **kwargs: Any) -> None:
+        self.calls.append(kwargs)
+
+
+class _TraceSpy:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    def update(self, **kwargs: Any) -> None:
         self.calls.append(kwargs)
 
 
@@ -36,3 +44,12 @@ def test_langfuse_generation_builds_legacy_usage_with_snake_case_costs() -> None
     assert payload["usage"]["input_cost"] == 0.1
     assert payload["usage"]["output_cost"] == 0.05
     assert payload["usage"]["total_cost"] == 0.15
+
+
+def test_langfuse_trace_update_skips_none_output() -> None:
+    spy = _TraceSpy()
+    trace = LangfuseTrace(spy)
+
+    trace.update(metadata={"stage": "routing"})
+
+    assert spy.calls == [{"metadata": {"stage": "routing"}}]

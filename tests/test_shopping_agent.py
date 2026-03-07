@@ -598,8 +598,10 @@ class _LangfuseTraceSpy:
     def __init__(self) -> None:
         self.gen = _LangfuseGenSpy()
         self.updates: list[dict[str, Any]] = []
+        self.generation_calls: list[dict[str, Any]] = []
 
-    def generation(self, **_kwargs: Any) -> _LangfuseGenSpy:
+    def generation(self, **kwargs: Any) -> _LangfuseGenSpy:
+        self.generation_calls.append(kwargs)
         return self.gen
 
     def span(self, **_kwargs: Any) -> Any:
@@ -3174,6 +3176,38 @@ async def test_langfuse_generation_marks_provider_usage_when_present() -> None:
     end_call = langfuse.trace_spy.gen.end_calls[-1]
     assert end_call["usage_details"] == {"input": 10, "output": 3, "total": 13}
     assert end_call["metadata"]["usage_source"] == "provider"
+
+
+@pytest.mark.asyncio
+async def test_langfuse_generation_records_actual_model_params_and_prompt_metadata() -> None:
+    mcp = _FakeMCPClient()
+    llm_adapter = _FakeLLMAdapter(text="ok", usage={"input": 10, "output": 3, "total": 13})
+    langfuse = _LangfuseServiceSpy()
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/qwen-model/latest",
+        llm_max_concurrent=2,
+        llm_provider="qwen_openai",
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_adapters={"qwen_openai": llm_adapter},
+        langfuse_service=langfuse,  # type: ignore[arg-type]
+        llm_temperature=0.35,
+        llm_max_tokens=777,
+        prompt_profiles_enabled=True,
+    )
+
+    result = await agent.process_message(user_id=8, text="привет")
+
+    assert result == "ok"
+    assert langfuse.trace_spy.generation_calls
+    generation_call = langfuse.trace_spy.generation_calls[-1]
+    assert generation_call["model_parameters"]["temperature"] == 0.35
+    assert generation_call["model_parameters"]["max_tokens"] == 777
+    prompt_metadata = generation_call["metadata"]["prompt"]
+    assert prompt_metadata["strategy"] == "profiled"
+    assert prompt_metadata["components"]
 
 
 @pytest.mark.asyncio

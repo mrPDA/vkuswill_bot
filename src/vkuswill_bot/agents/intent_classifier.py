@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 from typing import Any, Protocol
 
@@ -24,6 +25,20 @@ _CLASSIFY_PROMPT_STUB = (
 
 _CLASSIFY_MAX_TOKENS = 20
 _CLASSIFY_TEMPERATURE = 0.0
+
+
+def _classify_prompt_bundle(text: str) -> tuple[str, dict[str, Any]]:
+    registry = get_registry()
+    if registry is not None:
+        resolution = registry.resolve("classify-intent", text=text)
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
+    prompt = _CLASSIFY_PROMPT_STUB.format(text=text)
+    return prompt, {
+        "name": "classify-intent",
+        "source": "stub",
+        "sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 class LLMAdapterProtocol(Protocol):
@@ -53,6 +68,7 @@ async def classify_user_intent(
     adapter: LLMAdapterProtocol,
     model: str,
     timeout_seconds: float = 5.0,
+    trace: Any | None = None,
 ) -> PromptProfile | None:
     """Classify user intent via a lightweight LLM call.
 
@@ -60,12 +76,22 @@ async def classify_user_intent(
     failed (timeout, invalid response, adapter error) — caller
     should fall back to keyword-based detection.
     """
-    registry = get_registry()
-    if registry is not None:
-        prompt = registry.get("classify-intent", text=text)
-    else:
-        prompt = _CLASSIFY_PROMPT_STUB.format(text=text)
+    prompt, prompt_metadata = _classify_prompt_bundle(text)
     messages = [{"role": "user", "content": prompt}]
+    generation = None
+    if trace is not None:
+        generation = trace.generation(
+            name="intent-classification",
+            model=model,
+            input=messages,
+            model_parameters={
+                "tools": 0,
+                "tool_choice": "none",
+                "max_tokens": _CLASSIFY_MAX_TOKENS,
+                "temperature": _CLASSIFY_TEMPERATURE,
+            },
+            metadata={"prompt": prompt_metadata},
+        )
     try:
         response = await asyncio.wait_for(
             adapter.create_completion(
@@ -80,9 +106,23 @@ async def classify_user_intent(
         )
     except TimeoutError:
         logger.warning("Intent classification timed out (%.1fs)", timeout_seconds)
+        if generation is not None:
+            generation.end(
+                output="timeout",
+                level="WARNING",
+                status_message="Intent classification timed out",
+                metadata={"prompt": prompt_metadata},
+            )
         return None
     except Exception:
         logger.warning("Intent classification failed", exc_info=True)
+        if generation is not None:
+            generation.end(
+                output="error",
+                level="ERROR",
+                status_message="Intent classification failed",
+                metadata={"prompt": prompt_metadata},
+            )
         return None
 
     message = extract_message(response)
@@ -90,4 +130,9 @@ async def classify_user_intent(
     profile = _parse_profile(content)
     if profile is None:
         logger.info("Intent classification returned unparsable response: %r", content)
+    if generation is not None:
+        generation.end(
+            output={"raw": content, "profile": profile},
+            metadata={"prompt": prompt_metadata, "resolved_profile": profile},
+        )
     return profile
