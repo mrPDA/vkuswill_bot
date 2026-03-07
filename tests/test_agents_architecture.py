@@ -13,6 +13,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     # Runtime
     "shopping_agent": "runtime",
     "shopping_turn_executor": "runtime",
+    "shopping_turn_diagnostics": "shared",
     "shopping_turn_contracts": "runtime",
     "shopping_turn_types": "runtime",
     "shopping_tool_step_processor": "runtime",
