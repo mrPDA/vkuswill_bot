@@ -214,8 +214,8 @@ async def test_run_meal_plan_turn_happy_path() -> None:
     metadata = trace.updates[-1]["metadata"]
     assert metadata["reason"] == "meal_plan_executor_completed"
     assert metadata["soft_coverage_min"] >= 0.70
-    assert metadata["phase2_deadline_seconds"] == 50.0
-    assert metadata["turn_deadline_seconds"] == 60.0
+    assert metadata["phase2_deadline_seconds"] == 100.0
+    assert metadata["turn_deadline_seconds"] == 120.0
 
 
 @pytest.mark.asyncio
