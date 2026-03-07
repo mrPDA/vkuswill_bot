@@ -10,6 +10,7 @@ import pytest
 
 from vkuswill_bot.agents.recipe_fallback import (
     extract_recipe_ingredients_with_llm,
+    extract_recipe_ingredients_with_llm_debug,
     fallback_recipe_ingredients,
     fallback_recipe_search,
 )
@@ -90,6 +91,30 @@ async def test_extract_recipe_ingredients_with_llm_normalizes_rows() -> None:
     assert rows[1]["name"] == "Соль"
     assert rows[1]["quantity"] == 1.0
     assert rows[1]["optional"] is True
+
+
+@pytest.mark.asyncio
+async def test_extract_recipe_ingredients_with_llm_debug_returns_metadata() -> None:
+    adapter = _FakeAdapter(
+        response={"choices": [{"message": {"content": json.dumps([{"name": "Киноа"}])}}]}
+    )
+
+    debug = await extract_recipe_ingredients_with_llm_debug(
+        dish="Киноа с овощами",
+        servings=2,
+        adapter=adapter,
+        model="test-model",
+        timeout_seconds=0.1,
+    )
+
+    payload = debug.as_dict()
+    assert debug.rows == [
+        {"name": "Киноа", "quantity": 1.0, "unit": "шт", "search_query": "Киноа"}
+    ]
+    assert payload["rows"] == 1
+    assert payload["attempts"] == 1
+    assert payload["parsed_type"] == "list"
+    assert "prompt" in payload
 
 
 @pytest.mark.asyncio

@@ -124,20 +124,39 @@ def get_system_prompt_with_metadata() -> tuple[str, dict[str, Any]]:
 
 def get_recipe_extraction_prompt() -> str:
     """Получить промпт извлечения рецептов: Langfuse → env → файл → fallback-stub."""
+    return get_recipe_extraction_prompt_with_metadata()[0]
+
+
+def get_recipe_extraction_prompt_with_metadata() -> tuple[str, dict[str, Any]]:
+    """Получить промпт recipe extraction вместе с provenance metadata."""
     registry = get_registry()
     if registry is not None:
-        result = registry.get("recipe-extraction")
-        if result:
-            return result
+        resolution = registry.resolve("recipe-extraction")
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
 
     from vkuswill_bot.config import config
 
     if config.recipe_extraction_prompt:
-        return config.recipe_extraction_prompt
+        text = config.recipe_extraction_prompt
+        return text, {
+            "name": "recipe-extraction",
+            "source": "config",
+            "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+        }
     file_prompt = _load_prompt_file("recipe_extraction_prompt.txt")
     if file_prompt:
-        return file_prompt
-    return _FALLBACK_RECIPE_PROMPT
+        return file_prompt, {
+            "name": "recipe-extraction",
+            "source": "file",
+            "path": str(_PROJECT_ROOT / "prompts" / "recipe_extraction_prompt.txt"),
+            "sha256": hashlib.sha256(file_prompt.encode("utf-8")).hexdigest()[:16],
+        }
+    return _FALLBACK_RECIPE_PROMPT, {
+        "name": "recipe-extraction",
+        "source": "stub",
+        "sha256": hashlib.sha256(_FALLBACK_RECIPE_PROMPT.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 def get_meal_plan_generation_prompt(*, request_payload: dict[str, Any]) -> str:

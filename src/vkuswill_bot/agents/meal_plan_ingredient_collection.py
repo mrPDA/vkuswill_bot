@@ -6,9 +6,10 @@ import asyncio
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
-from vkuswill_bot.agents.recipe_fallback import fallback_recipe_ingredients
+from vkuswill_bot.agents.recipe_fallback import extract_recipe_ingredients_with_llm_debug
 
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
@@ -32,6 +33,8 @@ class IngredientCollectionStats:
     empty_dishes: list[str]
     mcp_rows_total: int
     fallback_rows_total: int
+    mcp_sample_failures: list[dict[str, Any]]
+    fallback_sample_failures: list[dict[str, Any]]
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -42,6 +45,8 @@ class IngredientCollectionStats:
             "empty_dishes": list(self.empty_dishes),
             "mcp_rows_total": self.mcp_rows_total,
             "fallback_rows_total": self.fallback_rows_total,
+            "mcp_sample_failures": list(self.mcp_sample_failures),
+            "fallback_sample_failures": list(self.fallback_sample_failures),
         }
 
 
@@ -90,35 +95,44 @@ async def _fallback_rows_for_dish(
     servings: int,
     llm_provider: str,
     timeout_seconds: float,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     adapters = getattr(agent, "_llm_adapters", None)
     if not isinstance(adapters, dict):
-        return []
+        return [], {"status": "adapter_registry_missing"}
     adapter = adapters.get(llm_provider)
     if adapter is None:
-        return []
+        return [], {"status": "adapter_missing", "llm_provider": llm_provider}
     resolve_model = getattr(agent, "_resolve_model_for_provider", None)
     if not callable(resolve_model):
-        return []
+        return [], {"status": "model_resolver_missing"}
     try:
         model = str(resolve_model(llm_provider)).strip()
-    except Exception:
-        return []
+    except Exception as exc:
+        return [], {"status": "model_resolve_error", "error_type": type(exc).__name__}
     if not model:
-        return []
+        return [], {"status": "model_missing"}
     llm_timeout = getattr(agent, "_llm_timeout_seconds", timeout_seconds)
     if not isinstance(llm_timeout, int | float) or llm_timeout <= 0:
         llm_timeout = timeout_seconds
     try:
-        fallback_raw = await fallback_recipe_ingredients(
-            {"dish": dish_name, "servings": servings},
+        debug = await extract_recipe_ingredients_with_llm_debug(
+            dish=dish_name,
+            servings=servings,
             adapter=adapter,
             model=model,
             timeout_seconds=min(float(llm_timeout), timeout_seconds),
         )
-    except Exception:
-        return []
-    return extract_ingredients(fallback_raw)
+    except Exception as exc:
+        return [], {
+            "status": "exception",
+            "error_type": type(exc).__name__,
+            "error_message": str(exc)[:240],
+        }
+    status = "success" if debug.rows else "empty"
+    payload = debug.as_dict()
+    payload["status"] = status
+    payload["model"] = model
+    return debug.rows, payload
 
 
 async def collect_ingredients_for_dishes(
@@ -137,7 +151,9 @@ async def collect_ingredients_for_dishes(
     fallback_semaphore = asyncio.Semaphore(2)
     group_sizes = _group_sizes_from_request(request)
 
-    async def _load_ingredients(dish: dict[str, Any]) -> tuple[str, int, list[dict[str, Any]]]:
+    async def _load_ingredients(
+        dish: dict[str, Any],
+    ) -> tuple[str, int, list[dict[str, Any]], dict[str, Any]]:
         dish_name = str(dish["name"])
         servings = _effective_servings_for_dish(dish=dish, group_sizes=group_sizes)
         async with semaphore:
@@ -153,9 +169,31 @@ async def collect_ingredients_for_dishes(
                     timeout_seconds=timeout_seconds,
                     hard_deadline_at=phase2_deadline_at,
                 )
-            except Exception:
-                return dish_name, servings, []
-            return dish_name, servings, extract_ingredients(result)
+            except Exception as exc:
+                return dish_name, servings, [], {
+                    "status": "exception",
+                    "error_type": type(exc).__name__,
+                    "error_message": str(exc)[:240],
+                }
+            rows = extract_ingredients(result)
+            parsed = parse_json_payload(result)
+            if rows:
+                return dish_name, servings, rows, {"status": "success", "rows": len(rows)}
+            error = (
+                str(parsed.get("error", "")).strip()
+                if isinstance(parsed, dict)
+                else ""
+            )
+            message = (
+                str(parsed.get("message", "")).strip()
+                if isinstance(parsed, dict)
+                else ""
+            )
+            return dish_name, servings, [], {
+                "status": "empty",
+                "error": error[:120],
+                "message": message[:240],
+            }
 
     tasks = [_load_ingredients(dish) for dish in dishes_payload]
     chunks = await asyncio.gather(*tasks, return_exceptions=True)
@@ -164,10 +202,11 @@ async def collect_ingredients_for_dishes(
     missing_fallback: list[tuple[str, int]] = []
     mcp_success_dishes = 0
     mcp_rows_total = 0
+    mcp_sample_failures: list[dict[str, Any]] = []
     for chunk in chunks:
         if isinstance(chunk, Exception):
             continue
-        dish_name, servings, rows = chunk
+        dish_name, servings, rows, mcp_debug = chunk
         dish_key = str(dish_name).strip().lower()
         if dish_key and rows:
             by_dish.setdefault(dish_key, []).extend(rows)
@@ -177,17 +216,22 @@ async def collect_ingredients_for_dishes(
             continue
         if dish_key:
             missing_fallback.append((dish_name, servings))
+            if len(mcp_sample_failures) < 5:
+                mcp_sample_failures.append({"dish": dish_name, **mcp_debug})
 
-    async def _load_fallback(dish_name: str, servings: int) -> tuple[str, list[dict[str, Any]]]:
+    async def _load_fallback(
+        dish_name: str,
+        servings: int,
+    ) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
         async with fallback_semaphore:
-            rows = await _fallback_rows_for_dish(
+            rows, debug = await _fallback_rows_for_dish(
                 agent=agent,
                 dish_name=dish_name,
                 servings=servings,
                 llm_provider=llm_provider,
                 timeout_seconds=timeout_seconds,
             )
-            return dish_name, rows
+            return dish_name, rows, debug
 
     if missing_fallback:
         fallback_chunks = await asyncio.gather(
@@ -196,19 +240,24 @@ async def collect_ingredients_for_dishes(
         )
         fallback_success_dishes = 0
         fallback_rows_total = 0
+        fallback_sample_failures: list[dict[str, Any]] = []
         for chunk in fallback_chunks:
             if isinstance(chunk, Exception):
                 continue
-            dish_name, rows = chunk
+            dish_name, rows, fallback_debug = chunk
             dish_key = str(dish_name).strip().lower()
             if dish_key and rows:
                 by_dish.setdefault(dish_key, []).extend(rows)
                 flat_ingredients.extend(rows)
                 fallback_success_dishes += 1
                 fallback_rows_total += len(rows)
+                continue
+            if len(fallback_sample_failures) < 5:
+                fallback_sample_failures.append({"dish": dish_name, **fallback_debug})
     else:
         fallback_success_dishes = 0
         fallback_rows_total = 0
+        fallback_sample_failures = []
 
     empty_dishes = [
         str(dish_name).strip()
@@ -223,5 +272,7 @@ async def collect_ingredients_for_dishes(
         empty_dishes=empty_dishes[:10],
         mcp_rows_total=mcp_rows_total,
         fallback_rows_total=fallback_rows_total,
+        mcp_sample_failures=mcp_sample_failures,
+        fallback_sample_failures=fallback_sample_failures,
     )
     return flat_ingredients, by_dish, stats
