@@ -154,12 +154,19 @@ async def _run_shopping_handler(request: web.Request) -> web.Response:
 
     cart_snapshot = await chat_engine.get_last_cart_snapshot(user_id)
     trace_id_getter = getattr(chat_engine, "get_last_trace_id", None)
+    diagnostics_getter = getattr(chat_engine, "get_last_turn_diagnostics", None)
     trace_id: str | None = None
+    diagnostics: dict[str, Any] | None = None
     if callable(trace_id_getter):
         with contextlib.suppress(Exception):
             resolved = await trace_id_getter(user_id)
             if resolved is not None:
                 trace_id = str(resolved).strip() or None
+    if callable(diagnostics_getter):
+        with contextlib.suppress(Exception):
+            resolved = await diagnostics_getter(user_id)
+            if isinstance(resolved, dict):
+                diagnostics = resolved
 
     cart_link = (
         str(cart_snapshot.get("link")).strip()
@@ -177,6 +184,7 @@ async def _run_shopping_handler(request: web.Request) -> web.Response:
             "items_count": _snapshot_items_count(cart_snapshot),
             "total_rub": _snapshot_total(cart_snapshot),
             "cart_snapshot": cart_snapshot,
+            "diagnostics": diagnostics,
         },
         status=200,
         dumps=lambda body: json.dumps(body, ensure_ascii=False),

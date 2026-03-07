@@ -71,6 +71,25 @@ async def run_locked_turn(
         if trace_id and trace_id != "noop":
             agent._last_trace_id[user_id] = trace_id
     state = await build_turn_state(agent=agent, user_id=user_id, text=text, trace=trace)
+    diagnostics: dict[str, Any] = {
+        "user_id": user_id,
+        "prompt_profile": state.prompt_profile,
+        "llm_prompt_profile": state.llm_prompt_profile,
+        "llm_prompt_confidence": state.llm_prompt_confidence,
+        "llm_prompt_reason": state.llm_prompt_reason,
+        "heuristic_prompt_profile": state.heuristic_prompt_profile,
+        "intent_conflict": state.intent_conflict,
+        "intent_conflict_severity": state.intent_conflict_severity,
+        "route_override_applied": state.route_override_applied,
+        "route_override_from": state.route_override_from,
+        "route_override_to": state.route_override_to,
+        "route_override_reason": state.route_override_reason,
+    }
+    last_turn_diagnostics = getattr(agent, "_last_turn_diagnostics", None)
+    if not isinstance(last_turn_diagnostics, dict):
+        last_turn_diagnostics = {}
+        agent._last_turn_diagnostics = last_turn_diagnostics
+    last_turn_diagnostics[user_id] = diagnostics
     if trace is not None:
         trace.update(
             metadata={
@@ -128,6 +147,21 @@ async def run_locked_turn(
         shadow_mode=shadow_mode,
         rollout_percent=rollout_percent,
         is_user_in_rollout=user_in_rollout,
+    )
+    diagnostics.update(
+        {
+            "meal_plan_shadow_mode": shadow_mode,
+            "meal_plan_rollout_percent_configured": int(
+                getattr(agent, "_meal_plan_rollout_percent", 100)
+            ),
+            "meal_plan_rollout_percent_resolved": rollout_percent,
+            "meal_plan_rollout_controller_present": controller is not None,
+            "meal_plan_rollout_bypass": bypass.audit.as_dict(),
+            "meal_plan_executor_enabled": executor_enabled,
+            "meal_plan_user_in_rollout": user_in_rollout,
+            "meal_plan_can_use_executor": can_use_executor,
+            "meal_plan_executor_gate_reason": executor_gate_reason,
+        }
     )
     metrics_trace_id = resolve_metrics_trace_id(trace=trace, user_id=user_id)
     metrics_sink = getattr(agent, "_meal_plan_metrics_sink", None)
@@ -187,6 +221,12 @@ async def run_locked_turn(
             on_progress=_progress,
             fallback_to_standard_turn=_fallback_to_standard_turn,
         )
+        diagnostics["execution_path"] = "meal_plan_executor"
+        diagnostics["executor_result"] = (
+            "fallback"
+            if "Перехожу к стандартной обработке запроса." in result
+            else "success"
+        )
         if metrics_sink is not None:
             with contextlib.suppress(Exception):
                 await metrics_sink.record_executor_result(
@@ -200,6 +240,7 @@ async def run_locked_turn(
                     trace_id=metrics_trace_id,
                 )
         return result
+    diagnostics["execution_path"] = "standard_turn"
     tools = await agent._get_tools()
     tool_step_processor: Any = DefaultToolStepProcessor()
     final_response_builder: Any = DefaultFinalResponseBuilder()
