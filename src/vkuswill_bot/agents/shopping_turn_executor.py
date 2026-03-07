@@ -72,7 +72,11 @@ async def run_locked_turn(
                 "provider": llm_provider,
                 "prompt_profile": state.prompt_profile,
                 "llm_prompt_profile": state.llm_prompt_profile,
+                "llm_prompt_confidence": state.llm_prompt_confidence,
+                "llm_prompt_reason": state.llm_prompt_reason,
                 "heuristic_prompt_profile": state.heuristic_prompt_profile,
+                "intent_conflict": state.intent_conflict,
+                "intent_conflict_severity": state.intent_conflict_severity,
             }
         )
 

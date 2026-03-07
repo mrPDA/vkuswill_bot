@@ -7,7 +7,10 @@ import contextlib
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any
 
-from vkuswill_bot.agents.intent_classifier import classify_user_intent
+from vkuswill_bot.agents.intent_classifier import (
+    IntentClassificationResult,
+    classify_user_intent,
+)
 from vkuswill_bot.agents.mcp_tool_gateway import McpToolGateway
 from vkuswill_bot.agents.shopping_agent_runtime_mixin import ShoppingAgentRuntimeMixin
 from vkuswill_bot.agents.shopping_agent_service_mixin import ShoppingAgentServiceMixin
@@ -228,7 +231,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         text: str,
         *,
         trace: Any | None = None,
-    ) -> PromptProfile | None:
+    ) -> PromptProfile | IntentClassificationResult | None:
         """Classify user intent via LLM. Returns None to fall back to keywords."""
         if not self._intent_classification_enabled:
             return None
