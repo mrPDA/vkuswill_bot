@@ -24,9 +24,10 @@ async def load_user_preferences_bundle(
             {},
             {
                 "operational_preferences": {
-                    "stored_preferences_notice": (
-                        "stored preferences недоступны, использованы только явные ограничения запроса"
-                    )
+        "stored_preferences_notice": (
+            "stored preferences недоступны, "
+            "использованы только явные ограничения запроса"
+        )
                 }
             },
         )

@@ -311,7 +311,9 @@ async def test_collect_ingredients_for_dishes_respects_default_semaphore_limit()
                 return json.dumps(
                     {
                         "ok": True,
-                        "ingredients": [{"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}],
+                        "ingredients": [
+                            {"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}
+                        ],
                     },
                     ensure_ascii=False,
                 )
@@ -319,10 +321,7 @@ async def test_collect_ingredients_for_dishes_respects_default_semaphore_limit()
                 self.inflight -= 1
 
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
-    dishes_payload = [
-        {"name": f"Блюдо {idx}", "servings_total": 2}
-        for idx in range(1, 9)
-    ]
+    dishes_payload = [{"name": f"Блюдо {idx}", "servings_total": 2} for idx in range(1, 9)]
     agent = _Agent()
     flat, by_dish = await collect_ingredients_for_dishes(
         agent=agent,
@@ -359,16 +358,15 @@ async def test_collect_ingredients_for_dishes_returns_partial_success_when_one_c
             return json.dumps(
                 {
                     "ok": True,
-                    "ingredients": [{"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}],
+                    "ingredients": [
+                        {"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}
+                    ],
                 },
                 ensure_ascii=False,
             )
 
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
-    dishes_payload = [
-        {"name": f"Блюдо {idx}", "servings_total": 2}
-        for idx in range(1, 6)
-    ]
+    dishes_payload = [{"name": f"Блюдо {idx}", "servings_total": 2} for idx in range(1, 6)]
     flat, by_dish = await collect_ingredients_for_dishes(
         agent=_Agent(),
         request=request,
@@ -405,7 +403,9 @@ async def test_collect_ingredients_for_dishes_computes_servings_from_request_gro
             return json.dumps(
                 {
                     "ok": True,
-                    "ingredients": [{"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}],
+                    "ingredients": [
+                        {"name": dish, "search_query": dish, "quantity": 1, "unit": "шт"}
+                    ],
                 },
                 ensure_ascii=False,
             )

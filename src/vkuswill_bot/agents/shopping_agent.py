@@ -135,7 +135,9 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._meal_plan_shadow_mode_enabled = bool(meal_plan_shadow_mode_enabled)
         self._meal_plan_rollout_percent = max(0, min(100, int(meal_plan_rollout_percent)))
         self._meal_plan_allow_unvalidated_rollout = bool(meal_plan_allow_unvalidated_rollout)
-        self._meal_plan_unvalidated_rollout_reason = str(meal_plan_unvalidated_rollout_reason).strip()
+        self._meal_plan_unvalidated_rollout_reason = str(
+            meal_plan_unvalidated_rollout_reason
+        ).strip()
         self._meal_plan_unvalidated_rollout_actor = str(meal_plan_unvalidated_rollout_actor).strip()
         self._meal_plan_unvalidated_rollout_expires_at = str(
             meal_plan_unvalidated_rollout_expires_at
@@ -155,6 +157,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         if meal_plan_metrics_sink is not None:
             self._meal_plan_metrics_sink = meal_plan_metrics_sink
         else:
+
             async def _metrics_event_logger(
                 event_user_id: int,
                 event_type: str,

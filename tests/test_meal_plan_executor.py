@@ -272,7 +272,9 @@ async def test_run_meal_plan_turn_uses_recomputed_constraints_after_phase2_filte
         raise AssertionError(f"Unexpected tool call: {name}")
 
     state = _State(
-        history=[{"role": "user", "content": "меню на неделю для 2 человек, веганское, итальянское"}]
+        history=[
+            {"role": "user", "content": "меню на неделю для 2 человек, веганское, итальянское"}
+        ]
     )
     trace = _TraceSpy()
     agent = _FakeExecutorAgent(
@@ -350,7 +352,10 @@ async def test_run_meal_plan_turn_generation_failure_falls_back_to_standard_turn
 
     assert result.startswith("standard::")
     assert fallback_reasons and "Не удалось сгенерировать план" in fallback_reasons[0]
-    assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_generation_failed_fallback_to_standard_turn"
+    assert (
+        trace.updates[-1]["metadata"]["reason"]
+        == "meal_plan_generation_failed_fallback_to_standard_turn"
+    )
 
 
 @pytest.mark.asyncio
@@ -517,7 +522,12 @@ async def test_run_meal_plan_turn_fail_softs_when_hard_constraints_remain_after_
                 {
                     "ok": True,
                     "ingredients": [
-                        {"name": "куриное филе", "search_query": "куриное филе", "quantity": 1, "unit": "шт"},
+                        {
+                            "name": "куриное филе",
+                            "search_query": "куриное филе",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
                         {"name": "рис", "search_query": "рис", "quantity": 1, "unit": "кг"},
                     ],
                 },
@@ -545,7 +555,9 @@ async def test_run_meal_plan_turn_fail_softs_when_hard_constraints_remain_after_
     )
 
     assert "Не удалось собрать безопасный план после retry" in result
-    assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_hard_constraints_violated_after_retry"
+    assert (
+        trace.updates[-1]["metadata"]["reason"] == "meal_plan_hard_constraints_violated_after_retry"
+    )
     assert all(name != "recipe_search" for name, _args in agent.mcp_calls)
 
 
@@ -559,7 +571,12 @@ async def test_run_meal_plan_turn_falls_back_to_standard_turn_after_phase2_retry
                 {
                     "ok": True,
                     "ingredients": [
-                        {"name": "куриное филе", "search_query": "куриное филе", "quantity": 1, "unit": "шт"},
+                        {
+                            "name": "куриное филе",
+                            "search_query": "куриное филе",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
                     ],
                 },
                 ensure_ascii=False,
@@ -633,7 +650,10 @@ async def test_run_meal_plan_turn_parse_failure_falls_back_to_standard_turn(
     assert result.startswith("standard::")
     assert fallback_reasons
     assert "Не удалось разобрать meal-plan запрос" in fallback_reasons[0]
-    assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_parse_failed_fallback_to_standard_turn"
+    assert (
+        trace.updates[-1]["metadata"]["reason"]
+        == "meal_plan_parse_failed_fallback_to_standard_turn"
+    )
 
 
 @pytest.mark.asyncio
@@ -686,7 +706,12 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
                 {
                     "ok": True,
                     "ingredients": [
-                        {"name": f"инг-{dish}", "search_query": f"инг-{dish}", "quantity": 1, "unit": "шт"},
+                        {
+                            "name": f"инг-{dish}",
+                            "search_query": f"инг-{dish}",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
                     ],
                 },
                 ensure_ascii=False,
@@ -695,7 +720,9 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
             return json.dumps(
                 {
                     "ok": True,
-                    "found": [{"xml_id": 901, "suggested_q": 1, "name": "Томаты", "category": "овощи"}],
+                    "found": [
+                        {"xml_id": 901, "suggested_q": 1, "name": "Томаты", "category": "овощи"}
+                    ],
                     "not_found": ["кинза"],
                 },
                 ensure_ascii=False,

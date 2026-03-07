@@ -11,6 +11,16 @@ from vkuswill_bot.agents.meal_plan_hard_constraints import (
 )
 from vkuswill_bot.agents.meal_plan_types import MealPlanDish, MealPlanRequest
 
+__all__ = [
+    "build_applied_preferences_trace",
+    "calculate_soft_coverage",
+    "format_soft_coverage_error",
+    "low_soft_coverage_groups",
+    "validate_hard_constraints",
+    "validate_hard_constraints_with_ingredients",
+    "validate_hard_constraints_with_trace",
+]
+
 SOFT_COVERAGE_TARGET = 0.70
 
 
@@ -79,5 +89,7 @@ def format_soft_coverage_error(
     low_groups: dict[str, float],
     target: float = SOFT_COVERAGE_TARGET,
 ) -> str:
-    details = ", ".join(f"{group_id}={coverage:.2f}" for group_id, coverage in sorted(low_groups.items()))
+    details = ", ".join(
+        f"{group_id}={coverage:.2f}" for group_id, coverage in sorted(low_groups.items())
+    )
     return f"soft_preferences coverage < {target:.2f}: {details}"

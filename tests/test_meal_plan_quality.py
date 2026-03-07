@@ -107,8 +107,7 @@ def test_validate_hard_constraints_with_ingredients_detects_hidden_violation() -
     assert violations
     assert "ingredients" in violations[0]
     assert any(
-        row.get("field") == "hard_constraints.diet" and row.get("applied") is False
-        for row in trace
+        row.get("field") == "hard_constraints.diet" and row.get("applied") is False for row in trace
     )
 
 

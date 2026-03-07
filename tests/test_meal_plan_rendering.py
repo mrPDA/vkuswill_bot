@@ -58,7 +58,9 @@ def test_render_meal_plan_contract_lists_products_when_cart_link_missing() -> No
         },
         user_preference_profile={},
         request_payload={"days": 1, "people_total": 1, "groups": [{"id": "all", "count": 1}]},
-        structured_dishes=[{"name": "Суп", "day": 1, "meal_type": "lunch", "audience_groups": ["all"]}],
+        structured_dishes=[
+            {"name": "Суп", "day": 1, "meal_type": "lunch", "audience_groups": ["all"]}
+        ],
     )
     assert "Ссылка: не сформирована" in text
     assert "Список товаров (без ссылки):" in text
@@ -92,7 +94,11 @@ def test_build_contract_v1_uses_adr_structured_fields() -> None:
             "people_total": 2,
             "groups": [
                 {"id": "adults", "count": 1, "hard_constraints": {"diet": "vegan"}},
-                {"id": "child_2y", "count": 1, "hard_constraints": {"allergens_excluded": ["nuts"]}},
+                {
+                    "id": "child_2y",
+                    "count": 1,
+                    "hard_constraints": {"allergens_excluded": ["nuts"]},
+                },
             ],
             "applied_preferences_trace": [
                 {"field": "hard_constraints.diet", "applied": True},
@@ -181,7 +187,12 @@ def test_render_meal_plan_contract_sorts_days_and_slots() -> None:
             ],
         },
         structured_dishes=[
-            {"name": "Перекус поздний", "day": 2, "meal_type": "snack_3", "audience_groups": ["child_2y"]},
+            {
+                "name": "Перекус поздний",
+                "day": 2,
+                "meal_type": "snack_3",
+                "audience_groups": ["child_2y"],
+            },
             {"name": "Обед", "day": 1, "meal_type": "lunch", "audience_groups": ["all"]},
             {"name": "Завтрак", "day": 1, "meal_type": "breakfast", "audience_groups": ["all"]},
         ],
@@ -242,7 +253,12 @@ def test_render_meal_plan_contract_keeps_snack_slots_for_non_child_groups() -> N
             "groups": [{"id": "adults", "count": 2}],
         },
         structured_dishes=[
-            {"name": "Орехи и сухофрукты", "day": 1, "meal_type": "snack_1", "audience_groups": ["adults"]},
+            {
+                "name": "Орехи и сухофрукты",
+                "day": 1,
+                "meal_type": "snack_1",
+                "audience_groups": ["adults"],
+            },
             {"name": "Смузи", "day": 1, "meal_type": "snack_2", "audience_groups": ["adults"]},
         ],
     )

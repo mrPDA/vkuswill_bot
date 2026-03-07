@@ -68,16 +68,21 @@ def render_meal_plan_contract_response(
         f"- Период: {contract.request_summary.days} дн.",
         f"- Людей: {contract.request_summary.people_total}",
         f"- Группы: {_groups_summary(contract.request_summary.groups)}",
-        "- Жесткие ограничения: " + (
+        "- Жесткие ограничения: "
+        + (
             ", ".join(contract.request_summary.hard_constraints)
             if contract.request_summary.hard_constraints
             else "не указаны явно"
         ),
     ]
     if contract.request_summary.operational_preferences:
-        lines.append(f"- Операционные ограничения: {contract.request_summary.operational_preferences}")
+        lines.append(
+            f"- Операционные ограничения: {contract.request_summary.operational_preferences}"
+        )
     if contract.request_summary.preference_sources:
-        pairs = ", ".join(f"{k}={v}" for k, v in sorted(contract.request_summary.preference_sources.items()))
+        pairs = ", ".join(
+            f"{k}={v}" for k, v in sorted(contract.request_summary.preference_sources.items())
+        )
         lines.append(f"- Источники предпочтений: {pairs}")
     if contract.request_summary.applied_preferences_summary:
         total = int(contract.request_summary.applied_preferences_summary.get("total", 0))
@@ -137,7 +142,11 @@ def render_meal_plan_contract_response(
     lines.extend(["", "Проверка ограничений:"])
     lines.append(
         "- hard_constraints: "
-        + ("соблюдены" if contract.constraints_check.hard_constraints_passed else "нарушения обнаружены")
+        + (
+            "соблюдены"
+            if contract.constraints_check.hard_constraints_passed
+            else "нарушения обнаружены"
+        )
     )
     if contract.constraints_check.soft_coverage_by_group:
         coverage = ", ".join(

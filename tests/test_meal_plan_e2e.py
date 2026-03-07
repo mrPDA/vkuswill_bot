@@ -194,9 +194,7 @@ async def test_meal_plan_e2e_contract_for_family_with_child_and_allergy() -> Non
 
     result = await agent.process_message(
         user_id=444,
-        text=(
-            "меню на неделю для 4 человек, один ребенок 2 года с аллергией на орехи"
-        ),
+        text=("меню на неделю для 4 человек, один ребенок 2 года с аллергией на орехи"),
     )
 
     assert "🍽 План питания" in result

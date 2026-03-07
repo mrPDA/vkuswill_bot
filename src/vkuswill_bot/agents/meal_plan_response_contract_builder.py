@@ -1,4 +1,5 @@
 """Builder for typed Meal Plan Response Contract v1 model."""
+
 from __future__ import annotations
 from collections import defaultdict
 from typing import Any
@@ -21,6 +22,7 @@ from vkuswill_bot.agents.meal_plan_response_utils import (
     extract_people_total,
     latest_user_text,
 )
+
 _SLOT_BASE = ("breakfast", "lunch", "dinner")
 _SLOT_CHILD = ("breakfast", "snack_1", "lunch", "snack_2", "dinner")
 _SLOT_EXTENDED = ("breakfast", "snack_1", "lunch", "snack_2", "dinner", "snack_3")
@@ -32,6 +34,8 @@ _SLOT_LABELS = {
     "dinner": "Ужин",
     "snack_3": "Перекус 3",
 }
+
+
 def _parse_request_payload(
     *,
     history: list[dict[str, Any]],
@@ -70,7 +74,9 @@ def _parse_request_payload(
             result[key_text] = parsed
         return result
 
-    def _fallback_groups(text_value: str, total: int) -> tuple[list[ContractRequestGroup], list[dict[str, Any]], bool]:
+    def _fallback_groups(
+        text_value: str, total: int
+    ) -> tuple[list[ContractRequestGroup], list[dict[str, Any]], bool]:
         child_group_id, child_count, child_age = extract_child_group(text_value, total)
         if child_group_id:
             rows: list[ContractRequestGroup] = []
@@ -105,7 +111,9 @@ def _parse_request_payload(
 
     days = _to_int(request_payload.get("days", 7), 7, 1, 31)
     people_total = _to_int(request_payload.get("people_total", 2), 2, 1, 100)
-    groups_payload = request_payload.get("groups") if isinstance(request_payload.get("groups"), list) else []
+    groups_payload = (
+        request_payload.get("groups") if isinstance(request_payload.get("groups"), list) else []
+    )
 
     groups: list[ContractRequestGroup] = []
     normalized_groups_payload: list[dict[str, Any]] = []
@@ -188,8 +196,12 @@ def build_meal_plan_response_contract_v1(
         group_id = str(group.get("id", "")).strip()
         if not group_id:
             continue
-        hard = group.get("hard_constraints") if isinstance(group.get("hard_constraints"), dict) else {}
-        soft = group.get("soft_preferences") if isinstance(group.get("soft_preferences"), dict) else {}
+        hard = (
+            group.get("hard_constraints") if isinstance(group.get("hard_constraints"), dict) else {}
+        )
+        soft = (
+            group.get("soft_preferences") if isinstance(group.get("soft_preferences"), dict) else {}
+        )
         group_constraints[group_id] = {"hard": hard, "soft": soft}
         for key, value in hard.items():
             if key != "allergens_excluded" and value:
@@ -247,8 +259,7 @@ def build_meal_plan_response_contract_v1(
     if not adaptations:
         if groups:
             adaptations.extend(
-                ContractGroupAdaptation(group_id=group.id, rules_applied=[])
-                for group in groups
+                ContractGroupAdaptation(group_id=group.id, rules_applied=[]) for group in groups
             )
         else:
             adaptations.append(ContractGroupAdaptation(group_id="all", rules_applied=[]))

@@ -46,8 +46,8 @@ _FALLBACK_MEAL_PLAN_GENERATION_PROMPT = (
     "Постарайся обеспечить soft_preferences coverage >= 0.70 по каждой группе.\n"
     "Параметры запроса:\n{request_payload}\n\n"
     "Формат dishes[]:\n"
-    '- name: string\n'
-    '- day: int\n'
+    "- name: string\n"
+    "- day: int\n"
     '- meal_type: "breakfast"|"lunch"|"dinner"|"snack_1"|"snack_2"|"snack_3"\n'
     "- servings_total: int >= 1\n- audience_groups: string[]\n- cuisine_tags: string[]"
 )
@@ -192,9 +192,7 @@ def detect_prompt_profile(text: str) -> PromptProfile:
     )
     has_days_period = re.search(r"на\s+\d+\s+д", low) is not None
     has_people_count = re.search(r"для\s+\d+\s+(чел|человек)", low) is not None
-    has_period_marker = has_days_period or any(
-        marker in low for marker in meal_plan_period_markers
-    )
+    has_period_marker = has_days_period or any(marker in low for marker in meal_plan_period_markers)
     cart_markers = (
         "купи",
         "закажи",

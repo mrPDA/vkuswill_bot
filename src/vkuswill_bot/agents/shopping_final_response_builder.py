@@ -238,21 +238,25 @@ class DefaultFinalResponseBuilder:
         cart_result = ""
 
         with contextlib.suppress(Exception):
-            cart_data, cart_args, cart_result = (
-                await agent._recover_cart_from_recipe_search_history(
-                    history=state.history,
-                    llm_provider=llm_provider,
-                    call_cache=state.mcp_call_cache,
-                )
+            (
+                cart_data,
+                cart_args,
+                cart_result,
+            ) = await agent._recover_cart_from_recipe_search_history(
+                history=state.history,
+                llm_provider=llm_provider,
+                call_cache=state.mcp_call_cache,
             )
         if cart_data is None:
             with contextlib.suppress(Exception):
-                cart_data, cart_args, cart_result = (
-                    await agent._recover_cart_from_recipe_ingredients_history(
-                        history=state.history,
-                        llm_provider=llm_provider,
-                        call_cache=state.mcp_call_cache,
-                    )
+                (
+                    cart_data,
+                    cart_args,
+                    cart_result,
+                ) = await agent._recover_cart_from_recipe_ingredients_history(
+                    history=state.history,
+                    llm_provider=llm_provider,
+                    call_cache=state.mcp_call_cache,
                 )
         if cart_data is None:
             return None

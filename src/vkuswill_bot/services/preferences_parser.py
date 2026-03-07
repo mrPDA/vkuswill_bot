@@ -74,9 +74,7 @@ def _norm_category(category: str) -> tuple[str, str]:
 
 
 def _canonicalize_diet(value: object) -> str:
-    low = " ".join(
-        str(value).strip().lower().replace("_", " ").replace("-", " ").split()
-    )
+    low = " ".join(str(value).strip().lower().replace("_", " ").replace("-", " ").split())
     if not low:
         return ""
     for canonical, markers in _DIET_MARKERS.items():

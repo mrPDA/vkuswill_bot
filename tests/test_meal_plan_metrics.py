@@ -82,7 +82,9 @@ async def test_meal_plan_metrics_sink_emits_centralized_events_when_logger_prese
     event_types = [call.args[1] for call in logger.await_args_list]
     assert "meal_plan_routing_event" in event_types
     assert "meal_plan_execution_event" in event_types
-    routing_event = next(call for call in logger.await_args_list if call.args[1] == "meal_plan_routing_event")
+    routing_event = next(
+        call for call in logger.await_args_list if call.args[1] == "meal_plan_routing_event"
+    )
     routing_metadata = routing_event.args[2]
     assert routing_metadata["rollout_bypass"]["active"] is True
     assert routing_metadata["rollout_bypass"]["actor"] == "qa-bot"

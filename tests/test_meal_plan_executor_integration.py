@@ -353,7 +353,7 @@ async def test_shopping_agent_disables_meal_plan_routing_when_feature_flag_off()
 
 
 @pytest.mark.asyncio
-async def test_shopping_agent_meal_plan_uses_explicit_constraints_when_preferences_store_unavailable() -> None:
+async def test_meal_plan_uses_explicit_constraints_when_preferences_unavailable() -> None:
     meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
     plan_payload = {
         "schema_version": 1,

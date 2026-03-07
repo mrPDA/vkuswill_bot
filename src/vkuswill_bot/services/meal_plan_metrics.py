@@ -22,7 +22,7 @@ def _percentile(values: list[float], p: float) -> float:
     if not values:
         return 0.0
     sorted_values = sorted(values)
-    idx = int(round((len(sorted_values) - 1) * p))
+    idx = round((len(sorted_values) - 1) * p)
     idx = max(0, min(len(sorted_values) - 1, idx))
     return sorted_values[idx]
 
@@ -116,7 +116,9 @@ class PostgresMealPlanMetricsReader:
         fp = int(row["fp"] or 0) if row is not None else 0
         return tp, fp
 
-    async def _fetch_execution_metrics(self, *, window_days: int) -> tuple[int, int, int, float, float]:
+    async def _fetch_execution_metrics(
+        self, *, window_days: int
+    ) -> tuple[int, int, int, float, float]:
         sql = """
             WITH execution AS (
                 SELECT
@@ -134,8 +136,12 @@ class PostgresMealPlanMetricsReader:
                 COUNT(*) FILTER (WHERE outcome = 'success') AS success_count,
                 COUNT(*) FILTER (WHERE outcome = 'fallback') AS fallback_count,
                 COUNT(*) AS total_count,
-                COALESCE(PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms), 0) AS latency_p50_ms,
-                COALESCE(PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0) AS latency_p95_ms
+                COALESCE(
+                    PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY latency_ms), 0
+                ) AS latency_p50_ms,
+                COALESCE(
+                    PERCENTILE_CONT(0.95) WITHIN GROUP (ORDER BY latency_ms), 0
+                ) AS latency_p95_ms
             FROM execution
         """
         async with self._pool.acquire() as conn:
@@ -176,9 +182,13 @@ class PostgresMealPlanMetricsReader:
 
     async def fetch_rollout_metrics(self, *, window_days: int = 7) -> MealPlanRolloutMetrics:
         tp, fp = await self._fetch_precision_counts(window_days=window_days)
-        success_count, fallback_count, total_count, latency_p50_ms, latency_p95_ms = await self._fetch_execution_metrics(
-            window_days=window_days
-        )
+        (
+            success_count,
+            fallback_count,
+            total_count,
+            latency_p50_ms,
+            latency_p95_ms,
+        ) = await self._fetch_execution_metrics(window_days=window_days)
         baseline_error_rate = await self._fetch_baseline_error_rate(window_days=window_days)
         sample_size = tp + fp
         precision = (tp / sample_size) if sample_size else 0.0

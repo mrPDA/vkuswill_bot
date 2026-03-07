@@ -15,7 +15,22 @@ _DIET_MARKERS: dict[str, tuple[str, ...]] = {
     "default": ("default", "обыч", "стандарт", "omnivore", "омнивор"),
 }
 _DIET_FORBIDDEN = {
-    "vegan": {"говяд", "свинин", "куриц", "курин", "индейк", "рыб", "лосос", "тунец", "яйц", "сыр", "творог", "йогурт", "молок", "слив"},
+    "vegan": {
+        "говяд",
+        "свинин",
+        "куриц",
+        "курин",
+        "индейк",
+        "рыб",
+        "лосос",
+        "тунец",
+        "яйц",
+        "сыр",
+        "творог",
+        "йогурт",
+        "молок",
+        "слив",
+    },
     "vegetarian": {"говяд", "свинин", "куриц", "курин", "индейк", "рыб", "лосос", "тунец"},
 }
 _PORK_TERMS = {"свинин", "бекон", "ветчин", "pork", "ham", "bacon"}
@@ -58,15 +73,15 @@ def _ingredient_terms(rows: list[dict[str, Any]]) -> set[str]:
     for row in rows:
         if not isinstance(row, dict):
             continue
-        merged = " ".join([str(row.get("name", "")).strip(), str(row.get("search_query", "")).strip()]).lower()
+        merged = " ".join(
+            [str(row.get("name", "")).strip(), str(row.get("search_query", "")).strip()]
+        ).lower()
         terms.update(token for token in _TOKEN_RE.findall(merged) if token)
     return terms
 
 
 def _canonicalize_diet(value: Any) -> str:
-    low = " ".join(
-        str(value).strip().lower().replace("_", " ").replace("-", " ").split()
-    )
+    low = " ".join(str(value).strip().lower().replace("_", " ").replace("-", " ").split())
     if not low:
         return ""
     for canonical, markers in _DIET_MARKERS.items():
@@ -143,13 +158,31 @@ def validate_hard_constraints_with_trace(
                 applied = not (forbidden and _contains_any(terms, forbidden))
                 if not applied:
                     violations.append(f"{dish.name}: diet={diet} нарушен для {group_id}")
-                _append_trace(trace=trace, stage=_PHASE1, group_id=group_id, field="hard_constraints.diet", value=diet, applied=applied, reason=("matched dish tokens" if applied else "forbidden token matched"), dish_name=dish.name)
+                _append_trace(
+                    trace=trace,
+                    stage=_PHASE1,
+                    group_id=group_id,
+                    field="hard_constraints.diet",
+                    value=diet,
+                    applied=applied,
+                    reason=("matched dish tokens" if applied else "forbidden token matched"),
+                    dish_name=dish.name,
+                )
 
             if _is_truthy(hard.get("no_pork")):
                 applied = not _contains_any(terms, _PORK_TERMS)
                 if not applied:
                     violations.append(f"{dish.name}: no_pork нарушен для {group_id}")
-                _append_trace(trace=trace, stage=_PHASE1, group_id=group_id, field="hard_constraints.no_pork", value=True, applied=applied, reason=("matched dish tokens" if applied else "pork token matched"), dish_name=dish.name)
+                _append_trace(
+                    trace=trace,
+                    stage=_PHASE1,
+                    group_id=group_id,
+                    field="hard_constraints.no_pork",
+                    value=True,
+                    applied=applied,
+                    reason=("matched dish tokens" if applied else "pork token matched"),
+                    dish_name=dish.name,
+                )
 
             allergens = hard.get("allergens_excluded")
             if isinstance(allergens, list):
@@ -161,7 +194,16 @@ def validate_hard_constraints_with_trace(
                     applied = not _contains_any(terms, markers)
                     if not applied:
                         violations.append(f"{dish.name}: аллерген {low} нарушен для {group_id}")
-                    _append_trace(trace=trace, stage=_PHASE1, group_id=group_id, field="hard_constraints.allergens_excluded", value=low, applied=applied, reason=("matched dish tokens" if applied else "allergen token matched"), dish_name=dish.name)
+                    _append_trace(
+                        trace=trace,
+                        stage=_PHASE1,
+                        group_id=group_id,
+                        field="hard_constraints.allergens_excluded",
+                        value=low,
+                        applied=applied,
+                        reason=("matched dish tokens" if applied else "allergen token matched"),
+                        dish_name=dish.name,
+                    )
 
     return violations, trace
 
@@ -188,9 +230,20 @@ def validate_hard_constraints_with_ingredients(
                 continue
 
             if not terms:
-                violations.append(f"{dish.name}: ingredient-level validation unavailable for {group_id}")
+                violations.append(
+                    f"{dish.name}: ingredient-level validation unavailable for {group_id}"
+                )
                 for field, value in hard.items():
-                    _append_trace(trace=trace, stage=_PHASE2, group_id=group_id, field=f"hard_constraints.{field}", value=value, applied=False, reason="missing ingredient data", dish_name=dish.name)
+                    _append_trace(
+                        trace=trace,
+                        stage=_PHASE2,
+                        group_id=group_id,
+                        field=f"hard_constraints.{field}",
+                        value=value,
+                        applied=False,
+                        reason="missing ingredient data",
+                        dish_name=dish.name,
+                    )
                 continue
 
             diet = _canonicalize_diet(hard.get("diet"))
@@ -198,14 +251,40 @@ def validate_hard_constraints_with_ingredients(
                 forbidden = _DIET_FORBIDDEN.get(diet, set())
                 applied = not (forbidden and _contains_any(terms, forbidden))
                 if not applied:
-                    violations.append(f"{dish.name}: diet={diet} нарушен для {group_id} (ingredients)")
-                _append_trace(trace=trace, stage=_PHASE2, group_id=group_id, field="hard_constraints.diet", value=diet, applied=applied, reason=("ingredient-level matched" if applied else "forbidden ingredient token matched"), dish_name=dish.name)
+                    violations.append(
+                        f"{dish.name}: diet={diet} нарушен для {group_id} (ingredients)"
+                    )
+                _append_trace(
+                    trace=trace,
+                    stage=_PHASE2,
+                    group_id=group_id,
+                    field="hard_constraints.diet",
+                    value=diet,
+                    applied=applied,
+                    reason=(
+                        "ingredient-level matched"
+                        if applied
+                        else "forbidden ingredient token matched"
+                    ),
+                    dish_name=dish.name,
+                )
 
             if _is_truthy(hard.get("no_pork")):
                 applied = not _contains_any(terms, _PORK_TERMS)
                 if not applied:
                     violations.append(f"{dish.name}: no_pork нарушен для {group_id} (ingredients)")
-                _append_trace(trace=trace, stage=_PHASE2, group_id=group_id, field="hard_constraints.no_pork", value=True, applied=applied, reason=("ingredient-level matched" if applied else "pork ingredient token matched"), dish_name=dish.name)
+                _append_trace(
+                    trace=trace,
+                    stage=_PHASE2,
+                    group_id=group_id,
+                    field="hard_constraints.no_pork",
+                    value=True,
+                    applied=applied,
+                    reason=(
+                        "ingredient-level matched" if applied else "pork ingredient token matched"
+                    ),
+                    dish_name=dish.name,
+                )
 
             allergens = hard.get("allergens_excluded")
             if isinstance(allergens, list):
@@ -216,8 +295,23 @@ def validate_hard_constraints_with_ingredients(
                     markers = _ALLERGEN_ALIASES.get(low, {low})
                     applied = not _contains_any(terms, markers)
                     if not applied:
-                        violations.append(f"{dish.name}: аллерген {low} нарушен для {group_id} (ingredients)")
-                    _append_trace(trace=trace, stage=_PHASE2, group_id=group_id, field="hard_constraints.allergens_excluded", value=low, applied=applied, reason=("ingredient-level matched" if applied else "allergen ingredient token matched"), dish_name=dish.name)
+                        violations.append(
+                            f"{dish.name}: аллерген {low} нарушен для {group_id} (ingredients)"
+                        )
+                    _append_trace(
+                        trace=trace,
+                        stage=_PHASE2,
+                        group_id=group_id,
+                        field="hard_constraints.allergens_excluded",
+                        value=low,
+                        applied=applied,
+                        reason=(
+                            "ingredient-level matched"
+                            if applied
+                            else "allergen ingredient token matched"
+                        ),
+                        dish_name=dish.name,
+                    )
 
     return violations, trace
 
@@ -237,7 +331,12 @@ def build_applied_preferences_trace(
         group_id = str(row.get("group_id", "")).strip()
         field = str(row.get("field", "")).strip()
         if group_id and field:
-            row = {**row, "sources": _sources_for_group_field(request=request, group_id=group_id, field=field)}
+            row = {
+                **row,
+                "sources": _sources_for_group_field(
+                    request=request, group_id=group_id, field=field
+                ),
+            }
         merged.append(row)
 
     if isinstance(soft_coverage_by_group, dict):
@@ -260,7 +359,9 @@ def build_applied_preferences_trace(
                     "applied": coverage >= soft_coverage_target,
                     "coverage": coverage,
                     "coverage_target": soft_coverage_target,
-                    "sources": _sources_for_group_field(request=request, group_id=group_id, field="soft_preferences.cuisines"),
+                    "sources": _sources_for_group_field(
+                        request=request, group_id=group_id, field="soft_preferences.cuisines"
+                    ),
                 }
             )
     return merged

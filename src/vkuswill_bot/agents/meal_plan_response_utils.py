@@ -201,7 +201,7 @@ def cart_products_by_category_lines(cart_data: dict[str, Any] | None) -> list[st
 def _extract_total_rub(summary: dict[str, Any]) -> int | None:
     total_raw = summary.get("total")
     if isinstance(total_raw, int | float) and float(total_raw) >= 0:
-        return int(round(float(total_raw)))
+        return round(float(total_raw))
 
     total_text = str(summary.get("total_text", "")).strip()
     if not total_text:
@@ -213,7 +213,7 @@ def _extract_total_rub(summary: dict[str, Any]) -> int | None:
         except ValueError:
             continue
         if value >= 0:
-            return int(round(value))
+            return round(value)
     return None
 
 
@@ -226,7 +226,9 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
             total_text="н/д",
             not_found=[],
         )
-    summary = cart_data.get("price_summary") if isinstance(cart_data.get("price_summary"), dict) else {}
+    summary = (
+        cart_data.get("price_summary") if isinstance(cart_data.get("price_summary"), dict) else {}
+    )
     count_raw = summary.get("count")
     items_count: int | None = count_raw if isinstance(count_raw, int) and count_raw >= 0 else None
     if items_count is None:
