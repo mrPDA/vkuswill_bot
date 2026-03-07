@@ -77,6 +77,10 @@ async def run_locked_turn(
                 "heuristic_prompt_profile": state.heuristic_prompt_profile,
                 "intent_conflict": state.intent_conflict,
                 "intent_conflict_severity": state.intent_conflict_severity,
+                "route_override_applied": state.route_override_applied,
+                "route_override_from": state.route_override_from,
+                "route_override_to": state.route_override_to,
+                "route_override_reason": state.route_override_reason,
             }
         )
 

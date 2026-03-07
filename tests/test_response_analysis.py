@@ -8,6 +8,7 @@ from vkuswill_bot.agents.response_analysis import (
     is_additive_cart_intent,
     is_cart_intent,
     looks_like_partial_recipe_reply,
+    looks_like_textual_tool_call_reply,
     should_start_fresh_context,
 )
 
@@ -115,6 +116,30 @@ class TestLooksLikePartialRecipeReply:
 
     def test_no_markers(self):
         assert looks_like_partial_recipe_reply("Привет, как дела?") is False
+
+
+class TestLooksLikeTextualToolCallReply:
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '<tool_call>\n{"name":"recipe_search","arguments":{"ingredients":[]}}',
+            '{"name":"vkusvill_products_search","arguments":{"q":"молоко"}}',
+            'Вот вызов:\n{"name": "user_preferences_get", "arguments": {}}',
+        ],
+    )
+    def test_positive(self, text: str):
+        assert looks_like_textual_tool_call_reply(text) is True
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "",
+            "Собрала корзину, вот ссылка.",
+            '{"profile":"meal_plan","confidence":0.9}',
+        ],
+    )
+    def test_negative(self, text: str):
+        assert looks_like_textual_tool_call_reply(text) is False
 
 
 # ── should_start_fresh_context ────────────────────────────────────────

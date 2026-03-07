@@ -139,11 +139,11 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_compact_followup_prompt_enabled is True
 
-    def test_meal_plan_intent_routing_default_disabled(self):
-        """Маршрутизация meal-plan выключена по умолчанию для безопасного rollout."""
+    def test_meal_plan_intent_routing_default_enabled(self):
+        """Маршрутизация meal-plan включена по умолчанию."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.meal_plan_intent_routing_enabled is False
+        assert cfg.meal_plan_intent_routing_enabled is True
 
     def test_meal_plan_executor_default_disabled(self):
         """Отдельный meal-plan executor выключен по умолчанию для staged rollout."""

@@ -202,6 +202,56 @@ async def test_run_locked_turn_writes_intent_conflict_metadata_to_trace(
     assert metadata["heuristic_prompt_profile"] == "meal_plan"
     assert metadata["intent_conflict"] is True
     assert metadata["intent_conflict_severity"] == "high"
+    assert metadata["route_override_applied"] is False
+
+
+@pytest.mark.asyncio
+async def test_run_locked_turn_writes_route_override_metadata_to_trace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    metrics = _MetricsSinkSpy()
+    trace = _TraceSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    agent._create_trace = lambda **kwargs: trace  # type: ignore[assignment]
+    agent._llm_temperature = 0.2
+    agent._llm_max_tokens = 900
+    text = "собери корзину на неделю для 4 человек"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        state = _state_for_profile("cart", text=text)
+        state.llm_prompt_profile = "meal_plan"
+        state.llm_prompt_confidence = 0.93
+        state.llm_prompt_reason = "weekly meal planning"
+        state.heuristic_prompt_profile = "meal_plan"
+        state.route_override_applied = True
+        state.route_override_from = "meal_plan"
+        state.route_override_to = "cart"
+        state.route_override_reason = "meal_plan_intent_routing_disabled"
+        return state
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent,
+        user_id=21,
+        text=text,
+        on_progress=None,
+        llm_provider="qwen_openai",
+    )
+
+    assert result == "ok"
+    metadata = trace.updates[0]["metadata"]
+    assert metadata["route_override_applied"] is True
+    assert metadata["route_override_from"] == "meal_plan"
+    assert metadata["route_override_to"] == "cart"
+    assert metadata["route_override_reason"] == "meal_plan_intent_routing_disabled"
 
 
 @pytest.mark.asyncio

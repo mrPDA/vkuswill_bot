@@ -86,7 +86,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         intent_classification_enabled: bool = False,
         intent_classification_timeout: float = 5.0,
         llm_queue_timeout_seconds: float = 15.0,
-        meal_plan_intent_routing_enabled: bool = False,
+        meal_plan_intent_routing_enabled: bool = True,
         meal_plan_executor_enabled: bool = False,
         meal_plan_shadow_mode_enabled: bool = False,
         meal_plan_rollout_percent: int = 100,

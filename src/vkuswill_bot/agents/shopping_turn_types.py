@@ -140,12 +140,17 @@ class TurnState:
     heuristic_prompt_profile: PromptProfile = "general"
     intent_conflict: bool = False
     intent_conflict_severity: str | None = None
+    route_override_applied: bool = False
+    route_override_from: PromptProfile | None = None
+    route_override_to: PromptProfile | None = None
+    route_override_reason: str | None = None
     cart_data_this_turn: dict[str, Any] | None = None
     manual_recovery_used: bool = False
     cart_creation_recovery_used: bool = False
     search_batch_recovery_used: bool = False
     cart_flow_recovery_used: bool = False
     recipe_to_cart_recovery_used: bool = False
+    textual_tool_call_recovery_used: bool = False
     step_budget_warning_used: bool = False
     single_search_steps_streak: int = 0
     tools_called_this_turn: bool = False
@@ -217,6 +222,10 @@ async def build_turn_state(
 
     heuristic_profile = resolve_prompt_profile(text=text, history=history)
     prompt_profile = llm_profile or heuristic_profile
+    route_override_applied = False
+    route_override_from: PromptProfile | None = None
+    route_override_to: PromptProfile | None = None
+    route_override_reason: str | None = None
     intent_conflict_severity = _resolve_intent_conflict_severity(
         llm_profile=llm_profile,
         heuristic_profile=heuristic_profile,
@@ -225,7 +234,11 @@ async def build_turn_state(
     if prompt_profile == "meal_plan" and not getattr(
         agent, "_meal_plan_intent_routing_enabled", True
     ):
+        route_override_applied = True
+        route_override_from = prompt_profile
         prompt_profile = "cart" if is_cart_intent(text) else "recipe"
+        route_override_to = prompt_profile
+        route_override_reason = "meal_plan_intent_routing_disabled"
     history = ensure_system_prompt(
         history=history,
         prompt_profile=prompt_profile,
@@ -270,4 +283,8 @@ async def build_turn_state(
         heuristic_prompt_profile=heuristic_profile,
         intent_conflict=intent_conflict_severity is not None,
         intent_conflict_severity=intent_conflict_severity,
+        route_override_applied=route_override_applied,
+        route_override_from=route_override_from,
+        route_override_to=route_override_to,
+        route_override_reason=route_override_reason,
     )

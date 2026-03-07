@@ -1112,6 +1112,59 @@ async def test_forces_cart_tool_call_when_llm_claims_cart_ready_without_tool_res
 
 
 @pytest.mark.asyncio
+async def test_textual_tool_call_reply_is_retried_with_native_tool_call() -> None:
+    cart_payload = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://shop.example/cart/native-tool",
+                "price_summary": {
+                    "total": 99.0,
+                    "total_text": "Итого: 99.00 руб",
+                    "items": ["- Молоко 3,2% x 1 = 99.00 руб"],
+                },
+            },
+        },
+        ensure_ascii=False,
+    )
+    mcp = _FakeMCPClient(tool_result=cart_payload)
+    llm_script = [
+        _FakeResponse(
+            _FakeMessage(
+                content=(
+                    "<tool_call>\n"
+                    '{"name":"vkusvill_cart_link_create",'
+                    '"arguments":{"products":[{"xml_id":1,"q":1}]}}'
+                )
+            )
+        ),
+        _FakeResponse(
+            _FakeMessage(
+                content="",
+                tool_calls=[
+                    _FakeToolCall(
+                        "tc-1",
+                        "vkusvill_cart_link_create",
+                        '{"products":[{"xml_id":1,"q":1}]}',
+                    )
+                ],
+            )
+        ),
+        _FakeResponse(_FakeMessage(content="Готово.")),
+    ]
+    agent, mcp_client = _agent(llm_script=llm_script, mcp_client=mcp)
+
+    result = await agent.process_message(user_id=334, text="закажи молоко")
+
+    assert "<tool_call>" not in result
+    assert '<a href="https://shop.example/cart/native-tool">Открыть корзину</a>' in result
+    assert "Итого: 99.00 руб" in result
+    assert mcp_client.calls == [
+        ("vkusvill_cart_link_create", {"products": [{"xml_id": 1, "q": 1}]})
+    ]
+
+
+@pytest.mark.asyncio
 async def test_manual_cart_reply_is_retried_and_stabilized() -> None:
     cart_payload = json.dumps(
         {
