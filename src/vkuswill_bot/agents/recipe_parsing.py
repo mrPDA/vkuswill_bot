@@ -37,6 +37,67 @@ _INLINE_INGREDIENT_RE = re.compile(
     r"(?=$|[\n,;])",
     flags=re.IGNORECASE,
 )
+_FALLBACK_QUERY_SPLIT_RE = (
+    re.compile(r"\s+или\s+.*$", flags=re.IGNORECASE),
+    re.compile(r"\s+для\s+.*$", flags=re.IGNORECASE),
+)
+_FALLBACK_QUERY_REMOVABLE_WORDS = frozenset(
+    {
+        "белая",
+        "белое",
+        "белые",
+        "белый",
+        "длиннозерная",
+        "длиннозерное",
+        "длиннозерные",
+        "длиннозерный",
+        "длиннозёрная",
+        "длиннозёрное",
+        "длиннозёрные",
+        "длиннозёрный",
+        "для",
+        "желтая",
+        "желтое",
+        "желтые",
+        "желтый",
+        "жёлтая",
+        "жёлтое",
+        "жёлтые",
+        "жёлтый",
+        "замороженная",
+        "замороженное",
+        "замороженные",
+        "замороженный",
+        "красная",
+        "красное",
+        "красные",
+        "красный",
+        "куриное",
+        "куриные",
+        "очищенная",
+        "очищенное",
+        "очищенный",
+        "репчатый",
+        "свежая",
+        "свежее",
+        "свежие",
+        "свежий",
+        "или",
+    }
+)
+_FALLBACK_QUERY_ALIASES = {
+    "брокколи свежая или замороженная": "брокколи",
+    "желтый болгарский перец": "болгарский перец",
+    "жёлтый болгарский перец": "болгарский перец",
+    "красный болгарский перец": "болгарский перец",
+    "куриные яйца": "яйца",
+    "рис белый длиннозерный": "рис",
+    "рис белый длиннозёрный": "рис",
+    "филе семги": "семга",
+    "филе сёмги": "семга",
+    "хлеб белый для тостов": "хлеб",
+    "яйцо куриное": "яйца",
+}
 
 
 def parse_quantity_hint(text: str) -> tuple[float, str, str] | None:
@@ -82,12 +143,52 @@ def build_fallback_search_queries(*, query: str, ingredient_name: str) -> list[s
     for raw in (
         query,
         SearchProcessor.clean_search_query(query),
+        ingredient_name,
         SearchProcessor.clean_search_query(ingredient_name),
     ):
-        value = str(raw).strip()
-        if value and value not in candidates:
-            candidates.append(value)
+        for value in _expand_fallback_query_variants(str(raw).strip()):
+            if value and value not in candidates:
+                candidates.append(value)
     return candidates
+
+
+def _expand_fallback_query_variants(raw: str) -> list[str]:
+    original = str(raw).strip(" ,.;:").strip()
+    normalized = SearchProcessor.clean_search_query(original).strip(" ,.;:").strip()
+    if not original and not normalized:
+        return []
+    variants: list[str] = []
+    if original:
+        variants.append(original)
+    if normalized and normalized not in variants:
+        variants.append(normalized)
+    alias = _FALLBACK_QUERY_ALIASES.get(normalized.lower().replace("ё", "е"))
+    if alias:
+        variants.append(alias)
+    for pattern in _FALLBACK_QUERY_SPLIT_RE:
+        simplified = pattern.sub("", normalized).strip(" ,.;:").strip()
+        if simplified:
+            variants.append(simplified)
+    for base in list(variants):
+        tokens = [
+            token
+            for token in re.split(r"\s+", base)
+            if token
+            and normalize_text(token).replace("ё", "е") not in _FALLBACK_QUERY_REMOVABLE_WORDS
+        ]
+        simplified = " ".join(tokens).strip()
+        if simplified:
+            variants.append(simplified)
+    deduped: list[str] = []
+    seen_keys: set[str] = set()
+    for value in variants:
+        raw_value = str(value).strip(" ,.;:").strip()
+        cleaned_key = SearchProcessor.clean_search_query(raw_value).strip(" ,.;:").strip()
+        if not raw_value or not cleaned_key or cleaned_key in seen_keys:
+            continue
+        seen_keys.add(cleaned_key)
+        deduped.append(raw_value)
+    return deduped
 
 
 def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any]]:

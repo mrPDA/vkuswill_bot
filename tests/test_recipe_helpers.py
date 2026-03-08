@@ -15,7 +15,7 @@ from vkuswill_bot.agents.recipe_pantry import (
     looks_like_pepper_vegetable,
     normalize_text,
 )
-from vkuswill_bot.agents.recipe_parsing import parse_quantity_hint
+from vkuswill_bot.agents.recipe_parsing import build_fallback_search_queries, parse_quantity_hint
 from vkuswill_bot.agents.recipe_runtime import (
     filter_recipe_ingredients_list,
 )
@@ -130,6 +130,32 @@ class TestParseQuantityHint:
 
     def test_empty_string(self) -> None:
         assert parse_quantity_hint("") is None
+
+
+class TestBuildFallbackSearchQueries:
+    def test_adds_broader_variant_for_or_query(self) -> None:
+        result = build_fallback_search_queries(
+            query="брокколи свежая или замороженная",
+            ingredient_name="брокколи",
+        )
+        assert "брокколи свежая или замороженная" in result
+        assert "брокколи" in result
+
+    def test_adds_broader_variant_for_modified_query(self) -> None:
+        result = build_fallback_search_queries(
+            query="рис белый длиннозёрный",
+            ingredient_name="рис белый длиннозёрный",
+        )
+        assert result[0] == "рис белый длиннозёрный"
+        assert "рис" in result
+
+    def test_adds_alias_for_eggs(self) -> None:
+        result = build_fallback_search_queries(
+            query="яйцо куриное",
+            ingredient_name="яйцо куриное",
+        )
+        assert "яйцо куриное" in result
+        assert "яйца" in result
 
 
 # ── match_requested_ingredient ────────────────────────────────────
