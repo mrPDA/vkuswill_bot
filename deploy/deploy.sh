@@ -348,16 +348,16 @@ ensure_stage_debug_nginx_route() {
   local NGINX_CONF="/etc/nginx/sites-available/vkuswill-bot"
 
   if [[ ! -f "$NGINX_CONF" ]]; then
-    warn "Nginx-конфиг ${NGINX_CONF} не найден, пропускаем проверку /debug/"
+    warn "Nginx-конфиг ${NGINX_CONF} не найден, пропускаем проверку /debug-stg/"
     return 0
   fi
 
   if ! sudo -n true 2>/dev/null; then
-    warn "Нет прав sudo без пароля, пропускаем автоматическое добавление /debug/ в nginx"
+    warn "Нет прав sudo без пароля, пропускаем автоматическое добавление /debug-stg/ в nginx"
     return 0
   fi
 
-  log "Проверка nginx route /debug/ в ${NGINX_CONF}..."
+  log "Проверка nginx route /debug-stg/ в ${NGINX_CONF}..."
 
   if ! sudo python3 - "$NGINX_CONF" "$HEALTH_PORT" <<'PYCODE'
 import pathlib
@@ -369,7 +369,7 @@ health_port = sys.argv[2]
 content = conf_path.read_text()
 
 block = f"""    # Stage-only debug API for direct ShoppingAgent scenario runs
-    location /debug/ {{
+    location /debug-stg/ {{
         proxy_pass http://127.0.0.1:{health_port}/debug/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -381,7 +381,7 @@ block = f"""    # Stage-only debug API for direct ShoppingAgent scenario runs
 
 """
 
-pattern = re.compile(r"(?ms)^    # Stage-only debug API for direct ShoppingAgent scenario runs\n    location /debug/ \{.*?^    \}\n\n")
+pattern = re.compile(r"(?ms)^    # Stage-only debug API for direct ShoppingAgent scenario runs\n    location /debug-stg/ \{.*?^    \}\n\n")
 match = pattern.search(content)
 if match:
     current_block = match.group(0)
@@ -408,17 +408,17 @@ else:
 conf_path.write_text(content)
 PYCODE
   then
-    err "Не удалось обновить nginx-конфиг для /debug/"
+    err "Не удалось обновить nginx-конфиг для /debug-stg/"
     return 1
   fi
 
   if ! sudo nginx -t >/dev/null 2>&1; then
-    err "nginx -t не прошел после добавления /debug/"
+    err "nginx -t не прошел после добавления /debug-stg/"
     return 1
   fi
 
   sudo systemctl reload nginx
-  log "Nginx конфиг обновлён и перезагружен (/debug/)"
+  log "Nginx конфиг обновлён и перезагружен (/debug-stg/)"
 }
 
 # ─── 3. Очистка места перед pull ────────────────────────────

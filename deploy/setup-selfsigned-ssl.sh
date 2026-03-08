@@ -139,6 +139,12 @@ server {
         proxy_set_header X-Real-IP \$remote_addr;
     }
 
+    location /health-stg {
+        proxy_pass http://127.0.0.1:18080/health;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+    }
+
     location /voice-link/ {
         proxy_pass http://127.0.0.1:8080/voice-link/;
         proxy_set_header Host \$host;
