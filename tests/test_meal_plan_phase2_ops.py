@@ -481,9 +481,7 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_payloa
         timeout_seconds=1.0,
     )
 
-    assert flat == [
-        {"name": "нут", "search_query": "нут", "quantity": 2.0, "unit": "уп"}
-    ]
+    assert flat == [{"name": "нут", "search_query": "нут", "quantity": 2.0, "unit": "уп"}]
     assert by_dish == {"карри с нутом": flat}
     assert stats.fallback_attempted_dishes == 1
     assert stats.fallback_success_dishes == 1
@@ -555,9 +553,7 @@ async def test_collect_ingredients_for_dishes_uses_llm_fallback_when_tool_raises
         timeout_seconds=1.0,
     )
 
-    assert flat == [
-        {"name": "рис", "search_query": "рис", "quantity": 1.0, "unit": "кг"}
-    ]
+    assert flat == [{"name": "рис", "search_query": "рис", "quantity": 1.0, "unit": "кг"}]
     assert by_dish == {"рисовая каша": flat}
     assert stats.fallback_attempted_dishes == 1
     assert stats.fallback_success_dishes == 1

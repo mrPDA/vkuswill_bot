@@ -190,30 +190,32 @@ async def collect_ingredients_for_dishes(
                     retries=0,
                 )
             except Exception as exc:
-                return dish_name, servings, [], {
-                    "status": "exception",
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc)[:240],
-                }
+                return (
+                    dish_name,
+                    servings,
+                    [],
+                    {
+                        "status": "exception",
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc)[:240],
+                    },
+                )
             rows = extract_ingredients(result)
             parsed = parse_json_payload(result)
             if rows:
                 return dish_name, servings, rows, {"status": "success", "rows": len(rows)}
-            error = (
-                str(parsed.get("error", "")).strip()
-                if isinstance(parsed, dict)
-                else ""
+            error = str(parsed.get("error", "")).strip() if isinstance(parsed, dict) else ""
+            message = str(parsed.get("message", "")).strip() if isinstance(parsed, dict) else ""
+            return (
+                dish_name,
+                servings,
+                [],
+                {
+                    "status": "empty",
+                    "error": error[:120],
+                    "message": message[:240],
+                },
             )
-            message = (
-                str(parsed.get("message", "")).strip()
-                if isinstance(parsed, dict)
-                else ""
-            )
-            return dish_name, servings, [], {
-                "status": "empty",
-                "error": error[:120],
-                "message": message[:240],
-            }
 
     tasks = [_load_ingredients(dish) for dish in dishes_payload]
     chunks = await asyncio.gather(*tasks, return_exceptions=True)

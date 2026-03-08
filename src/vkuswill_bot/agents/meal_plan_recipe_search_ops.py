@@ -155,11 +155,15 @@ async def search_products(
             try:
                 chunk_result = await _call_recipe_search(chunk)
             except Exception as exc:
-                return [], [], {
-                    "error_type": type(exc).__name__,
-                    "error_message": str(exc)[:240],
-                    "chunk_size": len(chunk),
-                }
+                return (
+                    [],
+                    [],
+                    {
+                        "error_type": type(exc).__name__,
+                        "error_message": str(exc)[:240],
+                        "chunk_size": len(chunk),
+                    },
+                )
             chunk_products, chunk_not_found = extract_products_from_recipe_search(chunk_result)
             return chunk_products, chunk_not_found, None
 

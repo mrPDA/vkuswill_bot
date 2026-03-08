@@ -27,6 +27,7 @@ class Phase2SafetyOutcome:
     request_payload: dict[str, Any]
     fallback_reason: str = ""
 
+
 async def enforce_phase2_safety_policy(
     *,
     agent: Any,
