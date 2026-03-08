@@ -356,3 +356,46 @@ async def test_fallback_recipe_search_keeps_partial_results_when_one_query_times
     assert payload["results"][0]["error"] == "TimeoutError"
     assert payload["data"]["found"][0]["search_query"] == "морковь"
     assert "лук" in payload["not_found"]
+
+
+@pytest.mark.asyncio
+async def test_fallback_recipe_search_retries_with_cleaned_query() -> None:
+    seen_queries: list[str] = []
+
+    async def _search_fn(query: str) -> str:
+        seen_queries.append(query)
+        if query == "молоко пастеризованное 2.5%":
+            return json.dumps({"ok": True, "data": {"items": []}}, ensure_ascii=False)
+        if query == "молоко":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "data": {
+                        "items": [
+                            {"xml_id": 777, "name": "Молоко", "price": 120, "unit": "шт"},
+                        ]
+                    },
+                },
+                ensure_ascii=False,
+            )
+        return json.dumps({"ok": True, "data": {"items": []}}, ensure_ascii=False)
+
+    raw = await fallback_recipe_search(
+        {
+            "ingredients": [
+                {
+                    "name": "молоко",
+                    "quantity": 1,
+                    "unit": "шт",
+                    "search_query": "молоко пастеризованное 2.5%",
+                }
+            ]
+        },
+        search_fn=_search_fn,
+    )
+    payload = json.loads(raw)
+
+    assert payload["ok"] is True
+    assert seen_queries == ["молоко пастеризованное 2.5%", "молоко пастеризованное", "молоко"]
+    assert payload["data"]["found"][0]["item"]["xml_id"] == 777
+    assert payload["data"]["found"][0]["search_query"] == "молоко"
