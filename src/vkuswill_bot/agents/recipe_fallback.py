@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 import asyncio
 import json
-import logging
 import time
 from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
@@ -10,20 +8,20 @@ from typing import Any
 
 from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
 from vkuswill_bot.agents.mcp_response_parser import extract_search_items, parse_json_payload
-from vkuswill_bot.agents.recipe_parsing import normalize_recipe_ingredient_row
+from vkuswill_bot.agents.recipe_parsing import (
+    build_fallback_search_queries,
+    normalize_recipe_ingredient_row,
+)
 from vkuswill_bot.agents.recipe_runtime import (
     enrich_recipe_equivalents,
     fallback_borscht_ingredients,
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.services.prompts import get_recipe_extraction_prompt_with_metadata
-
-logger = logging.getLogger(__name__)
 SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
 _RECIPE_FALLBACK_MAX_TOKENS = 900
 _RECIPE_FALLBACK_TEMPERATURE = 0.1
-
 @dataclass(slots=True)
 class RecipeExtractionDebug:
     rows: list[dict[str, Any]]
@@ -48,7 +46,6 @@ class RecipeExtractionDebug:
         if self.prompt_metadata:
             payload["prompt"] = self.prompt_metadata
         return payload
-
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
@@ -284,29 +281,34 @@ async def fallback_recipe_search(
         query: str,
         ingredient_name: str,
     ) -> tuple[dict[str, Any], dict[str, Any] | None, list[int], str]:
-        async with semaphore:
-            try:
-                raw = await search_fn(query)
-            except Exception as exc:
-                result = {
-                    "ingredient": ingredient_name,
-                    "search_query": query,
-                    "best_match": None,
-                    "alternatives": [],
-                    "error": type(exc).__name__,
-                    "error_message": str(exc)[:240],
-                }
-                return result, None, [], query
-        parsed = parse_json_payload(raw)
-        items = extract_search_items(parsed)
+        queries = build_fallback_search_queries(query=query, ingredient_name=ingredient_name)
+        last_error_type: str | None = None
+        last_error_message: str | None = None
+        items: list[dict[str, Any]] = []
+        used_query = query
+        for candidate_query in queries:
+            async with semaphore:
+                try:
+                    raw = await search_fn(candidate_query)
+                except Exception as exc:
+                    last_error_type = type(exc).__name__
+                    last_error_message = str(exc)[:240]
+                    continue
+            parsed = parse_json_payload(raw)
+            items = extract_search_items(parsed)
+            if items:
+                used_query = candidate_query
+                break
         if not items:
             result = {
                 "ingredient": ingredient_name,
-                "search_query": query,
+                "search_query": used_query,
                 "best_match": None,
                 "alternatives": [],
-                "error": "Поиск не вернул items",
+                "error": last_error_type or "Поиск не вернул items",
             }
+            if last_error_message:
+                result["error_message"] = last_error_message
             return result, None, [], query
 
         ids = [item.get("xml_id") for item in items if isinstance(item.get("xml_id"), int)]
@@ -332,7 +334,7 @@ async def fallback_recipe_search(
         ]
         result = {
             "ingredient": ingredient_name,
-            "search_query": query,
+            "search_query": used_query,
             "best_match": best_match,
             "alternatives": alternatives,
         }
@@ -340,7 +342,7 @@ async def fallback_recipe_search(
             "ingredient": ingredient_name,
             "quantity": row.get("quantity"),
             "unit": row.get("unit"),
-            "search_query": query,
+            "search_query": used_query,
             "item": {
                 "xml_id": best_match.get("xml_id"),
                 "name": best_match.get("name"),
@@ -351,7 +353,7 @@ async def fallback_recipe_search(
             "alternatives": alternatives,
         }
         normalized_ids = [xml_id for xml_id in ids if isinstance(xml_id, int)]
-        return result, found_row, normalized_ids, query
+        return result, found_row, normalized_ids, used_query
 
     payloads = await asyncio.gather(
         *[_search_one(row, query, ingredient_name) for row, query, ingredient_name in pending]

@@ -76,6 +76,20 @@ def clean_structured_ingredient_name(name_raw: str) -> str:
     return name
 
 
+def build_fallback_search_queries(*, query: str, ingredient_name: str) -> list[str]:
+    """Build deduplicated fallback queries from strict to broad."""
+    candidates: list[str] = []
+    for raw in (
+        query,
+        SearchProcessor.clean_search_query(query),
+        SearchProcessor.clean_search_query(ingredient_name),
+    ):
+        value = str(raw).strip()
+        if value and value not in candidates:
+            candidates.append(value)
+    return candidates
+
+
 def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any]]:
     """Extract structured ingredient rows from user free text."""
     if not user_text.strip():
