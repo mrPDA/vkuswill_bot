@@ -9,6 +9,28 @@ from vkuswill_bot.agents.meal_plan_quality import calculate_soft_coverage
 from vkuswill_bot.agents.meal_plan_types import MealPlanDish, MealPlanRequest
 from vkuswill_bot.agents.recipe_pantry import detect_pantry_tag_for_ingredient
 
+_MEAL_PLAN_SEARCH_MAX_INGREDIENTS = 30
+_LOW_PRIORITY_SEARCH_MARKERS = (
+    "масло",
+    "соус",
+    "уксус",
+    "трав",
+    "розмарин",
+    "базилик",
+    "укроп",
+    "петруш",
+    "кориц",
+    "харисс",
+    "лавров",
+    "орех",
+    "семен",
+    "чиа",
+    "кокос",
+    "мед",
+    "мёд",
+    "кунжут",
+)
+
 
 def extract_ingredients(tool_result: str) -> list[dict[str, Any]]:
     payload = parse_json_payload(tool_result)
@@ -93,6 +115,46 @@ def filter_pantry_ingredients_for_search(
             continue
         filtered.append(item)
     return filtered, sorted({name for name in removed if name})
+
+
+def prioritize_ingredients_for_search(
+    *,
+    items: list[dict[str, Any]],
+    max_items: int = _MEAL_PLAN_SEARCH_MAX_INGREDIENTS,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    if len(items) <= max(1, max_items):
+        return list(items), []
+
+    def _text(item: dict[str, Any]) -> str:
+        name = str(item.get("name", "")).strip().lower().replace("ё", "е")
+        query = str(item.get("search_query", "")).strip().lower().replace("ё", "е")
+        return f"{name} {query}".strip()
+
+    ranked = []
+    for index, item in enumerate(items):
+        text = _text(item)
+        unit = str(item.get("unit", "")).strip().lower()
+        low_priority = "по вкусу" in unit or any(
+            marker in text for marker in _LOW_PRIORITY_SEARCH_MARKERS
+        )
+        try:
+            quantity = float(item.get("quantity", 1.0))
+        except (TypeError, ValueError):
+            quantity = 1.0
+        if quantity <= 0:
+            quantity = 1.0
+        ranked.append((1 if low_priority else 0, -quantity, index, item))
+
+    ranked.sort()
+    selected = [item for _, _, _, item in ranked[:max_items]]
+    deferred = sorted(
+        {
+            str(item.get("name", "")).strip() or str(item.get("search_query", "")).strip()
+            for _, _, _, item in ranked[max_items:]
+            if str(item.get("name", "")).strip() or str(item.get("search_query", "")).strip()
+        }
+    )
+    return selected, deferred
 
 
 def extract_products_from_recipe_search(tool_result: str) -> tuple[list[dict[str, Any]], list[str]]:

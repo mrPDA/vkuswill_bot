@@ -13,6 +13,7 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
     finalize_fail_soft,
     filter_pantry_ingredients_for_search,
     generate_plan_with_deadline,
+    prioritize_ingredients_for_search,
     request_payload_for_render,
     render_response,
     soft_coverage_for_render,
@@ -48,8 +49,6 @@ from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
 
 ProgressReporter = Callable[[str], Awaitable[None]]
 FallbackToStandardTurn = Callable[[str], Awaitable[str]]
-
-
 class MealPlanExecutorAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
 
@@ -80,8 +79,6 @@ class MealPlanExecutorAgentProtocol(Protocol):
         args: dict[str, Any],
         result: str,
     ) -> None: ...
-
-
 async def run_meal_plan_turn(
     *,
     agent: MealPlanExecutorAgentProtocol,
@@ -289,12 +286,14 @@ async def run_meal_plan_turn(
     flat_ingredients = phase2_safety.flat_ingredients
     soft_coverage_by_group = phase2_safety.soft_coverage_by_group
     request_payload = phase2_safety.request_payload
-
     searchable_ingredients, pantry_filtered = filter_pantry_ingredients_for_search(
         items=flat_ingredients,
         explicit_pantry_requests=state.explicit_pantry_requests,
     )
     aggregated = aggregate_ingredients_for_search(searchable_ingredients)
+    prioritized_aggregated, deferred_ingredients = prioritize_ingredients_for_search(
+        items=aggregated
+    )
     await on_progress("🔍 Ищу товары...")
     search_deadline_at = reserve_deadline(
         phase2_deadline_at,
@@ -305,6 +304,8 @@ async def run_meal_plan_turn(
         name="meal-plan.search-products",
         input={
             "aggregated_ingredients_count": len(aggregated),
+            "prioritized_ingredients_count": len(prioritized_aggregated),
+            "deferred_ingredients_count": len(deferred_ingredients),
             "reserved_cart_create_seconds": CART_CREATE_RESERVE_SECONDS,
             "pantry_filtered_count": len(pantry_filtered),
         },
@@ -314,7 +315,7 @@ async def run_meal_plan_turn(
         state=state,
         user_id=user_id,
         llm_provider=llm_provider,
-        aggregated_ingredients=aggregated,
+        aggregated_ingredients=prioritized_aggregated,
         phase2_deadline_at=search_deadline_at,
     )
     finish_search_span(
@@ -327,6 +328,7 @@ async def run_meal_plan_turn(
     if isinstance(diagnostics, dict):
         diagnostics["meal_plan_recipe_search"] = search_stats.as_dict()
         diagnostics["meal_plan_pantry_filtered"] = pantry_filtered
+        diagnostics["meal_plan_search_deferred"] = deferred_ingredients
 
     cart_data: dict[str, Any] | None = None
     if products:
@@ -362,7 +364,7 @@ async def run_meal_plan_turn(
         trace=trace,
         output=final_text,
         dishes_payload=dishes_payload,
-        aggregated_ingredients=aggregated,
+        aggregated_ingredients=prioritized_aggregated,
         products=products,
         soft_coverage_by_group=soft_coverage_by_group,
         request=request,
@@ -376,5 +378,6 @@ async def run_meal_plan_turn(
         search_stats=search_stats.as_dict(),
         cart_stats=cart_stats.as_dict(),
         pantry_filtered=pantry_filtered,
+        search_deferred=deferred_ingredients,
     )
     return final_text

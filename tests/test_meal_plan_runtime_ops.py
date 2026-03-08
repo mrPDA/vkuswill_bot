@@ -8,6 +8,7 @@ from vkuswill_bot.agents.meal_plan_runtime_ops import (
     aggregate_ingredients,
     extract_products_from_recipe_search,
     filter_pantry_ingredients_for_search,
+    prioritize_ingredients_for_search,
 )
 
 
@@ -73,6 +74,38 @@ def test_filter_pantry_ingredients_for_search_keeps_explicit_pantry() -> None:
         {"name": "Соль", "search_query": "соль", "quantity": 1, "unit": "щепотка"},
     ]
     assert removed == []
+
+
+def test_prioritize_ingredients_for_search_limits_low_priority_tail() -> None:
+    selected, deferred = prioritize_ingredients_for_search(
+        items=[
+            {"name": "Картофель", "search_query": "картофель", "quantity": 800, "unit": "г"},
+            {"name": "Морковь", "search_query": "морковь", "quantity": 300, "unit": "г"},
+            {
+                "name": "Оливковое масло",
+                "search_query": "оливковое масло",
+                "quantity": 2,
+                "unit": "ст.л.",
+            },
+            {"name": "Розмарин", "search_query": "розмарин сушеный", "quantity": 1, "unit": "ч.л."},
+        ],
+        max_items=2,
+    )
+
+    assert [row["search_query"] for row in selected] == ["картофель", "морковь"]
+    assert deferred == ["Оливковое масло", "Розмарин"]
+
+
+def test_prioritize_ingredients_for_search_keeps_all_when_under_limit() -> None:
+    items = [
+        {"name": "Тофу", "search_query": "тофу", "quantity": 300, "unit": "г"},
+        {"name": "Брокколи", "search_query": "брокколи", "quantity": 400, "unit": "г"},
+    ]
+
+    selected, deferred = prioritize_ingredients_for_search(items=items, max_items=5)
+
+    assert selected == items
+    assert deferred == []
 
 
 def test_extract_products_from_recipe_search_supports_results_best_match_shape() -> None:
