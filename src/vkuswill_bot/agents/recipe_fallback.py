@@ -293,7 +293,18 @@ async def fallback_recipe_search(
         ingredient_name: str,
     ) -> tuple[dict[str, Any], dict[str, Any] | None, list[int], str]:
         async with semaphore:
-            raw = await search_fn(query)
+            try:
+                raw = await search_fn(query)
+            except Exception as exc:
+                result = {
+                    "ingredient": ingredient_name,
+                    "search_query": query,
+                    "best_match": None,
+                    "alternatives": [],
+                    "error": type(exc).__name__,
+                    "error_message": str(exc)[:240],
+                }
+                return result, None, [], query
         parsed = parse_json_payload(raw)
         items = extract_search_items(parsed)
         if not items:
