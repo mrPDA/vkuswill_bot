@@ -35,6 +35,7 @@ class MealPlanHelperAgentProtocol(Protocol):
         user_id: int | None = None,
     ) -> str: ...
 
+
 def update_history(
     agent: MealPlanHelperAgentProtocol,
     state: Any,

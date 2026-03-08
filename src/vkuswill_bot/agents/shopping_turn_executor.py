@@ -194,9 +194,7 @@ async def run_locked_turn(
         )
         diagnostics["execution_path"] = "meal_plan_executor"
         diagnostics["executor_result"] = (
-            "fallback"
-            if "Перехожу к стандартной обработке запроса." in result
-            else "success"
+            "fallback" if "Перехожу к стандартной обработке запроса." in result else "success"
         )
         if metrics_sink is not None:
             with contextlib.suppress(Exception):

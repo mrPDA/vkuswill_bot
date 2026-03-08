@@ -396,8 +396,9 @@ async def test_run_meal_plan_turn_ingredients_failure_is_fail_soft() -> None:
 
 
 @pytest.mark.asyncio
-async def test_run_meal_plan_turn_keeps_phase1_constraints_when_some_ingredient_rows_missing(
-) -> None:
+async def test_run_meal_plan_turn_keeps_phase1_constraints_when_some_ingredient_rows_missing() -> (
+    None
+):
     plan_payload = _build_plan_payload(cuisine="russian")
 
     def _mcp(name: str, arguments: dict[str, Any]) -> str:

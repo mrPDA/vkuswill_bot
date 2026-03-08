@@ -108,9 +108,7 @@ async def test_extract_recipe_ingredients_with_llm_debug_returns_metadata() -> N
     )
 
     payload = debug.as_dict()
-    assert debug.rows == [
-        {"name": "Киноа", "quantity": 1.0, "unit": "шт", "search_query": "Киноа"}
-    ]
+    assert debug.rows == [{"name": "Киноа", "quantity": 1.0, "unit": "шт", "search_query": "Киноа"}]
     assert payload["rows"] == 1
     assert payload["attempts"] == 1
     assert payload["parsed_type"] == "list"
