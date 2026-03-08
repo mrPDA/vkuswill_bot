@@ -538,6 +538,85 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial_primary() -> None:
+    plan_payload = _build_plan_payload(cuisine="russian")
+    recipe_search_calls = 0
+
+    def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        nonlocal recipe_search_calls
+        if name == "recipe_ingredients":
+            dish = str(arguments.get("dish", "")).lower().replace(" ", "")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": f"ингредиент-{dish}-a",
+                            "search_query": f"ing-{dish}-a",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                        {
+                            "name": f"ингредиент-{dish}-b",
+                            "search_query": f"ing-{dish}-b",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "recipe_search":
+            recipe_search_calls += 1
+            if recipe_search_calls == 1:
+                return json.dumps(
+                    {
+                        "ok": True,
+                        "found": [{"xml_id": 501, "suggested_q": 1}],
+                        "not_found": [f"nf-{idx}" for idx in range(10)],
+                    },
+                    ensure_ascii=False,
+                )
+            return json.dumps(
+                {
+                    "ok": True,
+                    "found": [{"xml_id": 777 + recipe_search_calls, "suggested_q": 1}],
+                    "not_found": [],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/partial-primary"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    state = _State(history=[{"role": "user", "content": "меню на неделю для 2 человек"}])
+    trace = _TraceSpy()
+    agent = _FakeExecutorAgent(
+        llm_responses=[_llm_response(json.dumps(plan_payload, ensure_ascii=False))],
+        mcp_handler=_mcp,
+    )
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=state,
+        user_id=910,
+        text="меню на неделю для 2 человек",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: _done(),
+    )
+
+    assert "https://shop.example/cart/partial-primary" in result
+    assert recipe_search_calls == 3
+    metadata = trace.updates[-1]["metadata"]
+    assert metadata["used_chunk_fallback"] is True
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_low_coverage"
+
+
+@pytest.mark.asyncio
 async def test_run_meal_plan_turn_respects_timeout_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 

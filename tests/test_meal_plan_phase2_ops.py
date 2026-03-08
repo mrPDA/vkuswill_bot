@@ -284,7 +284,7 @@ async def test_maybe_create_cart_from_products_retries_after_timeout() -> None:
             self.snapshots += 1
 
     agent = _Agent()
-    cart_data = await maybe_create_cart_from_products(
+    cart_data, cart_stats = await maybe_create_cart_from_products(
         agent=agent,
         state=_State(),
         user_id=77,
@@ -297,6 +297,8 @@ async def test_maybe_create_cart_from_products_retries_after_timeout() -> None:
 
     assert cart_data is not None
     assert cart_data["link"] == "https://shop.example/cart/retry-ok"
+    assert cart_stats.cart_created is True
+    assert cart_stats.has_link is True
     assert agent.calls == 2
     assert agent.snapshots == 1
 

@@ -255,7 +255,7 @@ async def run_meal_plan_turn(
 
     aggregated = aggregate_ingredients_for_search(flat_ingredients)
     await on_progress("🔍 Ищу товары...")
-    products, not_found, used_chunk_fallback = await search_products(
+    products, not_found, used_chunk_fallback, search_stats = await search_products(
         agent=agent,
         state=state,
         user_id=user_id,
@@ -263,11 +263,13 @@ async def run_meal_plan_turn(
         aggregated_ingredients=aggregated,
         phase2_deadline_at=phase2_deadline_at,
     )
+    if isinstance(diagnostics, dict):
+        diagnostics["meal_plan_recipe_search"] = search_stats.as_dict()
 
     cart_data: dict[str, Any] | None = None
     if products:
         await on_progress("🛒 Формирую корзину...")
-    cart_data = await maybe_create_cart_from_products(
+    cart_data, cart_stats = await maybe_create_cart_from_products(
         agent=agent,
         state=state,
         user_id=user_id,
@@ -277,6 +279,8 @@ async def run_meal_plan_turn(
         phase2_deadline_at=phase2_deadline_at,
         timeout_seconds=CART_CREATE_TIMEOUT_SECONDS,
     )
+    if isinstance(diagnostics, dict):
+        diagnostics["meal_plan_cart_create"] = cart_stats.as_dict()
 
     final_text = render_response(
         state=state,
@@ -301,5 +305,7 @@ async def run_meal_plan_turn(
         used_chunk_fallback=used_chunk_fallback,
         phase2_deadline_seconds=PHASE2_DEADLINE_SECONDS,
         turn_deadline_seconds=TURN_DEADLINE_SECONDS,
+        search_stats=search_stats.as_dict(),
+        cart_stats=cart_stats.as_dict(),
     )
     return final_text

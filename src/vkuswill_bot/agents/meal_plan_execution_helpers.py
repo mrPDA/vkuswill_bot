@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 from vkuswill_bot.agents.meal_plan_generator import generate_meal_plan
@@ -41,6 +42,53 @@ class MealPlanHelperAgentProtocol(Protocol):
         call_cache: dict[str, str] | None = None,
         user_id: int | None = None,
     ) -> str: ...
+
+
+@dataclass(slots=True)
+class RecipeSearchStats:
+    aggregated_ingredients_count: int
+    primary_products_count: int = 0
+    primary_not_found_count: int = 0
+    final_products_count: int = 0
+    final_not_found_count: int = 0
+    used_chunk_fallback: bool = False
+    chunk_count: int = 0
+    chunk_products_count: int = 0
+    chunk_not_found_count: int = 0
+    fallback_reason: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "aggregated_ingredients_count": self.aggregated_ingredients_count,
+            "primary_products_count": self.primary_products_count,
+            "primary_not_found_count": self.primary_not_found_count,
+            "final_products_count": self.final_products_count,
+            "final_not_found_count": self.final_not_found_count,
+            "used_chunk_fallback": self.used_chunk_fallback,
+            "chunk_count": self.chunk_count,
+            "chunk_products_count": self.chunk_products_count,
+            "chunk_not_found_count": self.chunk_not_found_count,
+            "fallback_reason": self.fallback_reason,
+        }
+
+
+def _should_use_chunk_fallback(
+    *,
+    aggregated_ingredients_count: int,
+    products_count: int,
+    not_found_count: int,
+) -> tuple[bool, str]:
+    if aggregated_ingredients_count <= 12:
+        return False, ""
+    if products_count <= 0:
+        return True, "primary_search_empty"
+    coverage_ratio = products_count / max(1, aggregated_ingredients_count)
+    if coverage_ratio < 0.5:
+        return True, "primary_search_low_coverage"
+    unresolved_ratio = not_found_count / max(1, aggregated_ingredients_count)
+    if unresolved_ratio > 0.4:
+        return True, "primary_search_high_not_found"
+    return False, ""
 
 
 def update_history(
@@ -246,7 +294,7 @@ async def search_products(
     llm_provider: str,
     aggregated_ingredients: list[dict[str, Any]],
     phase2_deadline_at: float,
-) -> tuple[list[dict[str, Any]], list[str], bool]:
+) -> tuple[list[dict[str, Any]], list[str], bool, RecipeSearchStats]:
     async def _call_recipe_search(ingredients: list[dict[str, Any]]) -> str:
         return await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
@@ -261,19 +309,34 @@ async def search_products(
         )
 
     used_chunk_fallback = False
+    stats = RecipeSearchStats(aggregated_ingredients_count=len(aggregated_ingredients))
     try:
         primary = await _call_recipe_search(aggregated_ingredients)
         products, not_found = extract_products_from_recipe_search(primary)
     except Exception:
         products, not_found = [], []
+    stats.primary_products_count = len(products)
+    stats.primary_not_found_count = len(not_found)
 
-    if products or len(aggregated_ingredients) <= 12:
-        return merge_products(products), not_found, used_chunk_fallback
+    should_fallback, fallback_reason = _should_use_chunk_fallback(
+        aggregated_ingredients_count=len(aggregated_ingredients),
+        products_count=len(products),
+        not_found_count=len(not_found),
+    )
+    if not should_fallback:
+        merged = merge_products(products)
+        stats.final_products_count = len(merged)
+        stats.final_not_found_count = len(not_found)
+        return merged, not_found, used_chunk_fallback, stats
 
     used_chunk_fallback = True
+    stats.used_chunk_fallback = True
+    stats.fallback_reason = fallback_reason
     merged_products: list[dict[str, Any]] = []
     merged_not_found: list[str] = []
-    for start in range(0, len(aggregated_ingredients), 12):
+    chunk_size = 12
+    stats.chunk_count = (len(aggregated_ingredients) + chunk_size - 1) // chunk_size
+    for start in range(0, len(aggregated_ingredients), chunk_size):
         chunk = aggregated_ingredients[start : start + 12]
         chunk_result = None
         with contextlib.suppress(Exception):
@@ -285,4 +348,15 @@ async def search_products(
         for item in chunk_not_found:
             if item not in merged_not_found:
                 merged_not_found.append(item)
-    return merge_products(merged_products), merged_not_found, used_chunk_fallback
+    merged_chunk_products = merge_products(merged_products)
+    stats.chunk_products_count = len(merged_chunk_products)
+    stats.chunk_not_found_count = len(merged_not_found)
+    combined_products = merge_products([*products, *merged_products])
+    combined_not_found: list[str] = []
+    for item in [*not_found, *merged_not_found]:
+        value = str(item).strip()
+        if value and value not in combined_not_found:
+            combined_not_found.append(value)
+    stats.final_products_count = len(combined_products)
+    stats.final_not_found_count = len(combined_not_found)
+    return combined_products, combined_not_found, used_chunk_fallback, stats

@@ -46,6 +46,8 @@ def update_success_trace(
     used_chunk_fallback: bool,
     phase2_deadline_seconds: float,
     turn_deadline_seconds: float,
+    search_stats: dict[str, Any] | None = None,
+    cart_stats: dict[str, Any] | None = None,
 ) -> None:
     if trace is None:
         return
@@ -68,5 +70,7 @@ def update_success_trace(
             "phase2_deadline_seconds": phase2_deadline_seconds,
             "turn_deadline_seconds": turn_deadline_seconds,
             "used_chunk_fallback": used_chunk_fallback,
+            "meal_plan_recipe_search": search_stats or {},
+            "meal_plan_cart_create": cart_stats or {},
         },
     )
