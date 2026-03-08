@@ -423,12 +423,41 @@ PYCODE
 
 # ─── 3. Очистка места перед pull ────────────────────────────
 log "Очистка Docker (образы, кеш, остановленные контейнеры)..."
-# Удаляем остановленные контейнеры, висячие образы и build-кеш
-docker system prune -f --filter "until=48h" 2>/dev/null || true
-# Дополнительно: удаляем неиспользуемые образы старше 7 дней
-docker image prune -af --filter "until=168h" 2>/dev/null || true
+
+# Шаг 3a: удалить все образы бота, кроме текущего запущенного тега
+CURRENT_IMAGE=$(docker inspect --format='{{.Config.Image}}' "${CONTAINER_NAME}" 2>/dev/null || true)
+if [[ -n "$CURRENT_IMAGE" ]]; then
+  log "Текущий образ в контейнере: ${CURRENT_IMAGE}"
+fi
+
+# Удаляем все образы репозитория бота, кроме текущего рабочего образа
+BOT_REPO="${IMAGE%:*}"
+OLD_BOT_IMAGES=$(docker images --format '{{.Repository}}:{{.Tag}} {{.ID}}' \
+  | grep "^${BOT_REPO}:" \
+  | grep -v "${IMAGE}" \
+  | awk '{print $2}' || true)
+
+if [[ -n "$OLD_BOT_IMAGES" ]]; then
+  log "Удаление старых образов бота..."
+  echo "$OLD_BOT_IMAGES" | xargs docker rmi -f 2>/dev/null || true
+else
+  log "Старых образов бота не найдено"
+fi
+
+# Шаг 3b: удалить dangling-образы и build-кеш (без фильтра по времени)
+docker system prune -f 2>/dev/null || true
+
+# Шаг 3c: удалить все неиспользуемые образы без ограничения по времени
+docker image prune -af 2>/dev/null || true
+
 DISK_FREE=$(df -h / | awk 'NR==2 {print $4}')
 log "Свободно на диске после очистки: ${DISK_FREE}"
+
+MIN_FREE_MB=500
+DISK_FREE_MB=$(df -m / | awk 'NR==2 {print $4}')
+if (( DISK_FREE_MB < MIN_FREE_MB )); then
+  warn "Внимание: свободно всего ${DISK_FREE_MB} МБ — может не хватить для pull образа!"
+fi
 
 # ─── 4. Pull нового образа ──────────────────────────────────
 log "Pulling image: ${IMAGE}..."
