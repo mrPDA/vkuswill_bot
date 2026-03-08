@@ -99,6 +99,7 @@ async def _batch_fallback_rows(
     missing_fallback: list[tuple[str, int]],
     llm_provider: str,
     timeout_seconds: float,
+    trace: Any | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     adapters = getattr(agent, "_llm_adapters", None)
     if not isinstance(adapters, dict):
@@ -124,6 +125,7 @@ async def _batch_fallback_rows(
     failures: list[dict[str, Any]] = []
 
     async def _run_chunk(
+        chunk_index: int,
         chunk: list[tuple[str, int]],
     ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
         async with semaphore:
@@ -132,6 +134,9 @@ async def _batch_fallback_rows(
                 adapter=adapter,
                 model=model,
                 timeout_seconds=batch_timeout,
+                trace=trace,
+                llm_provider=llm_provider,
+                chunk_index=chunk_index,
             )
 
     chunks = [
@@ -139,7 +144,7 @@ async def _batch_fallback_rows(
         for idx in range(0, len(missing_fallback), _BATCH_RECIPE_EXTRACTION_CHUNK_SIZE)
     ]
     gathered = await asyncio.gather(
-        *[_run_chunk(chunk) for chunk in chunks],
+        *[_run_chunk(chunk_index, chunk) for chunk_index, chunk in enumerate(chunks, start=1)],
         return_exceptions=True,
     )
     for chunk_result in gathered:
@@ -166,6 +171,7 @@ async def collect_ingredients_for_dishes(
     phase2_deadline_at: float,
     timeout_seconds: float,
     semaphore_limit: int = 6,
+    trace: Any | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]], IngredientCollectionStats]:
     semaphore = asyncio.Semaphore(max(1, semaphore_limit))
     group_sizes = _group_sizes_from_request(request)
@@ -247,6 +253,7 @@ async def collect_ingredients_for_dishes(
             missing_fallback=missing_fallback,
             llm_provider=llm_provider,
             timeout_seconds=timeout_seconds,
+            trace=trace,
         )
         fallback_success_dishes = 0
         fallback_rows_total = 0

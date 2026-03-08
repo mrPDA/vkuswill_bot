@@ -4,8 +4,13 @@ import asyncio
 import json
 from typing import Any
 
-from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
+from vkuswill_bot.agents.llm_helpers import (
+    estimate_usage_details,
+    extract_message,
+    extract_text,
+)
 from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
+from vkuswill_bot.services.llm_adapters import extract_usage_details
 
 _BATCH_MAX_TOKENS = 2600
 _BATCH_TEMPERATURE = 0.1
@@ -81,15 +86,36 @@ async def extract_recipe_ingredients_batch_with_llm(
     adapter: Any,
     model: str,
     timeout_seconds: float,
+    trace: Any | None = None,
+    llm_provider: str | None = None,
+    chunk_index: int | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], dict[str, Any]]:
     if adapter is None:
         return {}, {"status": "adapter_missing"}
     prompt = _build_batch_prompt(dishes)
+    messages = [{"role": "user", "content": prompt}]
+    generation = (
+        trace.generation(
+            name="meal-plan-ingredient-batch-fallback",
+            model=model,
+            input=messages,
+            model_parameters={
+                "provider": llm_provider or "",
+                "chunk_index": chunk_index,
+                "dishes": len(dishes),
+                "temperature": _BATCH_TEMPERATURE,
+                "max_tokens": _BATCH_MAX_TOKENS,
+            },
+            metadata={"chunk_index": chunk_index, "dishes": len(dishes)},
+        )
+        if trace is not None
+        else None
+    )
     try:
         response = await asyncio.wait_for(
             adapter.create_completion(
                 model=model,
-                messages=[{"role": "user", "content": prompt}],
+                messages=messages,
                 tools=[],
                 tool_choice="none",
                 max_tokens=_BATCH_MAX_TOKENS,
@@ -98,6 +124,13 @@ async def extract_recipe_ingredients_batch_with_llm(
             timeout=timeout_seconds,
         )
     except Exception as exc:
+        if generation is not None:
+            generation.end(
+                output=str(exc),
+                metadata={"chunk_index": chunk_index, "dishes": len(dishes)},
+                level="ERROR",
+                status_message="ingredient_batch_fallback_error",
+            )
         return {}, {
             "status": "exception",
             "error_type": type(exc).__name__,
@@ -106,6 +139,23 @@ async def extract_recipe_ingredients_batch_with_llm(
     text = extract_text(extract_message(response))
     payload = parse_json_payload(text)
     normalized = _normalize_batch_payload(payload)
+    usage_details = extract_usage_details(response) or estimate_usage_details(
+        messages=messages,
+        message=extract_message(response),
+    )
+    if generation is not None:
+        generation.end(
+            output=text[:5000],
+            usage_details=usage_details,
+            metadata={
+                "chunk_index": chunk_index,
+                "dishes": len(dishes),
+                "returned_dishes": len(normalized),
+                "status": "success" if normalized else "empty",
+            },
+            level="DEFAULT" if normalized else "WARNING",
+            status_message=None if normalized else "ingredient_batch_fallback_empty",
+        )
     return normalized, {
         "status": "success" if normalized else "empty",
         "raw_preview": text[:400],

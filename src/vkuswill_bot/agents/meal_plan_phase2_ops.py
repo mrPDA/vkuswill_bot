@@ -44,6 +44,7 @@ async def enforce_phase2_safety_policy(
     recipe_ingredients_timeout_seconds: float,
     turn_deadline_at: float,
     on_progress: Any,
+    trace: Any | None = None,
 ) -> Phase2SafetyOutcome:
     phase1_trace = list(request.applied_preferences_trace)
 
@@ -128,6 +129,7 @@ async def enforce_phase2_safety_policy(
         dishes_payload=retry_dishes_payload,
         phase2_deadline_at=phase2_deadline_at,
         timeout_seconds=recipe_ingredients_timeout_seconds,
+        trace=trace,
     )
     retry_violations, retry_trace = validate_hard_constraints_with_ingredients(
         request=request,

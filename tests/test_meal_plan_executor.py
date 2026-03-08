@@ -24,9 +24,31 @@ class _State:
 class _TraceSpy:
     def __init__(self) -> None:
         self.updates: list[dict[str, Any]] = []
+        self.generations: list[dict[str, Any]] = []
+        self.spans: list[dict[str, Any]] = []
 
     def update(self, **kwargs: Any) -> None:
         self.updates.append(kwargs)
+
+    def generation(self, **kwargs: Any) -> Any:
+        payload = {"start": kwargs, "end": None}
+        self.generations.append(payload)
+
+        class _Generation:
+            def end(self_inner, **end_kwargs: Any) -> None:
+                payload["end"] = end_kwargs
+
+        return _Generation()
+
+    def span(self, **kwargs: Any) -> Any:
+        payload = {"start": kwargs, "end": None}
+        self.spans.append(payload)
+
+        class _Span:
+            def end(self_inner, **end_kwargs: Any) -> None:
+                payload["end"] = end_kwargs
+
+        return _Span()
 
 
 class _FakeExecutorAgent:
@@ -458,6 +480,76 @@ async def test_run_meal_plan_turn_keeps_phase1_constraints_when_some_ingredient_
     assert "https://shop.example/cart/partial-ingredients" in result
     assert "Перехожу к стандартной обработке запроса" not in result
     assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_executor_completed"
+
+
+@pytest.mark.asyncio
+async def test_run_meal_plan_turn_writes_langfuse_observations_with_usage() -> None:
+    plan_payload = _build_plan_payload(cuisine="italian")
+
+    def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        if name == "recipe_ingredients":
+            dish = str(arguments.get("dish", "")).lower().replace(" ", "")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": f"ингредиент-{dish}",
+                            "search_query": f"ing-{dish}",
+                            "quantity": 1,
+                            "unit": "шт",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "recipe_search":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "found": [{"xml_id": 101, "suggested_q": 1, "name": "Товар"}],
+                    "not_found": [],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/obs"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    llm_response = _llm_response(json.dumps(plan_payload, ensure_ascii=False))
+    llm_response["usage"] = {"prompt_tokens": 321, "completion_tokens": 123, "total_tokens": 444}
+    trace = _TraceSpy()
+    agent = _FakeExecutorAgent(llm_responses=[llm_response], mcp_handler=_mcp)
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=_State(history=[{"role": "user", "content": "меню на неделю для 2 человек"}]),
+        user_id=1001,
+        text="меню на неделю для 2 человек",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: _done(),
+    )
+
+    assert "https://shop.example/cart/obs" in result
+    generation_names = [row["start"]["name"] for row in trace.generations]
+    assert "meal-plan-generation" in generation_names
+    meal_plan_generation = next(
+        row for row in trace.generations if row["start"]["name"] == "meal-plan-generation"
+    )
+    assert meal_plan_generation["end"]["usage_details"] == {
+        "input": 321,
+        "output": 123,
+        "total": 444,
+    }
+    span_names = [row["start"]["name"] for row in trace.spans]
+    assert "meal-plan.parse-request" in span_names
+    assert "meal-plan.collect-ingredients" in span_names
+    assert "meal-plan.search-products" in span_names
+    assert "meal-plan.create-cart" in span_names
 
 
 @pytest.mark.asyncio
