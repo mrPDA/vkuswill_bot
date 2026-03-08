@@ -25,6 +25,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "shopping_agent_state_ops": "runtime",
     "meal_plan_executor": "runtime",
     "meal_plan_execution_helpers": "runtime",
+    "meal_plan_recipe_search_ops": "runtime",
     "meal_plan_cart_ops": "runtime",
     "meal_plan_phase2_ops": "runtime",
     "meal_plan_ingredient_collection": "runtime",
