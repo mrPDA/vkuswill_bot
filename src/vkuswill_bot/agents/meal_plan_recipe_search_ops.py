@@ -109,6 +109,7 @@ async def search_products(
     llm_provider: str,
     aggregated_ingredients: list[dict[str, Any]],
     phase2_deadline_at: float,
+    prefer_local_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str], bool, RecipeSearchStats]:
     async def _call_products_search(query: str) -> str:
         return await call_with_timeout_retry(
@@ -153,7 +154,11 @@ async def search_products(
     used_chunk_fallback = False
     stats = RecipeSearchStats(aggregated_ingredients_count=len(aggregated_ingredients))
     prefer_local_chunk_fallback = False
-    if len(aggregated_ingredients) > _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS:
+    if prefer_local_only:
+        products, not_found = [], []
+        should_fallback, fallback_reason = True, "local_search_only"
+        prefer_local_chunk_fallback = True
+    elif len(aggregated_ingredients) > _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS:
         products, not_found = [], []
         should_fallback, fallback_reason = True, "primary_search_skipped_large_batch"
         prefer_local_chunk_fallback = True
