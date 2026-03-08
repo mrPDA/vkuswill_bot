@@ -14,7 +14,6 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
     generate_plan_with_deadline,
     request_payload_for_render,
     render_response,
-    search_products,
     soft_coverage_for_render,
     update_history,
 )
@@ -22,6 +21,7 @@ from vkuswill_bot.agents.meal_plan_phase2_ops import (
     collect_ingredients_for_dishes,
     enforce_phase2_safety_policy,
 )
+from vkuswill_bot.agents.meal_plan_recipe_search_ops import search_products
 from vkuswill_bot.agents.meal_plan_cart_ops import maybe_create_cart_from_products
 from vkuswill_bot.agents.meal_plan_runtime_policy import (
     CART_CREATE_TIMEOUT_SECONDS,
