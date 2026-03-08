@@ -703,9 +703,7 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
 
 
 @pytest.mark.asyncio
-async def test_run_meal_plan_turn_uses_local_products_fallback_for_timed_out_recipe_search_chunks() -> (
-    None
-):
+async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout() -> None:
     plan_payload = _build_plan_payload(cuisine="russian")
     xml_ids_by_query: dict[str, int] = {}
     recipe_search_calls = 0
