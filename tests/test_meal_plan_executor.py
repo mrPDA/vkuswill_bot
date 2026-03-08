@@ -144,6 +144,29 @@ def _llm_response(content: str) -> dict[str, Any]:
     return {"choices": [{"message": {"content": content}}]}
 
 
+def _products_search_response(
+    query: str,
+    *,
+    xml_id: int = 101,
+    name: str | None = None,
+) -> str:
+    product_name = name or f"Товар для {query}"
+    return json.dumps(
+        {
+            "ok": True,
+            "items": [
+                {
+                    "xml_id": xml_id,
+                    "name": product_name,
+                    "price": 100,
+                    "unit": "шт",
+                }
+            ],
+        },
+        ensure_ascii=False,
+    )
+
+
 def _build_plan_payload(*, cuisine: str = "italian") -> dict[str, Any]:
     meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
     dishes = [
@@ -177,18 +200,9 @@ async def test_run_meal_plan_turn_happy_path() -> None:
                 {"name": "помидор", "search_query": "помидор", "quantity": 1, "unit": "шт"},
             ]
             return json.dumps({"ok": True, "ingredients": ingredients}, ensure_ascii=False)
-        if name == "recipe_search":
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [
-                        {"xml_id": 101, "suggested_q": 2, "name": "Томаты"},
-                        {"xml_id": 202, "suggested_q": 1, "name": "Паста"},
-                    ],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=101, name="Томаты")
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/meal-exec"}},
@@ -457,15 +471,9 @@ async def test_run_meal_plan_turn_uses_recomputed_constraints_after_phase2_filte
                 ]
             )
             return json.dumps({"ok": True, "ingredients": ingredients}, ensure_ascii=False)
-        if name == "recipe_search":
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [{"xml_id": 301, "suggested_q": 1, "name": "Томаты"}],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=301, name="Томаты")
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/phase2-safe"}},
@@ -617,15 +625,9 @@ async def test_run_meal_plan_turn_keeps_phase1_constraints_when_some_ingredient_
                 },
                 ensure_ascii=False,
             )
-        if name == "recipe_search":
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [{"xml_id": 101, "suggested_q": 7, "name": "Томаты"}],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=101, name="Томаты")
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/partial-ingredients"}},
@@ -683,15 +685,9 @@ async def test_run_meal_plan_turn_writes_langfuse_observations_with_usage() -> N
                 },
                 ensure_ascii=False,
             )
-        if name == "recipe_search":
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [{"xml_id": 101, "suggested_q": 1, "name": "Товар"}],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=101, name="Товар")
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/obs"}},
@@ -736,9 +732,10 @@ async def test_run_meal_plan_turn_writes_langfuse_observations_with_usage() -> N
 async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
     plan_payload = _build_plan_payload(cuisine="russian")
     recipe_search_calls = 0
+    products_search_calls = 0
 
     def _mcp(name: str, arguments: dict[str, Any]) -> str:
-        nonlocal recipe_search_calls
+        nonlocal recipe_search_calls, products_search_calls
         if name == "recipe_ingredients":
             dish = str(arguments.get("dish", "")).lower().replace(" ", "")
             return json.dumps(
@@ -763,24 +760,11 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
             )
         if name == "recipe_search":
             recipe_search_calls += 1
-            if recipe_search_calls == 1:
-                return json.dumps({"ok": True, "found": [], "not_found": []}, ensure_ascii=False)
-            if recipe_search_calls == 2:
-                return json.dumps(
-                    {"ok": True, "found": [{"xml_id": 501, "suggested_q": 1}], "not_found": []},
-                    ensure_ascii=False,
-                )
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [
-                        {"xml_id": 501, "suggested_q": 2},
-                        {"xml_id": 777, "suggested_q": 1},
-                    ],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+            return json.dumps({"ok": True, "found": [], "not_found": []}, ensure_ascii=False)
+        if name == "vkusvill_products_search":
+            products_search_calls += 1
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=500 + products_search_calls)
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/chunked"}},
@@ -806,17 +790,21 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
     )
 
     assert "https://shop.example/cart/chunked" in result
-    assert recipe_search_calls == 8
-    assert trace.updates[-1]["metadata"]["used_chunk_fallback"] is True
+    assert recipe_search_calls == 0
+    metadata = trace.updates[-1]["metadata"]
+    assert metadata["used_chunk_fallback"] is True
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "local_search_only"
+    assert products_search_calls == 14
 
 
 @pytest.mark.asyncio
 async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial_primary() -> None:
     plan_payload = _build_plan_payload(cuisine="russian")
     recipe_search_calls = 0
+    products_search_calls = 0
 
     def _mcp(name: str, arguments: dict[str, Any]) -> str:
-        nonlocal recipe_search_calls
+        nonlocal recipe_search_calls, products_search_calls
         if name == "recipe_ingredients":
             dish = str(arguments.get("dish", "")).lower().replace(" ", "")
             return json.dumps(
@@ -841,23 +829,11 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial
             )
         if name == "recipe_search":
             recipe_search_calls += 1
-            if recipe_search_calls == 1:
-                return json.dumps(
-                    {
-                        "ok": True,
-                        "found": [{"xml_id": 501, "suggested_q": 1}],
-                        "not_found": [f"nf-{idx}" for idx in range(10)],
-                    },
-                    ensure_ascii=False,
-                )
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [{"xml_id": 777 + recipe_search_calls, "suggested_q": 1}],
-                    "not_found": [],
-                },
-                ensure_ascii=False,
-            )
+            return json.dumps({"ok": True, "found": [], "not_found": []}, ensure_ascii=False)
+        if name == "vkusvill_products_search":
+            products_search_calls += 1
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=700 + products_search_calls)
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/partial-primary"}},
@@ -883,10 +859,11 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial
     )
 
     assert "https://shop.example/cart/partial-primary" in result
-    assert recipe_search_calls == 8
+    assert recipe_search_calls == 0
+    assert products_search_calls == 14
     metadata = trace.updates[-1]["metadata"]
     assert metadata["used_chunk_fallback"] is True
-    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_high_not_found"
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "local_search_only"
 
 
 @pytest.mark.asyncio
@@ -983,13 +960,13 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
     )
 
     assert "https://shop.example/cart/large-batch" in result
-    assert recipe_search_calls == 7
-    assert products_search_calls == 0
+    assert recipe_search_calls == 0
+    assert products_search_calls == 28
     metadata = trace.updates[-1]["metadata"]
-    assert metadata["meal_plan_recipe_search"]["primary_attempted"] is True
-    assert metadata["meal_plan_recipe_search"]["used_chunk_fallback"] is False
-    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "day_by_day"
-    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 0
+    assert metadata["meal_plan_recipe_search"]["primary_attempted"] is False
+    assert metadata["meal_plan_recipe_search"]["used_chunk_fallback"] is True
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "local_search_only"
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 7
     assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
 
 
@@ -1075,9 +1052,9 @@ async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout(
     )
 
     assert "https://shop.example/cart/local-products-fallback" in result
-    assert recipe_search_calls == 28
+    assert recipe_search_calls == 0
     metadata = trace.updates[-1]["metadata"]
-    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_failed"
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "local_search_only"
     assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 7
     assert metadata["meal_plan_recipe_search"]["local_fallback_products_count"] == 14
     assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
@@ -1403,17 +1380,8 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
                 },
                 ensure_ascii=False,
             )
-        if name == "recipe_search":
-            return json.dumps(
-                {
-                    "ok": True,
-                    "found": [
-                        {"xml_id": 901, "suggested_q": 1, "name": "Томаты", "category": "овощи"}
-                    ],
-                    "not_found": ["кинза"],
-                },
-                ensure_ascii=False,
-            )
+        if name == "vkusvill_products_search":
+            return _products_search_response("ингредиент", xml_id=901, name="Томаты")
         if name == "vkusvill_cart_link_create":
             cart_calls += 1
             await asyncio.sleep(0.2)
@@ -1440,8 +1408,8 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
     assert cart_calls == 2
     assert "Ссылка: не сформирована" in result
     assert "Список товаров (без ссылки):" in result
-    assert "Томаты x 14" in result
-    assert "Не найдено: кинза" in result
+    assert "Томаты x 7" in result
+    assert "Не найдено: нет" in result
 
 
 async def _done() -> None:

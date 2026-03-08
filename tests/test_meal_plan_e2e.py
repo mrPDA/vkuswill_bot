@@ -66,6 +66,7 @@ class _MealPlanMCPClient:
         return [
             {"name": "recipe_ingredients", "description": "Ingredients", "parameters": {}},
             {"name": "recipe_search", "description": "Recipe search", "parameters": {}},
+            {"name": "vkusvill_products_search", "description": "Products", "parameters": {}},
             {"name": "vkusvill_cart_link_create", "description": "Cart", "parameters": {}},
         ]
 
@@ -88,15 +89,19 @@ class _MealPlanMCPClient:
                 },
                 ensure_ascii=False,
             )
-        if name == "recipe_search":
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip() or "товар"
             return json.dumps(
                 {
                     "ok": True,
-                    "found": [
-                        {"xml_id": 411, "suggested_q": 1, "name": "Рис"},
-                        {"xml_id": 412, "suggested_q": 1, "name": "Овощи"},
+                    "items": [
+                        {
+                            "xml_id": 410 + len(self.calls),
+                            "name": f"Товар для {query}",
+                            "price": 100,
+                            "unit": "шт",
+                        }
                     ],
-                    "not_found": ["инг-редкий"],
                 },
                 ensure_ascii=False,
             )

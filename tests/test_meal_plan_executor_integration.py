@@ -88,6 +88,7 @@ class _MealPlanMCPClient:
         return [
             {"name": "recipe_ingredients", "description": "Ingredients", "parameters": {}},
             {"name": "recipe_search", "description": "Recipe search", "parameters": {}},
+            {"name": "vkusvill_products_search", "description": "Products", "parameters": {}},
             {"name": "vkusvill_cart_link_create", "description": "Cart", "parameters": {}},
         ]
 
@@ -115,15 +116,19 @@ class _MealPlanMCPClient:
                 },
                 ensure_ascii=False,
             )
-        if name == "recipe_search":
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip() or "товар"
             return json.dumps(
                 {
                     "ok": True,
-                    "found": [
-                        {"xml_id": 301, "suggested_q": 1, "name": "Тофу"},
-                        {"xml_id": 302, "suggested_q": 1, "name": "Овощная смесь"},
+                    "items": [
+                        {
+                            "xml_id": 300 + len(self.calls),
+                            "name": f"Товар для {query}",
+                            "price": 100,
+                            "unit": "шт",
+                        }
                     ],
-                    "not_found": [],
                 },
                 ensure_ascii=False,
             )
@@ -194,9 +199,9 @@ async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
 
     call_names = [name for name, _args in mcp.calls]
     assert call_names.count("recipe_ingredients") == 7
-    assert call_names.count("recipe_search") >= 1
+    assert call_names.count("recipe_search") == 0
     assert call_names.count("vkusvill_cart_link_create") == 1
-    assert "vkusvill_products_search" not in call_names
+    assert call_names.count("vkusvill_products_search") >= 7
     assert len(llm_client.completions.calls) == 1
 
 
@@ -295,7 +300,8 @@ async def test_shopping_agent_allows_explicit_unvalidated_rollout_override() -> 
     assert "🍽 План питания" in result
     call_names = [name for name, _args in mcp.calls]
     assert call_names.count("recipe_ingredients") == 7
-    assert call_names.count("recipe_search") >= 1
+    assert call_names.count("recipe_search") == 0
+    assert call_names.count("vkusvill_products_search") >= 7
     assert call_names.count("vkusvill_cart_link_create") == 1
 
 
