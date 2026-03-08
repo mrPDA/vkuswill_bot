@@ -805,9 +805,10 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial
 async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches() -> None:
     plan_payload = _build_plan_payload(cuisine="russian")
     recipe_search_calls = 0
+    products_search_calls = 0
 
     def _mcp(name: str, arguments: dict[str, Any]) -> str:
-        nonlocal recipe_search_calls
+        nonlocal recipe_search_calls, products_search_calls
         if name == "recipe_ingredients":
             dish = str(arguments.get("dish", "")).lower().replace(" ", "")
             return json.dumps(
@@ -852,6 +853,23 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
                 },
                 ensure_ascii=False,
             )
+        if name == "vkusvill_products_search":
+            products_search_calls += 1
+            query = str(arguments.get("q", "")).strip() or "товар"
+            return json.dumps(
+                {
+                    "ok": True,
+                    "items": [
+                        {
+                            "xml_id": 1000 + products_search_calls,
+                            "name": f"Товар для {query}",
+                            "price": 100,
+                            "unit": "шт",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
         if name == "vkusvill_cart_link_create":
             return json.dumps(
                 {"ok": True, "data": {"link": "https://shop.example/cart/large-batch"}},
@@ -877,13 +895,16 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
     )
 
     assert "https://shop.example/cart/large-batch" in result
-    assert recipe_search_calls == 6
+    assert recipe_search_calls == 0
+    assert products_search_calls == 28
     metadata = trace.updates[-1]["metadata"]
     assert metadata["meal_plan_recipe_search"]["primary_attempted"] is False
     assert (
         metadata["meal_plan_recipe_search"]["fallback_reason"]
         == "primary_search_skipped_large_batch"
     )
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 6
+    assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -917,18 +938,6 @@ async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout(
                         {
                             "name": f"ингредиент-{dish}-b",
                             "search_query": f"ing-{dish}-b",
-                            "quantity": 1,
-                            "unit": "шт",
-                        },
-                        {
-                            "name": f"ингредиент-{dish}-c",
-                            "search_query": f"ing-{dish}-c",
-                            "quantity": 1,
-                            "unit": "шт",
-                        },
-                        {
-                            "name": f"ингредиент-{dish}-d",
-                            "search_query": f"ing-{dish}-d",
                             "quantity": 1,
                             "unit": "шт",
                         },
@@ -980,14 +989,11 @@ async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout(
     )
 
     assert "https://shop.example/cart/local-products-fallback" in result
-    assert recipe_search_calls == 12
+    assert recipe_search_calls == 8
     metadata = trace.updates[-1]["metadata"]
-    assert (
-        metadata["meal_plan_recipe_search"]["fallback_reason"]
-        == "primary_search_skipped_large_batch"
-    )
-    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 6
-    assert metadata["meal_plan_recipe_search"]["local_fallback_products_count"] == 28
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_empty"
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 3
+    assert metadata["meal_plan_recipe_search"]["local_fallback_products_count"] == 14
     assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
 
 
