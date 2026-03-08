@@ -14,7 +14,7 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 _MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 2.0
 _BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 60.0
 _BATCH_RECIPE_EXTRACTION_CHUNK_SIZE = 4
-_BATCH_RECIPE_EXTRACTION_CONCURRENCY = 2
+_BATCH_RECIPE_EXTRACTION_CONCURRENCY = 3
 
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
