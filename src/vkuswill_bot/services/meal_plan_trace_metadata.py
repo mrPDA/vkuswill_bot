@@ -49,6 +49,7 @@ def update_success_trace(
     search_stats: dict[str, Any] | None = None,
     cart_stats: dict[str, Any] | None = None,
     pantry_filtered: list[str] | None = None,
+    search_deferred: list[str] | None = None,
 ) -> None:
     if trace is None:
         return
@@ -74,5 +75,6 @@ def update_success_trace(
             "meal_plan_recipe_search": search_stats or {},
             "meal_plan_cart_create": cart_stats or {},
             "meal_plan_pantry_filtered": list(pantry_filtered or []),
+            "meal_plan_search_deferred": list(search_deferred or []),
         },
     )

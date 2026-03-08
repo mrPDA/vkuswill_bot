@@ -15,6 +15,7 @@ from vkuswill_bot.agents.meal_plan_response_contract import render_meal_plan_con
 from vkuswill_bot.agents.meal_plan_runtime_ops import (
     aggregate_ingredients,
     filter_pantry_ingredients_for_search as _filter_pantry_ingredients_for_search,
+    prioritize_ingredients_for_search as _prioritize_ingredients_for_search,
     request_payload_for_renderer as _request_payload_for_renderer,
     soft_coverage_for_renderer as _soft_coverage_for_renderer,
 )
@@ -205,6 +206,13 @@ def filter_pantry_ingredients_for_search(
         items=items,
         explicit_pantry_requests=explicit_pantry_requests,
     )
+
+
+def prioritize_ingredients_for_search(
+    *,
+    items: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    return _prioritize_ingredients_for_search(items=items)
 
 
 def elapsed_ms(started_at: float) -> int:
