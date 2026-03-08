@@ -33,12 +33,14 @@ from vkuswill_bot.agents.meal_plan_trace_ops import (
 )
 from vkuswill_bot.agents.meal_plan_runtime_policy import (
     CART_CREATE_TIMEOUT_SECONDS,
+    CART_CREATE_RESERVE_SECONDS,
     PHASE2_DEADLINE_SECONDS,
     RECIPE_INGREDIENTS_TIMEOUT_SECONDS,
     TURN_DEADLINE_SECONDS,
     bounded_deadline,
     deadline_after,
     deadline_remaining,
+    reserve_deadline,
 )
 from vkuswill_bot.agents.meal_plan_types import parse_meal_plan_request
 from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
@@ -289,10 +291,17 @@ async def run_meal_plan_turn(
 
     aggregated = aggregate_ingredients_for_search(flat_ingredients)
     await on_progress("🔍 Ищу товары...")
+    search_deadline_at = reserve_deadline(
+        phase2_deadline_at,
+        reserve_seconds=CART_CREATE_RESERVE_SECONDS,
+    )
     search_span = start_span(
         trace=trace,
         name="meal-plan.search-products",
-        input={"aggregated_ingredients_count": len(aggregated)},
+        input={
+            "aggregated_ingredients_count": len(aggregated),
+            "reserved_cart_create_seconds": CART_CREATE_RESERVE_SECONDS,
+        },
     )
     products, not_found, used_chunk_fallback, search_stats = await search_products(
         agent=agent,
@@ -300,7 +309,7 @@ async def run_meal_plan_turn(
         user_id=user_id,
         llm_provider=llm_provider,
         aggregated_ingredients=aggregated,
-        phase2_deadline_at=phase2_deadline_at,
+        phase2_deadline_at=search_deadline_at,
     )
     finish_search_span(
         span=search_span,

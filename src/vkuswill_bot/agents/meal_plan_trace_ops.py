@@ -101,6 +101,8 @@ def finish_cart_span(*, span: Any | None, stats: Any) -> None:
             "has_link": stats.has_link,
             "returned_products_count": stats.returned_products_count,
             "failed_before_response": stats.failed_before_response,
+            "error_type": getattr(stats, "error_type", None),
+            "error_message": getattr(stats, "error_message", None),
         },
         level="DEFAULT" if stats.cart_created else "WARNING",
         status_message=None if stats.cart_created else "meal_plan_cart_not_created",

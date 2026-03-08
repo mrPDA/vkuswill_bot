@@ -241,6 +241,98 @@ async def test_run_meal_plan_turn_happy_path() -> None:
 
 
 @pytest.mark.asyncio
+async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    plan_payload = _build_plan_payload(cuisine="italian")
+    reserved_deadline = 12345.0
+    seen: dict[str, Any] = {}
+
+    async def _fake_search_products(
+        **kwargs: Any,
+    ) -> tuple[list[dict[str, Any]], list[str], bool, Any]:
+        seen["phase2_deadline_at"] = kwargs["phase2_deadline_at"]
+
+        class _Stats:
+            def as_dict(self) -> dict[str, Any]:
+                return {
+                    "aggregated_ingredients_count": 1,
+                    "primary_attempted": False,
+                    "primary_products_count": 0,
+                    "primary_not_found_count": 0,
+                    "final_products_count": 1,
+                    "final_not_found_count": 0,
+                    "used_chunk_fallback": False,
+                    "chunk_count": 0,
+                    "chunk_products_count": 1,
+                    "chunk_not_found_count": 0,
+                    "fallback_reason": "",
+                    "primary_error_type": None,
+                    "primary_error_message": None,
+                    "chunk_failure_count": 0,
+                    "chunk_sample_failures": [],
+                    "local_fallback_chunk_count": 0,
+                    "local_fallback_products_count": 0,
+                    "local_fallback_not_found_count": 0,
+                }
+
+        return [{"xml_id": 101, "q": 1}], [], False, _Stats()
+
+    monkeypatch.setattr(
+        "vkuswill_bot.agents.meal_plan_executor.reserve_deadline",
+        lambda deadline_at, *, reserve_seconds: reserved_deadline,
+    )
+    monkeypatch.setattr(
+        "vkuswill_bot.agents.meal_plan_executor.search_products",
+        _fake_search_products,
+    )
+
+    def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        if name == "recipe_ingredients":
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {"name": "помидор", "search_query": "помидор", "quantity": 1, "unit": "шт"}
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/meal-exec"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    state = _State(
+        history=[{"role": "user", "content": "меню на неделю для 2 человек"}],
+    )
+    trace = _TraceSpy()
+    agent = _FakeExecutorAgent(
+        llm_responses=[_llm_response(json.dumps(plan_payload, ensure_ascii=False))],
+        mcp_handler=_mcp,
+    )
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=state,
+        user_id=555,
+        text="меню на неделю для 2 человек",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: asyncio.sleep(0),
+    )
+
+    assert "https://shop.example/cart/meal-exec" in result
+    assert seen["phase2_deadline_at"] == reserved_deadline
+    search_span = next(
+        span for span in trace.spans if span["start"]["name"] == "meal-plan.search-products"
+    )
+    assert search_span["start"]["input"]["reserved_cart_create_seconds"] == 12.0
+
+
+@pytest.mark.asyncio
 async def test_run_meal_plan_turn_uses_recomputed_constraints_after_phase2_filter() -> None:
     plan_payload = _build_plan_payload(cuisine="italian")
     plan_payload["dishes"].append(

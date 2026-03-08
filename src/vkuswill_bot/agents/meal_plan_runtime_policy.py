@@ -12,6 +12,7 @@ PHASE2_DEADLINE_SECONDS = 100.0
 RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 8.0
 RECIPE_SEARCH_TIMEOUT_SECONDS = 10.0
 CART_CREATE_TIMEOUT_SECONDS = 8.0
+CART_CREATE_RESERVE_SECONDS = 12.0
 MCP_RETRY_ATTEMPTS = 1
 MCP_RETRY_BACKOFF_SECONDS = 0.3
 
@@ -29,6 +30,11 @@ def deadline_remaining(deadline_at: float) -> float:
 def bounded_deadline(seconds: float, *, hard_deadline_at: float) -> float:
     """Return a child deadline that cannot outlive the enclosing hard deadline."""
     return min(hard_deadline_at, deadline_after(seconds))
+
+
+def reserve_deadline(deadline_at: float, *, reserve_seconds: float) -> float:
+    """Return a deadline that preserves a tail budget before ``deadline_at``."""
+    return max(time.monotonic() + 0.1, deadline_at - max(0.0, reserve_seconds))
 
 
 async def call_with_timeout_retry(

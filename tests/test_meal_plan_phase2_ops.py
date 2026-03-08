@@ -304,6 +304,56 @@ async def test_maybe_create_cart_from_products_retries_after_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_maybe_create_cart_from_products_reports_exception_details() -> None:
+    class _Agent:
+        async def _call_mcp_tool(
+            self,
+            *,
+            name: str,
+            arguments: dict[str, Any],
+            llm_provider: str,
+            call_cache: dict[str, str] | None = None,
+            user_id: int | None = None,
+        ) -> str:
+            raise TimeoutError("deadline exceeded")
+
+        def _ensure_cart_price_summary(
+            self,
+            *,
+            cart_data: dict[str, Any],
+            product_index: dict[int, dict[str, Any]],
+        ) -> None:
+            raise AssertionError("must not be called")
+
+        def _capture_cart_snapshot(
+            self,
+            *,
+            user_id: int,
+            tool_name: str,
+            args: dict[str, Any],
+            result: str,
+        ) -> None:
+            raise AssertionError("must not be called")
+
+    cart_data, cart_stats = await maybe_create_cart_from_products(
+        agent=_Agent(),
+        state=_State(),
+        user_id=77,
+        llm_provider="qwen_openai",
+        products=[{"xml_id": 11, "q": 1}],
+        not_found=[],
+        phase2_deadline_at=time.monotonic() + 1.0,
+        timeout_seconds=0.1,
+    )
+
+    assert cart_data == {"products": [{"xml_id": 11, "q": 1}], "not_found": []}
+    assert cart_stats.cart_created is False
+    assert cart_stats.failed_before_response is True
+    assert cart_stats.error_type == "TimeoutError"
+    assert "deadline exceeded" in str(cart_stats.error_message)
+
+
+@pytest.mark.asyncio
 async def test_collect_ingredients_for_dishes_respects_default_semaphore_limit() -> None:
     class _Agent:
         def __init__(self) -> None:
