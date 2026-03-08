@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from vkuswill_bot.agents.meal_plan_recipe_search_ops import search_products
-from vkuswill_bot.agents.meal_plan_runtime_policy import deadline_after, deadline_remaining
 from vkuswill_bot.agents.meal_plan_runtime_ops import merge_products
 from vkuswill_bot.agents.meal_plan_trace_ops import finish_search_span, start_span
 
@@ -103,14 +102,6 @@ def _ingredients_for_day(
     return rows
 
 
-def _allocate_day_deadline(*, overall_deadline_at: float, remaining_days: int) -> float:
-    remaining_seconds = deadline_remaining(overall_deadline_at)
-    if remaining_days <= 1:
-        return overall_deadline_at
-    per_day_budget = max(3.0, remaining_seconds / max(1, remaining_days))
-    return min(overall_deadline_at, deadline_after(per_day_budget))
-
-
 async def search_products_day_by_day(
     *,
     agent: Any,
@@ -133,11 +124,8 @@ async def search_products_day_by_day(
     deferred_all: set[str] = set()
 
     day_items = sorted(grouped_days.items())
-    for index, (day, day_dishes) in enumerate(day_items):
-        day_deadline_at = _allocate_day_deadline(
-            overall_deadline_at=phase2_deadline_at,
-            remaining_days=len(day_items) - index,
-        )
+    for day, day_dishes in day_items:
+        day_deadline_at = phase2_deadline_at
         day_flat_ingredients = _ingredients_for_day(
             day_dishes=day_dishes,
             ingredients_by_dish=ingredients_by_dish,

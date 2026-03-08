@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from typing import cast
 from typing import Any, Protocol
 
+from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.agents.meal_plan_runtime_ops import (
     extract_products_from_recipe_search,
     merge_products,
@@ -111,8 +113,20 @@ async def search_products(
     phase2_deadline_at: float,
     prefer_local_only: bool = False,
 ) -> tuple[list[dict[str, Any]], list[str], bool, RecipeSearchStats]:
+    def _raise_tool_error_if_any(raw: str) -> str:
+        payload = parse_json_payload(raw)
+        if not isinstance(payload, dict):
+            return raw
+        ok = payload.get("ok")
+        error = payload.get("error")
+        if ok is False or error:
+            error_text = str(error or payload.get("message") or "tool_error").strip()
+            message = str(payload.get("message") or error_text).strip()
+            raise RuntimeError(f"{error_text}: {message}"[:240])
+        return raw
+
     async def _call_products_search(query: str) -> str:
-        return await call_with_timeout_retry(
+        raw = await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
                 name="vkusvill_products_search",
                 arguments={"q": query, "limit": _LOCAL_PRODUCTS_SEARCH_LIMIT},
@@ -127,6 +141,7 @@ async def search_products(
             hard_deadline_at=phase2_deadline_at,
             retries=0,
         )
+        return _raise_tool_error_if_any(cast(str, raw))
 
     async def _fallback_chunk_with_products_search(
         chunk: list[dict[str, Any]],
