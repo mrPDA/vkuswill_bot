@@ -80,9 +80,30 @@ def extract_products_from_recipe_search(tool_result: str) -> tuple[list[dict[str
     payload = parse_json_payload(tool_result)
     if not isinstance(payload, dict):
         return [], []
-    found = payload.get("found")
-    if not isinstance(found, list):
-        found = []
+    found: list[dict[str, Any]] = []
+    data = payload.get("data")
+    data_found = data.get("found") if isinstance(data, dict) else None
+    if isinstance(data_found, list):
+        found.extend(row for row in data_found if isinstance(row, dict))
+    raw_found = payload.get("found")
+    if isinstance(raw_found, list):
+        found.extend(row for row in raw_found if isinstance(row, dict))
+    if not found:
+        results = payload.get("results")
+        if isinstance(results, list):
+            for row in results:
+                if not isinstance(row, dict):
+                    continue
+                best_match = row.get("best_match")
+                if isinstance(best_match, dict):
+                    found.append(
+                        {
+                            "xml_id": best_match.get("xml_id"),
+                            "suggested_q": best_match.get("suggested_q"),
+                            "name": best_match.get("name"),
+                            "category": best_match.get("category"),
+                        }
+                    )
     products: list[dict[str, Any]] = []
     for row in found:
         if not isinstance(row, dict):
@@ -113,6 +134,8 @@ def extract_products_from_recipe_search(tool_result: str) -> tuple[list[dict[str
         )
 
     not_found_raw = payload.get("not_found")
+    if not isinstance(not_found_raw, list) and isinstance(data, dict):
+        not_found_raw = data.get("not_found")
     not_found = (
         [str(item).strip() for item in not_found_raw if str(item).strip()]
         if isinstance(not_found_raw, list)
