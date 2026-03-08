@@ -11,6 +11,7 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
     aggregate_ingredients_for_search,
     elapsed_ms,
     finalize_fail_soft,
+    filter_pantry_ingredients_for_search,
     generate_plan_with_deadline,
     request_payload_for_render,
     render_response,
@@ -289,7 +290,11 @@ async def run_meal_plan_turn(
     soft_coverage_by_group = phase2_safety.soft_coverage_by_group
     request_payload = phase2_safety.request_payload
 
-    aggregated = aggregate_ingredients_for_search(flat_ingredients)
+    searchable_ingredients, pantry_filtered = filter_pantry_ingredients_for_search(
+        items=flat_ingredients,
+        explicit_pantry_requests=state.explicit_pantry_requests,
+    )
+    aggregated = aggregate_ingredients_for_search(searchable_ingredients)
     await on_progress("🔍 Ищу товары...")
     search_deadline_at = reserve_deadline(
         phase2_deadline_at,
@@ -301,6 +306,7 @@ async def run_meal_plan_turn(
         input={
             "aggregated_ingredients_count": len(aggregated),
             "reserved_cart_create_seconds": CART_CREATE_RESERVE_SECONDS,
+            "pantry_filtered_count": len(pantry_filtered),
         },
     )
     products, not_found, used_chunk_fallback, search_stats = await search_products(
@@ -320,6 +326,7 @@ async def run_meal_plan_turn(
     )
     if isinstance(diagnostics, dict):
         diagnostics["meal_plan_recipe_search"] = search_stats.as_dict()
+        diagnostics["meal_plan_pantry_filtered"] = pantry_filtered
 
     cart_data: dict[str, Any] | None = None
     if products:
@@ -368,5 +375,6 @@ async def run_meal_plan_turn(
         turn_deadline_seconds=TURN_DEADLINE_SECONDS,
         search_stats=search_stats.as_dict(),
         cart_stats=cart_stats.as_dict(),
+        pantry_filtered=pantry_filtered,
     )
     return final_text

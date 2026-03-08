@@ -14,6 +14,7 @@ from vkuswill_bot.agents.meal_plan_quality import (
 from vkuswill_bot.agents.meal_plan_response_contract import render_meal_plan_contract_response
 from vkuswill_bot.agents.meal_plan_runtime_ops import (
     aggregate_ingredients,
+    filter_pantry_ingredients_for_search as _filter_pantry_ingredients_for_search,
     request_payload_for_renderer as _request_payload_for_renderer,
     soft_coverage_for_renderer as _soft_coverage_for_renderer,
 )
@@ -193,6 +194,17 @@ def recompute_selected_phase2_render_state(
 def aggregate_ingredients_for_search(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Thin wrapper to keep executor dependencies compact."""
     return aggregate_ingredients(items)
+
+
+def filter_pantry_ingredients_for_search(
+    *,
+    items: list[dict[str, Any]],
+    explicit_pantry_requests: set[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    return _filter_pantry_ingredients_for_search(
+        items=items,
+        explicit_pantry_requests=explicit_pantry_requests,
+    )
 
 
 def elapsed_ms(started_at: float) -> int:
