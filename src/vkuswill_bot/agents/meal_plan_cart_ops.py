@@ -68,6 +68,7 @@ async def maybe_create_cart_from_products(
             ),
             timeout_seconds=timeout_seconds,
             hard_deadline_at=phase2_deadline_at,
+            retries=0,
         )
     except Exception as exc:
         stats.failed_before_response = True

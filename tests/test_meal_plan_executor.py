@@ -344,7 +344,7 @@ async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
     search_span = next(
         span for span in trace.spans if span["start"]["name"] == "meal-plan.search-products"
     )
-    assert search_span["start"]["input"]["reserved_cart_create_seconds"] == 12.0
+    assert search_span["start"]["input"]["reserved_cart_create_seconds"] == 18.0
 
 
 @pytest.mark.asyncio
@@ -1405,7 +1405,7 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
         on_progress=lambda _msg: _done(),
     )
 
-    assert cart_calls == 2
+    assert cart_calls == 1
     assert "Ссылка: не сформирована" in result
     assert "Список товаров (без ссылки):" in result
     assert "Томаты x 7" in result
