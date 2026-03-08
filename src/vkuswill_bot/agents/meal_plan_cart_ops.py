@@ -3,11 +3,34 @@
 from __future__ import annotations
 
 import contextlib
+from dataclasses import dataclass
 from typing import Any
 
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 from vkuswill_bot.agents.mcp_response_parser import extract_cart_data
 from vkuswill_bot.services.cart_processor import CartProcessor
+
+
+@dataclass(slots=True)
+class CartCreateStats:
+    attempted: bool
+    requested_products_count: int
+    not_found_count: int
+    cart_created: bool = False
+    returned_products_count: int = 0
+    has_link: bool = False
+    failed_before_response: bool = False
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "attempted": self.attempted,
+            "requested_products_count": self.requested_products_count,
+            "not_found_count": self.not_found_count,
+            "cart_created": self.cart_created,
+            "returned_products_count": self.returned_products_count,
+            "has_link": self.has_link,
+            "failed_before_response": self.failed_before_response,
+        }
 
 
 async def maybe_create_cart_from_products(
@@ -20,9 +43,14 @@ async def maybe_create_cart_from_products(
     not_found: list[str],
     phase2_deadline_at: float,
     timeout_seconds: float,
-) -> dict[str, Any] | None:
+) -> tuple[dict[str, Any] | None, CartCreateStats]:
+    stats = CartCreateStats(
+        attempted=bool(products),
+        requested_products_count=len(products),
+        not_found_count=len(not_found),
+    )
     if not products:
-        return {"not_found": not_found} if not_found else None
+        return ({"not_found": not_found} if not_found else None), stats
 
     cart_args = CartProcessor.fix_cart_args({"products": products})
     cart_result = ""
@@ -38,9 +66,11 @@ async def maybe_create_cart_from_products(
             timeout_seconds=timeout_seconds,
             hard_deadline_at=phase2_deadline_at,
         )
+    if not cart_result:
+        stats.failed_before_response = True
     cart_data = extract_cart_data(tool_name="vkusvill_cart_link_create", tool_result=cart_result)
     if cart_data is None:
-        return {"products": products, "not_found": not_found}
+        return {"products": products, "not_found": not_found}, stats
 
     if "products" not in cart_data:
         cart_data["products"] = products
@@ -56,4 +86,10 @@ async def maybe_create_cart_from_products(
         args=cart_args,
         result=cart_result,
     )
-    return cart_data
+    stats.cart_created = True
+    stats.has_link = bool(str(cart_data.get("link", "")).strip())
+    returned_products = cart_data.get("products")
+    stats.returned_products_count = (
+        len(returned_products) if isinstance(returned_products, list) else 0
+    )
+    return cart_data, stats
