@@ -7,6 +7,7 @@ import json
 from vkuswill_bot.agents.meal_plan_runtime_ops import (
     aggregate_ingredients,
     extract_products_from_recipe_search,
+    filter_pantry_ingredients_for_search,
 )
 
 
@@ -42,6 +43,36 @@ def test_aggregate_ingredients_keeps_rows_separate_for_different_units() -> None
     assert ("молоко", "мл") in keys
     assert ("молоко", "г") in keys
     assert len(aggregated) == 2
+
+
+def test_filter_pantry_ingredients_for_search_removes_non_explicit_pantry() -> None:
+    filtered, removed = filter_pantry_ingredients_for_search(
+        items=[
+            {"name": "Вода", "search_query": "вода", "quantity": 1, "unit": "л"},
+            {"name": "Соль", "search_query": "соль", "quantity": 1, "unit": "щепотка"},
+            {"name": "Помидор", "search_query": "помидор", "quantity": 2, "unit": "шт"},
+        ],
+        explicit_pantry_requests=set(),
+    )
+
+    assert filtered == [{"name": "Помидор", "search_query": "помидор", "quantity": 2, "unit": "шт"}]
+    assert removed == ["Вода", "Соль"]
+
+
+def test_filter_pantry_ingredients_for_search_keeps_explicit_pantry() -> None:
+    filtered, removed = filter_pantry_ingredients_for_search(
+        items=[
+            {"name": "Вода", "search_query": "вода", "quantity": 1, "unit": "л"},
+            {"name": "Соль", "search_query": "соль", "quantity": 1, "unit": "щепотка"},
+        ],
+        explicit_pantry_requests={"water", "salt"},
+    )
+
+    assert filtered == [
+        {"name": "Вода", "search_query": "вода", "quantity": 1, "unit": "л"},
+        {"name": "Соль", "search_query": "соль", "quantity": 1, "unit": "щепотка"},
+    ]
+    assert removed == []
 
 
 def test_extract_products_from_recipe_search_supports_results_best_match_shape() -> None:

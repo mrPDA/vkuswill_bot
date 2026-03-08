@@ -7,6 +7,7 @@ from typing import Any
 from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.agents.meal_plan_quality import calculate_soft_coverage
 from vkuswill_bot.agents.meal_plan_types import MealPlanDish, MealPlanRequest
+from vkuswill_bot.agents.recipe_pantry import detect_pantry_tag_for_ingredient
 
 
 def extract_ingredients(tool_result: str) -> list[dict[str, Any]]:
@@ -74,6 +75,24 @@ def aggregate_ingredients(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
         bucket[key]["quantity"] += amount
     return list(bucket.values())
+
+
+def filter_pantry_ingredients_for_search(
+    *,
+    items: list[dict[str, Any]],
+    explicit_pantry_requests: set[str],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    filtered: list[dict[str, Any]] = []
+    removed: list[str] = []
+    for item in items:
+        pantry_tag = detect_pantry_tag_for_ingredient(item)
+        if pantry_tag and pantry_tag not in explicit_pantry_requests:
+            name = str(item.get("name", "")).strip() or str(item.get("search_query", "")).strip()
+            if name:
+                removed.append(name)
+            continue
+        filtered.append(item)
+    return filtered, sorted({name for name in removed if name})
 
 
 def extract_products_from_recipe_search(tool_result: str) -> tuple[list[dict[str, Any]], list[str]]:

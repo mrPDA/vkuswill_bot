@@ -48,6 +48,7 @@ def update_success_trace(
     turn_deadline_seconds: float,
     search_stats: dict[str, Any] | None = None,
     cart_stats: dict[str, Any] | None = None,
+    pantry_filtered: list[str] | None = None,
 ) -> None:
     if trace is None:
         return
@@ -72,5 +73,6 @@ def update_success_trace(
             "used_chunk_fallback": used_chunk_fallback,
             "meal_plan_recipe_search": search_stats or {},
             "meal_plan_cart_create": cart_stats or {},
+            "meal_plan_pantry_filtered": list(pantry_filtered or []),
         },
     )
