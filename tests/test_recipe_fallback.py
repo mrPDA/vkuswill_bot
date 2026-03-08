@@ -319,3 +319,40 @@ async def test_fallback_recipe_search_respects_max_concurrent_and_keeps_order() 
     assert payload["ok"] is True
     assert peak <= 2
     assert [row["search_query"] for row in payload["results"]] == queries
+
+
+@pytest.mark.asyncio
+async def test_fallback_recipe_search_keeps_partial_results_when_one_query_times_out() -> None:
+    async def _search_fn(query: str) -> str:
+        if query == "лук":
+            raise TimeoutError("search timeout")
+        return json.dumps(
+            {
+                "ok": True,
+                "data": {
+                    "items": [
+                        {"xml_id": hash(query) % 10000, "name": query, "price": 100, "unit": "шт"},
+                    ]
+                },
+            },
+            ensure_ascii=False,
+        )
+
+    raw = await fallback_recipe_search(
+        {
+            "ingredients": [
+                {"name": "лук", "quantity": 1, "unit": "шт", "search_query": "лук"},
+                {"name": "морковь", "quantity": 1, "unit": "шт", "search_query": "морковь"},
+            ]
+        },
+        search_fn=_search_fn,
+        max_concurrent=2,
+    )
+    payload = json.loads(raw)
+
+    assert payload["ok"] is True
+    assert [row["search_query"] for row in payload["results"]] == ["лук", "морковь"]
+    assert payload["results"][0]["best_match"] is None
+    assert payload["results"][0]["error"] == "TimeoutError"
+    assert payload["data"]["found"][0]["search_query"] == "морковь"
+    assert "лук" in payload["not_found"]
