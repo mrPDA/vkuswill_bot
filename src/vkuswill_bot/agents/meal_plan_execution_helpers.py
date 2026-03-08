@@ -85,10 +85,16 @@ async def generate_plan_with_deadline(
     request: Any,
     llm_provider: str,
     turn_deadline_at: float,
+    trace: Any | None = None,
 ) -> tuple[Any | None, str]:
     try:
         plan, _ = await asyncio.wait_for(
-            generate_meal_plan(agent=agent, request=request, llm_provider=llm_provider),
+            generate_meal_plan(
+                agent=agent,
+                request=request,
+                llm_provider=llm_provider,
+                trace=trace,
+            ),
             timeout=max(0.1, deadline_remaining(turn_deadline_at)),
         )
     except TimeoutError:

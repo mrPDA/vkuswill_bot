@@ -161,16 +161,29 @@ def get_recipe_extraction_prompt_with_metadata() -> tuple[str, dict[str, Any]]:
 
 def get_meal_plan_generation_prompt(*, request_payload: dict[str, Any]) -> str:
     """Получить промпт генерации meal plan: registry -> fallback-stub."""
+    return get_meal_plan_generation_prompt_with_metadata(request_payload=request_payload)[0]
+
+
+def get_meal_plan_generation_prompt_with_metadata(
+    *,
+    request_payload: dict[str, Any],
+) -> tuple[str, dict[str, Any]]:
+    """Получить meal-plan generation prompt вместе с provenance metadata."""
     payload_text = json.dumps(request_payload, ensure_ascii=False)
     registry = get_registry()
     if registry is not None:
-        result = registry.get(
+        resolution = registry.resolve(
             "meal-plan-generation",
             request_payload=payload_text,
         )
-        if result:
-            return result
-    return _FALLBACK_MEAL_PLAN_GENERATION_PROMPT.format(request_payload=payload_text)
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
+    text = _FALLBACK_MEAL_PLAN_GENERATION_PROMPT.format(request_payload=payload_text)
+    return text, {
+        "name": "meal-plan-generation",
+        "source": "stub",
+        "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+    }
 
 
 SYSTEM_PROMPT = _FALLBACK_SYSTEM_PROMPT

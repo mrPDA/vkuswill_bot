@@ -5,7 +5,11 @@ from __future__ import annotations
 import re
 from typing import Any, Protocol
 
-from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
+from vkuswill_bot.agents.llm_helpers import (
+    estimate_usage_details,
+    extract_message,
+    extract_text,
+)
 from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.agents.meal_plan_quality import (
     build_applied_preferences_trace,
@@ -19,7 +23,8 @@ from vkuswill_bot.agents.meal_plan_types import (
     MealPlanDish,
     MealPlanRequest,
 )
-from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt
+from vkuswill_bot.services.llm_adapters import extract_usage_details
+from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt_with_metadata
 
 _MEAL_TYPES = frozenset({"breakfast", "lunch", "dinner", "snack_1", "snack_2", "snack_3"})
 _MEAL_PLAN_GENERATION_MAX_TOKENS = 1200
@@ -166,10 +171,11 @@ async def generate_meal_plan(
     agent: MealPlanGeneratorAgentProtocol,
     request: MealPlanRequest,
     llm_provider: str,
+    trace: Any | None = None,
 ) -> tuple[MealPlan | None, str]:
     """Generate meal-plan JSON with one repair and one retry."""
     request_payload = request.to_prompt_dict()
-    prompt = get_meal_plan_generation_prompt(
+    prompt, prompt_metadata = get_meal_plan_generation_prompt_with_metadata(
         request_payload=request_payload,
     )
     max_tokens = getattr(agent, "_llm_max_tokens_recipe", None)
@@ -178,6 +184,31 @@ async def generate_meal_plan(
     else:
         max_tokens = _MEAL_PLAN_GENERATION_MAX_TOKENS
     messages = [{"role": "user", "content": prompt}]
+    model = llm_provider
+    resolve_model = getattr(agent, "_resolve_model_for_provider", None)
+    if callable(resolve_model):
+        try:
+            resolved_model = resolve_model(llm_provider)
+        except Exception:
+            resolved_model = None
+        if isinstance(resolved_model, str) and resolved_model.strip():
+            model = resolved_model.strip()
+    generation = (
+        trace.generation(
+            name="meal-plan-generation",
+            model=model,
+            input=messages,
+            model_parameters={
+                "provider": llm_provider,
+                "attempt": 1,
+                "temperature": 0.0,
+                "max_tokens": max_tokens,
+            },
+            metadata={"prompt": prompt_metadata},
+        )
+        if trace is not None
+        else None
+    )
     response = await agent._call_llm(
         messages=messages,
         tools=[],
@@ -186,14 +217,32 @@ async def generate_meal_plan(
     )
     message = extract_message(response)
     raw_text = extract_text(message).strip()
+    usage_details = extract_usage_details(response) or estimate_usage_details(
+        messages=messages,
+        message=message if isinstance(message, dict) else {},
+    )
 
     payload = _extract_json_object(raw_text) or _repair_json_text(raw_text)
     if isinstance(payload, dict):
         parsed, error = _validate_meal_plan_payload(payload, request)
         if parsed is not None:
+            if generation is not None:
+                generation.end(
+                    output=raw_text[:5000],
+                    usage_details=usage_details,
+                    metadata={"validation": "passed", "attempt": 1},
+                )
             return parsed, ""
     else:
         error = "LLM не вернул JSON-объект"
+    if generation is not None:
+        generation.end(
+            output=raw_text[:5000],
+            usage_details=usage_details,
+            metadata={"validation": "failed", "attempt": 1, "validation_error": error},
+            level="WARNING",
+            status_message="meal_plan_generation_retry",
+        )
 
     retry_prompt = (
         f"{prompt}\n\n"
@@ -202,6 +251,22 @@ async def generate_meal_plan(
         "Верни только валидный JSON без пояснений."
     )
     retry_messages = [{"role": "user", "content": retry_prompt}]
+    retry_generation = (
+        trace.generation(
+            name="meal-plan-generation-retry",
+            model=model,
+            input=retry_messages,
+            model_parameters={
+                "provider": llm_provider,
+                "attempt": 2,
+                "temperature": 0.0,
+                "max_tokens": max_tokens,
+            },
+            metadata={"prompt": prompt_metadata, "retry_reason": error},
+        )
+        if trace is not None
+        else None
+    )
     retry_response = await agent._call_llm(
         messages=retry_messages,
         tools=[],
@@ -210,10 +275,36 @@ async def generate_meal_plan(
     )
     retry_message = extract_message(retry_response)
     retry_text = extract_text(retry_message).strip()
+    retry_usage = extract_usage_details(retry_response) or estimate_usage_details(
+        messages=retry_messages,
+        message=retry_message if isinstance(retry_message, dict) else {},
+    )
     retry_payload = _extract_json_object(retry_text) or _repair_json_text(retry_text)
     if not isinstance(retry_payload, dict):
+        if retry_generation is not None:
+            retry_generation.end(
+                output=retry_text[:5000],
+                usage_details=retry_usage,
+                metadata={"validation": "failed", "attempt": 2},
+                level="ERROR",
+                status_message="retry invalid json",
+            )
         return None, "retry не вернул валидный JSON"
     parsed_retry, retry_error = _validate_meal_plan_payload(retry_payload, request)
     if parsed_retry is None:
+        if retry_generation is not None:
+            retry_generation.end(
+                output=retry_text[:5000],
+                usage_details=retry_usage,
+                metadata={"validation": "failed", "attempt": 2, "validation_error": retry_error},
+                level="ERROR",
+                status_message="retry validation failed",
+            )
         return None, retry_error
+    if retry_generation is not None:
+        retry_generation.end(
+            output=retry_text[:5000],
+            usage_details=retry_usage,
+            metadata={"validation": "passed", "attempt": 2},
+        )
     return parsed_retry, ""
