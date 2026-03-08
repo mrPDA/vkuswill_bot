@@ -84,7 +84,21 @@ def extract_products_from_recipe_search(tool_result: str) -> tuple[list[dict[str
     data = payload.get("data")
     data_found = data.get("found") if isinstance(data, dict) else None
     if isinstance(data_found, list):
-        found.extend(row for row in data_found if isinstance(row, dict))
+        for row in data_found:
+            if not isinstance(row, dict):
+                continue
+            item = row.get("item")
+            if isinstance(item, dict) and item.get("xml_id") is not None:
+                found.append(
+                    {
+                        "xml_id": item.get("xml_id"),
+                        "suggested_q": row.get("suggested_q"),
+                        "name": item.get("name"),
+                        "category": item.get("category"),
+                    }
+                )
+                continue
+            found.append(row)
     raw_found = payload.get("found")
     if isinstance(raw_found, list):
         found.extend(row for row in raw_found if isinstance(row, dict))
