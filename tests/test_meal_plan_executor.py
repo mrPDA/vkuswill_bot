@@ -284,7 +284,7 @@ async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
         lambda deadline_at, *, reserve_seconds: reserved_deadline,
     )
     monkeypatch.setattr(
-        "vkuswill_bot.agents.meal_plan_executor.search_products",
+        "vkuswill_bot.agents.meal_plan_day_search_ops.search_products",
         _fake_search_products,
     )
 
@@ -338,12 +338,12 @@ async def test_run_meal_plan_turn_filters_pantry_before_search(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     plan_payload = _build_plan_payload(cuisine="italian")
-    seen: dict[str, Any] = {}
+    seen: dict[str, Any] = {"aggregated_calls": []}
 
     async def _fake_search_products(
         **kwargs: Any,
     ) -> tuple[list[dict[str, Any]], list[str], bool, Any]:
-        seen["aggregated"] = kwargs["aggregated_ingredients"]
+        seen["aggregated_calls"].append(kwargs["aggregated_ingredients"])
 
         class _Stats:
             def as_dict(self) -> dict[str, Any]:
@@ -371,7 +371,7 @@ async def test_run_meal_plan_turn_filters_pantry_before_search(
         return [{"xml_id": 101, "q": 1}], [], False, _Stats()
 
     monkeypatch.setattr(
-        "vkuswill_bot.agents.meal_plan_executor.search_products",
+        "vkuswill_bot.agents.meal_plan_day_search_ops.search_products",
         _fake_search_products,
     )
 
@@ -413,9 +413,9 @@ async def test_run_meal_plan_turn_filters_pantry_before_search(
     )
 
     assert "https://shop.example/cart/pantry-filter" in result
-    assert seen["aggregated"] == [
-        {"name": "Помидор", "search_query": "помидор", "quantity": 7.0, "unit": "шт"}
-    ]
+    assert seen["aggregated_calls"] == [
+        [{"name": "Помидор", "search_query": "помидор", "quantity": 1.0, "unit": "шт"}]
+    ] * 7
     metadata = trace.updates[-1]["metadata"]
     assert metadata["meal_plan_pantry_filtered"] == ["Вода", "Соль"]
 
@@ -806,7 +806,7 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
     )
 
     assert "https://shop.example/cart/chunked" in result
-    assert recipe_search_calls == 4
+    assert recipe_search_calls == 8
     assert trace.updates[-1]["metadata"]["used_chunk_fallback"] is True
 
 
@@ -883,10 +883,10 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial
     )
 
     assert "https://shop.example/cart/partial-primary" in result
-    assert recipe_search_calls == 4
+    assert recipe_search_calls == 8
     metadata = trace.updates[-1]["metadata"]
     assert metadata["used_chunk_fallback"] is True
-    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_low_coverage"
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_high_not_found"
 
 
 @pytest.mark.asyncio
@@ -983,15 +983,13 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
     )
 
     assert "https://shop.example/cart/large-batch" in result
-    assert recipe_search_calls == 0
-    assert products_search_calls == 28
+    assert recipe_search_calls == 7
+    assert products_search_calls == 0
     metadata = trace.updates[-1]["metadata"]
-    assert metadata["meal_plan_recipe_search"]["primary_attempted"] is False
-    assert (
-        metadata["meal_plan_recipe_search"]["fallback_reason"]
-        == "primary_search_skipped_large_batch"
-    )
-    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 6
+    assert metadata["meal_plan_recipe_search"]["primary_attempted"] is True
+    assert metadata["meal_plan_recipe_search"]["used_chunk_fallback"] is False
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "day_by_day"
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 0
     assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
 
 
@@ -1077,10 +1075,10 @@ async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout(
     )
 
     assert "https://shop.example/cart/local-products-fallback" in result
-    assert recipe_search_calls == 8
+    assert recipe_search_calls == 28
     metadata = trace.updates[-1]["metadata"]
-    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_empty"
-    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 3
+    assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_failed"
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 7
     assert metadata["meal_plan_recipe_search"]["local_fallback_products_count"] == 14
     assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
 
@@ -1442,7 +1440,7 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
     assert cart_calls == 2
     assert "Ссылка: не сформирована" in result
     assert "Список товаров (без ссылки):" in result
-    assert "Томаты x 1" in result
+    assert "Томаты x 14" in result
     assert "Не найдено: кинза" in result
 
 

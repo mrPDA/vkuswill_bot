@@ -23,8 +23,8 @@ from vkuswill_bot.agents.meal_plan_phase2_ops import (
     collect_ingredients_for_dishes,
     enforce_phase2_safety_policy,
 )
-from vkuswill_bot.agents.meal_plan_recipe_search_ops import search_products
 from vkuswill_bot.agents.meal_plan_cart_ops import maybe_create_cart_from_products
+from vkuswill_bot.agents.meal_plan_day_search_ops import search_products_day_by_day
 from vkuswill_bot.agents.meal_plan_trace_ops import (
     finish_cart_span,
     finish_ingredient_span,
@@ -46,14 +46,11 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
 )
 from vkuswill_bot.agents.meal_plan_types import parse_meal_plan_request
 from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
-
 ProgressReporter = Callable[[str], Awaitable[None]]
 FallbackToStandardTurn = Callable[[str], Awaitable[str]]
 class MealPlanExecutorAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
-
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
-
     async def _call_mcp_tool(
         self,
         *,
@@ -63,14 +60,12 @@ class MealPlanExecutorAgentProtocol(Protocol):
         call_cache: dict[str, str] | None = None,
         user_id: int | None = None,
     ) -> str: ...
-
     def _ensure_cart_price_summary(
         self,
         *,
         cart_data: dict[str, Any],
         product_index: dict[int, dict[str, Any]],
     ) -> None: ...
-
     def _capture_cart_snapshot(
         self,
         *,
@@ -98,7 +93,6 @@ async def run_meal_plan_turn(
     if callable(get_tools):
         with contextlib.suppress(Exception):
             await get_tools()
-
     await on_progress("🧠 Планирую меню...")
     parse_span = start_span(trace=trace, name="meal-plan.parse-request", input={"text": text})
     try:
@@ -290,11 +284,8 @@ async def run_meal_plan_turn(
         items=flat_ingredients,
         explicit_pantry_requests=state.explicit_pantry_requests,
     )
-    aggregated = aggregate_ingredients_for_search(searchable_ingredients)
-    prioritized_aggregated, deferred_ingredients = prioritize_ingredients_for_search(
-        items=aggregated
-    )
     await on_progress("🔍 Ищу товары...")
+    day_count = len({int(dish.get("day", 0)) for dish in dishes_payload if dish.get("day")})
     search_deadline_at = reserve_deadline(
         phase2_deadline_at,
         reserve_seconds=CART_CREATE_RESERVE_SECONDS,
@@ -303,21 +294,32 @@ async def run_meal_plan_turn(
         trace=trace,
         name="meal-plan.search-products",
         input={
-            "aggregated_ingredients_count": len(aggregated),
-            "prioritized_ingredients_count": len(prioritized_aggregated),
-            "deferred_ingredients_count": len(deferred_ingredients),
+            "day_count": day_count,
+            "phase2_flat_ingredients_count": len(flat_ingredients),
             "reserved_cart_create_seconds": CART_CREATE_RESERVE_SECONDS,
             "pantry_filtered_count": len(pantry_filtered),
         },
     )
-    products, not_found, used_chunk_fallback, search_stats = await search_products(
-        agent=agent,
-        state=state,
-        user_id=user_id,
-        llm_provider=llm_provider,
-        aggregated_ingredients=prioritized_aggregated,
-        phase2_deadline_at=search_deadline_at,
-    )
+    (
+        products,
+        not_found,
+        used_chunk_fallback,
+        search_stats,
+        pantry_filtered,
+        deferred_ingredients,
+    ) = await search_products_day_by_day(
+            agent=agent,
+            state=state,
+            user_id=user_id,
+            llm_provider=llm_provider,
+            dishes_payload=dishes_payload,
+            ingredients_by_dish=ingredients_by_dish,
+            phase2_deadline_at=search_deadline_at,
+            trace=trace,
+            filter_pantry_fn=filter_pantry_ingredients_for_search,
+            aggregate_ingredients_fn=aggregate_ingredients_for_search,
+            prioritize_ingredients_fn=prioritize_ingredients_for_search,
+        )
     finish_search_span(
         span=search_span,
         products=products,
@@ -329,7 +331,6 @@ async def run_meal_plan_turn(
         diagnostics["meal_plan_recipe_search"] = search_stats.as_dict()
         diagnostics["meal_plan_pantry_filtered"] = pantry_filtered
         diagnostics["meal_plan_search_deferred"] = deferred_ingredients
-
     cart_data: dict[str, Any] | None = None
     if products:
         await on_progress("🛒 Формирую корзину...")
@@ -364,7 +365,7 @@ async def run_meal_plan_turn(
         trace=trace,
         output=final_text,
         dishes_payload=dishes_payload,
-        aggregated_ingredients=prioritized_aggregated,
+        aggregated_ingredients=searchable_ingredients,
         products=products,
         soft_coverage_by_group=soft_coverage_by_group,
         request=request,
