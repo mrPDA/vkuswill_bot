@@ -16,8 +16,8 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
 )
 
 _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 24
-_RECIPE_SEARCH_CHUNK_SIZE = 12
-_RECIPE_SEARCH_CHUNK_CONCURRENCY = 2
+_RECIPE_SEARCH_CHUNK_SIZE = 5
+_RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
 
 
 class MealPlanRecipeSearchAgentProtocol(Protocol):

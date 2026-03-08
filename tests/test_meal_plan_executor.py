@@ -534,7 +534,7 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback() -> None:
     )
 
     assert "https://shop.example/cart/chunked" in result
-    assert recipe_search_calls == 3
+    assert recipe_search_calls == 4
     assert trace.updates[-1]["metadata"]["used_chunk_fallback"] is True
 
 
@@ -611,7 +611,7 @@ async def test_run_meal_plan_turn_uses_chunked_recipe_search_fallback_on_partial
     )
 
     assert "https://shop.example/cart/partial-primary" in result
-    assert recipe_search_calls == 3
+    assert recipe_search_calls == 4
     metadata = trace.updates[-1]["metadata"]
     assert metadata["used_chunk_fallback"] is True
     assert metadata["meal_plan_recipe_search"]["fallback_reason"] == "primary_search_low_coverage"
@@ -693,7 +693,7 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
     )
 
     assert "https://shop.example/cart/large-batch" in result
-    assert recipe_search_calls == 3
+    assert recipe_search_calls == 6
     metadata = trace.updates[-1]["metadata"]
     assert metadata["meal_plan_recipe_search"]["primary_attempted"] is False
     assert (
