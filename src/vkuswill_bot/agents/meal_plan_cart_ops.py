@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,6 +19,8 @@ class CartCreateStats:
     returned_products_count: int = 0
     has_link: bool = False
     failed_before_response: bool = False
+    error_type: str | None = None
+    error_message: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -30,6 +31,8 @@ class CartCreateStats:
             "returned_products_count": self.returned_products_count,
             "has_link": self.has_link,
             "failed_before_response": self.failed_before_response,
+            "error_type": self.error_type,
+            "error_message": self.error_message,
         }
 
 
@@ -54,7 +57,7 @@ async def maybe_create_cart_from_products(
 
     cart_args = CartProcessor.fix_cart_args({"products": products})
     cart_result = ""
-    with contextlib.suppress(Exception):
+    try:
         cart_result = await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
                 name="vkusvill_cart_link_create",
@@ -66,6 +69,10 @@ async def maybe_create_cart_from_products(
             timeout_seconds=timeout_seconds,
             hard_deadline_at=phase2_deadline_at,
         )
+    except Exception as exc:
+        stats.failed_before_response = True
+        stats.error_type = type(exc).__name__
+        stats.error_message = str(exc)[:240]
     if not cart_result:
         stats.failed_before_response = True
     cart_data = extract_cart_data(tool_name="vkusvill_cart_link_create", tool_result=cart_result)
