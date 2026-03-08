@@ -149,9 +149,11 @@ async def search_products(
 
     used_chunk_fallback = False
     stats = RecipeSearchStats(aggregated_ingredients_count=len(aggregated_ingredients))
+    prefer_local_chunk_fallback = False
     if len(aggregated_ingredients) > _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS:
         products, not_found = [], []
         should_fallback, fallback_reason = True, "primary_search_skipped_large_batch"
+        prefer_local_chunk_fallback = True
     else:
         stats.primary_attempted = True
         try:
@@ -188,6 +190,36 @@ async def search_products(
         chunk: list[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], list[str], dict[str, Any] | None]:
         async with semaphore:
+            if prefer_local_chunk_fallback:
+                try:
+                    (
+                        fallback_products,
+                        fallback_not_found,
+                    ) = await _fallback_chunk_with_products_search(chunk)
+                except Exception as fallback_exc:
+                    return (
+                        [],
+                        [],
+                        {
+                            "error_type": type(fallback_exc).__name__,
+                            "error_message": str(fallback_exc)[:240],
+                            "chunk_size": len(chunk),
+                            "local_fallback_error_type": type(fallback_exc).__name__,
+                            "local_fallback_error_message": str(fallback_exc)[:240],
+                        },
+                    )
+                return (
+                    fallback_products,
+                    fallback_not_found,
+                    {
+                        "fallback_used": "local_products_search",
+                        "source_error_type": None,
+                        "source_error_message": fallback_reason,
+                        "chunk_size": len(chunk),
+                        "products_count": len(fallback_products),
+                        "not_found_count": len(fallback_not_found),
+                    },
+                )
             try:
                 chunk_result = await _call_recipe_search(chunk)
             except Exception as exc:
