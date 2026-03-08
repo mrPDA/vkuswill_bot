@@ -108,6 +108,23 @@ def test_prioritize_ingredients_for_search_keeps_all_when_under_limit() -> None:
     assert deferred == []
 
 
+def test_prioritize_ingredients_for_search_uses_expanded_default_window() -> None:
+    items = [
+        {
+            "name": f"Ингредиент {index}",
+            "search_query": f"ингредиент {index}",
+            "quantity": 1,
+            "unit": "шт",
+        }
+        for index in range(45)
+    ]
+
+    selected, deferred = prioritize_ingredients_for_search(items=items)
+
+    assert selected == items
+    assert deferred == []
+
+
 def test_extract_products_from_recipe_search_supports_results_best_match_shape() -> None:
     payload = {
         "ok": True,

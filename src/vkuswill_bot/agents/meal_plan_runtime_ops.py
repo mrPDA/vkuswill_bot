@@ -9,7 +9,7 @@ from vkuswill_bot.agents.meal_plan_quality import calculate_soft_coverage
 from vkuswill_bot.agents.meal_plan_types import MealPlanDish, MealPlanRequest
 from vkuswill_bot.agents.recipe_pantry import detect_pantry_tag_for_ingredient
 
-_MEAL_PLAN_SEARCH_MAX_INGREDIENTS = 30
+_MEAL_PLAN_SEARCH_MAX_INGREDIENTS = 45
 _LOW_PRIORITY_SEARCH_MARKERS = (
     "масло",
     "соус",
