@@ -239,7 +239,7 @@ async def test_phase2_retry_failure_returns_recomputed_safe_payload(
 
 
 @pytest.mark.asyncio
-async def test_maybe_create_cart_from_products_retries_after_timeout() -> None:
+async def test_maybe_create_cart_from_products_does_not_retry_after_timeout() -> None:
     class _Agent:
         def __init__(self) -> None:
             self.calls = 0
@@ -295,12 +295,13 @@ async def test_maybe_create_cart_from_products_retries_after_timeout() -> None:
         timeout_seconds=0.01,
     )
 
-    assert cart_data is not None
-    assert cart_data["link"] == "https://shop.example/cart/retry-ok"
-    assert cart_stats.cart_created is True
-    assert cart_stats.has_link is True
-    assert agent.calls == 2
-    assert agent.snapshots == 1
+    assert cart_data == {"products": [{"xml_id": 11, "q": 1}], "not_found": []}
+    assert cart_stats.cart_created is False
+    assert cart_stats.has_link is False
+    assert cart_stats.failed_before_response is True
+    assert cart_stats.error_type == "TimeoutError"
+    assert agent.calls == 1
+    assert agent.snapshots == 0
 
 
 @pytest.mark.asyncio
