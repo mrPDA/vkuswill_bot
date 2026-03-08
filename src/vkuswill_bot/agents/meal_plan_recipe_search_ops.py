@@ -84,17 +84,20 @@ def _should_use_chunk_fallback(
     aggregated_ingredients_count: int,
     products_count: int,
     not_found_count: int,
+    primary_failed: bool = False,
 ) -> tuple[bool, str]:
-    if aggregated_ingredients_count <= 12:
-        return False, ""
+    if primary_failed:
+        return True, "primary_search_failed"
     if products_count <= 0:
         return True, "primary_search_empty"
-    coverage_ratio = products_count / max(1, aggregated_ingredients_count)
-    if coverage_ratio < 0.5:
-        return True, "primary_search_low_coverage"
     unresolved_ratio = not_found_count / max(1, aggregated_ingredients_count)
     if unresolved_ratio > 0.4:
         return True, "primary_search_high_not_found"
+    if aggregated_ingredients_count <= 12:
+        return False, ""
+    coverage_ratio = products_count / max(1, aggregated_ingredients_count)
+    if coverage_ratio < 0.5:
+        return True, "primary_search_low_coverage"
     return False, ""
 
 
@@ -156,17 +159,20 @@ async def search_products(
         prefer_local_chunk_fallback = True
     else:
         stats.primary_attempted = True
+        primary_failed = False
         try:
             primary = await _call_recipe_search(aggregated_ingredients)
             products, not_found = extract_products_from_recipe_search(primary)
         except Exception as exc:
             products, not_found = [], []
+            primary_failed = True
             stats.primary_error_type = type(exc).__name__
             stats.primary_error_message = str(exc)[:240]
         should_fallback, fallback_reason = _should_use_chunk_fallback(
             aggregated_ingredients_count=len(aggregated_ingredients),
             products_count=len(products),
             not_found_count=len(not_found),
+            primary_failed=primary_failed,
         )
     stats.primary_products_count = len(products)
     stats.primary_not_found_count = len(not_found)

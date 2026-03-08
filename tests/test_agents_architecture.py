@@ -28,6 +28,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "meal_plan_trace_ops": "runtime",
     "meal_plan_recipe_search_ops": "runtime",
     "meal_plan_cart_ops": "runtime",
+    "meal_plan_day_search_ops": "runtime",
     "meal_plan_phase2_ops": "runtime",
     "meal_plan_ingredient_collection": "runtime",
     "mcp_tool_gateway": "runtime",
