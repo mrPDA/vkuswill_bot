@@ -192,9 +192,10 @@ async def search_products(
                 chunk_result = await _call_recipe_search(chunk)
             except Exception as exc:
                 try:
-                    fallback_products, fallback_not_found = (
-                        await _fallback_chunk_with_products_search(chunk)
-                    )
+                    (
+                        fallback_products,
+                        fallback_not_found,
+                    ) = await _fallback_chunk_with_products_search(chunk)
                 except Exception as fallback_exc:
                     return (
                         [],
