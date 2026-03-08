@@ -14,10 +14,13 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
     RECIPE_SEARCH_TIMEOUT_SECONDS,
     call_with_timeout_retry,
 )
+from vkuswill_bot.agents.recipe_fallback import fallback_recipe_search
 
 _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 24
 _RECIPE_SEARCH_CHUNK_SIZE = 5
 _RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
+_LOCAL_PRODUCTS_SEARCH_LIMIT = 5
+_LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 6.0
 
 
 class MealPlanRecipeSearchAgentProtocol(Protocol):
@@ -49,6 +52,9 @@ class RecipeSearchStats:
     primary_error_message: str | None = None
     chunk_failure_count: int = 0
     chunk_sample_failures: list[dict[str, Any]] | None = None
+    local_fallback_chunk_count: int = 0
+    local_fallback_products_count: int = 0
+    local_fallback_not_found_count: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +73,9 @@ class RecipeSearchStats:
             "primary_error_message": self.primary_error_message,
             "chunk_failure_count": self.chunk_failure_count,
             "chunk_sample_failures": list(self.chunk_sample_failures or []),
+            "local_fallback_chunk_count": self.local_fallback_chunk_count,
+            "local_fallback_products_count": self.local_fallback_products_count,
+            "local_fallback_not_found_count": self.local_fallback_not_found_count,
         }
 
 
@@ -98,6 +107,33 @@ async def search_products(
     aggregated_ingredients: list[dict[str, Any]],
     phase2_deadline_at: float,
 ) -> tuple[list[dict[str, Any]], list[str], bool, RecipeSearchStats]:
+    async def _call_products_search(query: str) -> str:
+        return await call_with_timeout_retry(
+            operation=lambda: agent._call_mcp_tool(
+                name="vkusvill_products_search",
+                arguments={"q": query, "limit": _LOCAL_PRODUCTS_SEARCH_LIMIT},
+                llm_provider=llm_provider,
+                call_cache=state.mcp_call_cache,
+                user_id=user_id,
+            ),
+            timeout_seconds=min(
+                RECIPE_SEARCH_TIMEOUT_SECONDS,
+                _LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS,
+            ),
+            hard_deadline_at=phase2_deadline_at,
+            retries=0,
+        )
+
+    async def _fallback_chunk_with_products_search(
+        chunk: list[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], list[str]]:
+        fallback_raw = await fallback_recipe_search(
+            {"ingredients": chunk},
+            search_fn=_call_products_search,
+            max_concurrent=_RECIPE_SEARCH_CHUNK_CONCURRENCY,
+        )
+        return extract_products_from_recipe_search(fallback_raw)
+
     async def _call_recipe_search(ingredients: list[dict[str, Any]]) -> str:
         return await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
@@ -155,13 +191,32 @@ async def search_products(
             try:
                 chunk_result = await _call_recipe_search(chunk)
             except Exception as exc:
+                try:
+                    fallback_products, fallback_not_found = (
+                        await _fallback_chunk_with_products_search(chunk)
+                    )
+                except Exception as fallback_exc:
+                    return (
+                        [],
+                        [],
+                        {
+                            "error_type": type(exc).__name__,
+                            "error_message": str(exc)[:240],
+                            "chunk_size": len(chunk),
+                            "local_fallback_error_type": type(fallback_exc).__name__,
+                            "local_fallback_error_message": str(fallback_exc)[:240],
+                        },
+                    )
                 return (
-                    [],
-                    [],
+                    fallback_products,
+                    fallback_not_found,
                     {
-                        "error_type": type(exc).__name__,
-                        "error_message": str(exc)[:240],
+                        "fallback_used": "local_products_search",
+                        "source_error_type": type(exc).__name__,
+                        "source_error_message": str(exc)[:240],
                         "chunk_size": len(chunk),
+                        "products_count": len(fallback_products),
+                        "not_found_count": len(fallback_not_found),
                     },
                 )
             chunk_products, chunk_not_found = extract_products_from_recipe_search(chunk_result)
@@ -179,7 +234,12 @@ async def search_products(
             if item not in merged_not_found:
                 merged_not_found.append(item)
         if isinstance(chunk_error, dict):
-            stats.chunk_failure_count += 1
+            if chunk_error.get("fallback_used") == "local_products_search":
+                stats.local_fallback_chunk_count += 1
+                stats.local_fallback_products_count += len(chunk_products)
+                stats.local_fallback_not_found_count += len(chunk_not_found)
+            else:
+                stats.chunk_failure_count += 1
             if len(chunk_sample_failures) < 5:
                 chunk_sample_failures.append(chunk_error)
     stats.chunk_sample_failures = chunk_sample_failures

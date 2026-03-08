@@ -703,6 +703,112 @@ async def test_run_meal_plan_turn_skips_primary_recipe_search_for_large_batches(
 
 
 @pytest.mark.asyncio
+async def test_run_meal_plan_turn_uses_local_products_fallback_for_timed_out_recipe_search_chunks(
+) -> None:
+    plan_payload = _build_plan_payload(cuisine="russian")
+    xml_ids_by_query: dict[str, int] = {}
+    recipe_search_calls = 0
+
+    def _xml_id(query: str) -> int:
+        existing = xml_ids_by_query.get(query)
+        if existing is not None:
+            return existing
+        assigned = 4000 + len(xml_ids_by_query) + 1
+        xml_ids_by_query[query] = assigned
+        return assigned
+
+    def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        nonlocal recipe_search_calls
+        if name == "recipe_ingredients":
+            dish = str(arguments.get("dish", "")).lower().replace(" ", "")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": f"ингредиент-{dish}-a",
+                            "search_query": f"ing-{dish}-a",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                        {
+                            "name": f"ингредиент-{dish}-b",
+                            "search_query": f"ing-{dish}-b",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                        {
+                            "name": f"ингредиент-{dish}-c",
+                            "search_query": f"ing-{dish}-c",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                        {
+                            "name": f"ингредиент-{dish}-d",
+                            "search_query": f"ing-{dish}-d",
+                            "quantity": 1,
+                            "unit": "шт",
+                        },
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "recipe_search":
+            recipe_search_calls += 1
+            raise TimeoutError("recipe_search timeout")
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return json.dumps(
+                {
+                    "ok": True,
+                    "items": [
+                        {
+                            "xml_id": _xml_id(query),
+                            "name": f"Товар для {query}",
+                            "price": 100,
+                            "unit": "шт",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/local-products-fallback"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    state = _State(history=[{"role": "user", "content": "меню на неделю для 2 человек"}])
+    trace = _TraceSpy()
+    agent = _FakeExecutorAgent(
+        llm_responses=[_llm_response(json.dumps(plan_payload, ensure_ascii=False))],
+        mcp_handler=_mcp,
+    )
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=state,
+        user_id=912,
+        text="меню на неделю для 2 человек",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: _done(),
+    )
+
+    assert "https://shop.example/cart/local-products-fallback" in result
+    assert recipe_search_calls == 12
+    metadata = trace.updates[-1]["metadata"]
+    assert (
+        metadata["meal_plan_recipe_search"]["fallback_reason"]
+        == "primary_search_skipped_large_batch"
+    )
+    assert metadata["meal_plan_recipe_search"]["local_fallback_chunk_count"] == 6
+    assert metadata["meal_plan_recipe_search"]["local_fallback_products_count"] == 28
+    assert metadata["meal_plan_recipe_search"]["chunk_failure_count"] == 0
+
+
+@pytest.mark.asyncio
 async def test_run_meal_plan_turn_respects_timeout_policy(monkeypatch: pytest.MonkeyPatch) -> None:
     import asyncio
 

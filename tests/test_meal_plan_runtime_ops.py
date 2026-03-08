@@ -108,3 +108,30 @@ def test_extract_products_from_recipe_search_supports_data_found_shape() -> None
 
     assert products == [{"xml_id": 411, "q": 1.0, "name": "Рис", "category": "крупы"}]
     assert not_found == ["базилик"]
+
+
+def test_extract_products_from_recipe_search_supports_data_found_item_shape() -> None:
+    payload = {
+        "ok": True,
+        "data": {
+            "found": [
+                {
+                    "ingredient": "рис",
+                    "suggested_q": 2,
+                    "item": {
+                        "xml_id": 512,
+                        "name": "Рис длиннозерный",
+                        "category": "крупы",
+                    },
+                }
+            ],
+            "not_found": [],
+        },
+    }
+
+    products, not_found = extract_products_from_recipe_search(
+        json.dumps(payload, ensure_ascii=False)
+    )
+
+    assert products == [{"xml_id": 512, "q": 2.0, "name": "Рис длиннозерный", "category": "крупы"}]
+    assert not_found == []
