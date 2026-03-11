@@ -15,7 +15,7 @@ FilterPantryFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 AggregateIngredientsFn = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 PrioritizeIngredientsFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 
-_DAY_SEARCH_CONCURRENCY = 3
+_DAY_SEARCH_CONCURRENCY = 2
 
 
 @dataclass(slots=True)
