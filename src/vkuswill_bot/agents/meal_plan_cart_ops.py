@@ -2,12 +2,19 @@
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
 from dataclasses import dataclass
 from typing import Any
 
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 from vkuswill_bot.agents.mcp_response_parser import extract_cart_data
 from vkuswill_bot.services.cart_processor import CartProcessor
+
+logger = logging.getLogger(__name__)
+
+_MAX_CART_PRODUCTS = 40
 
 
 @dataclass(slots=True)
@@ -21,9 +28,11 @@ class CartCreateStats:
     failed_before_response: bool = False
     error_type: str | None = None
     error_message: str | None = None
+    cart_raw_preview: str | None = None
+    products_truncated: bool = False
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "attempted": self.attempted,
             "requested_products_count": self.requested_products_count,
             "not_found_count": self.not_found_count,
@@ -34,6 +43,28 @@ class CartCreateStats:
             "error_type": self.error_type,
             "error_message": self.error_message,
         }
+        if self.cart_raw_preview:
+            d["cart_raw_preview"] = self.cart_raw_preview
+        if self.products_truncated:
+            d["products_truncated"] = True
+        return d
+
+
+def _truncate_products(
+    products: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], bool]:
+    """Keep at most _MAX_CART_PRODUCTS, preferring items with higher price."""
+    if len(products) <= _MAX_CART_PRODUCTS:
+        return products, False
+
+    def _sort_key(p: dict[str, Any]) -> float:
+        try:
+            return -float(p.get("price", 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    sorted_products = sorted(products, key=_sort_key)
+    return sorted_products[:_MAX_CART_PRODUCTS], True
 
 
 async def maybe_create_cart_from_products(
@@ -47,15 +78,23 @@ async def maybe_create_cart_from_products(
     phase2_deadline_at: float,
     timeout_seconds: float,
 ) -> tuple[dict[str, Any] | None, CartCreateStats]:
+    products_for_cart, truncated = _truncate_products(products)
     stats = CartCreateStats(
-        attempted=bool(products),
-        requested_products_count=len(products),
+        attempted=bool(products_for_cart),
+        requested_products_count=len(products_for_cart),
         not_found_count=len(not_found),
+        products_truncated=truncated,
     )
-    if not products:
+    if truncated:
+        logger.warning(
+            "Cart products truncated: %d → %d",
+            len(products),
+            len(products_for_cart),
+        )
+    if not products_for_cart:
         return ({"not_found": not_found} if not_found else None), stats
 
-    cart_args = CartProcessor.fix_cart_args({"products": products})
+    cart_args = CartProcessor.fix_cart_args({"products": products_for_cart})
     cart_result = ""
     try:
         cart_result = await call_with_timeout_retry(
@@ -63,7 +102,7 @@ async def maybe_create_cart_from_products(
                 name="vkusvill_cart_link_create",
                 arguments=cart_args,
                 llm_provider=llm_provider,
-                call_cache=state.mcp_call_cache,
+                call_cache=None,
                 user_id=user_id,
             ),
             timeout_seconds=timeout_seconds,
@@ -78,6 +117,7 @@ async def maybe_create_cart_from_products(
         stats.failed_before_response = True
     cart_data = extract_cart_data(tool_name="vkusvill_cart_link_create", tool_result=cart_result)
     if cart_data is None:
+        _record_cart_failure_diagnostics(stats, cart_result)
         return {"products": products, "not_found": not_found}, stats
 
     if "products" not in cart_data:
@@ -101,3 +141,19 @@ async def maybe_create_cart_from_products(
         len(returned_products) if isinstance(returned_products, list) else 0
     )
     return cart_data, stats
+
+
+def _record_cart_failure_diagnostics(stats: CartCreateStats, cart_result: str) -> None:
+    """Extract diagnostics from raw MCP response when cart creation fails."""
+    if not cart_result:
+        return
+    stats.cart_raw_preview = cart_result[:300]
+    with contextlib.suppress(Exception):
+        payload = json.loads(cart_result)
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            message = payload.get("message")
+            if error and not stats.error_type:
+                stats.error_type = str(error)[:120]
+            if message and not stats.error_message:
+                stats.error_message = str(message)[:240]
