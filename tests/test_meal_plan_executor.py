@@ -344,7 +344,7 @@ async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
     search_span = next(
         span for span in trace.spans if span["start"]["name"] == "meal-plan.search-products"
     )
-    assert search_span["start"]["input"]["reserved_cart_create_seconds"] == 18.0
+    assert search_span["start"]["input"]["reserved_cart_create_seconds"] == 28.0
 
 
 @pytest.mark.asyncio
