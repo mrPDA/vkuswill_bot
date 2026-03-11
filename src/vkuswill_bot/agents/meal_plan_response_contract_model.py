@@ -51,6 +51,7 @@ class ContractCartSummary:
     total_text: str = ""
     not_found: list[str] = field(default_factory=list)
     products: list[ContractCartProduct] = field(default_factory=list)
+    overflow_products: list[ContractCartProduct] = field(default_factory=list)
 
 
 @dataclass(slots=True)

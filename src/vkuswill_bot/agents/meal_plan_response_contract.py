@@ -139,6 +139,11 @@ def render_meal_plan_contract_response(
             for row in by_category[category]:
                 lines.append(f"  - {row.name} x {row.quantity_text}")
 
+    if contract.cart_summary.overflow_products:
+        lines.extend(["", "Не вошли в корзину (лимит API):"])
+        for row in contract.cart_summary.overflow_products:
+            lines.append(f"  - {row.name} x {row.quantity_text}")
+
     lines.extend(["", "Проверка ограничений:"])
     lines.append(
         "- hard_constraints: "

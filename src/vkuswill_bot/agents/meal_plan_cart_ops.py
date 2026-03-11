@@ -14,7 +14,7 @@ from vkuswill_bot.services.cart_processor import CartProcessor
 
 logger = logging.getLogger(__name__)
 
-_MAX_CART_PRODUCTS = 40
+_MAX_CART_PRODUCTS = 30
 
 
 @dataclass(slots=True)
@@ -50,21 +50,13 @@ class CartCreateStats:
         return d
 
 
-def _truncate_products(
+def _split_products(
     products: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], bool]:
-    """Keep at most _MAX_CART_PRODUCTS, preferring items with higher price."""
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split products into cart batch (<=_MAX_CART_PRODUCTS) and overflow."""
     if len(products) <= _MAX_CART_PRODUCTS:
-        return products, False
-
-    def _sort_key(p: dict[str, Any]) -> float:
-        try:
-            return -float(p.get("price", 0))
-        except (TypeError, ValueError):
-            return 0.0
-
-    sorted_products = sorted(products, key=_sort_key)
-    return sorted_products[:_MAX_CART_PRODUCTS], True
+        return products, []
+    return products[:_MAX_CART_PRODUCTS], products[_MAX_CART_PRODUCTS:]
 
 
 async def maybe_create_cart_from_products(
@@ -78,7 +70,8 @@ async def maybe_create_cart_from_products(
     phase2_deadline_at: float,
     timeout_seconds: float,
 ) -> tuple[dict[str, Any] | None, CartCreateStats]:
-    products_for_cart, truncated = _truncate_products(products)
+    products_for_cart, overflow = _split_products(products)
+    truncated = bool(overflow)
     stats = CartCreateStats(
         attempted=bool(products_for_cart),
         requested_products_count=len(products_for_cart),
@@ -87,9 +80,10 @@ async def maybe_create_cart_from_products(
     )
     if truncated:
         logger.warning(
-            "Cart products truncated: %d → %d",
-            len(products),
+            "Cart products split: %d in cart, %d overflow (API limit %d)",
             len(products_for_cart),
+            len(overflow),
+            _MAX_CART_PRODUCTS,
         )
     if not products_for_cart:
         return ({"not_found": not_found} if not_found else None), stats
@@ -120,8 +114,9 @@ async def maybe_create_cart_from_products(
         _record_cart_failure_diagnostics(stats, cart_result)
         return {"products": products, "not_found": not_found}, stats
 
-    if "products" not in cart_data:
-        cart_data["products"] = products
+    cart_data["products"] = products
+    if overflow:
+        cart_data["overflow_products"] = overflow
     if not_found and "not_found" not in cart_data:
         cart_data["not_found"] = not_found
     agent._ensure_cart_price_summary(
