@@ -262,6 +262,25 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
         q_text = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
         products.append(ContractCartProduct(category=category, name=name, quantity_text=q_text))
 
+    overflow_products: list[ContractCartProduct] = []
+    overflow_raw = cart_data.get("overflow_products")
+    if isinstance(overflow_raw, list):
+        for row in overflow_raw:
+            if not isinstance(row, dict):
+                continue
+            name = str(row.get("name", "")).strip() or "товар"
+            category = str(row.get("category", "")).strip() or "прочее"
+            q_raw = row.get("q", 1)
+            try:
+                q = float(q_raw)
+            except (TypeError, ValueError):
+                q = 1.0
+            q = 1.0 if q <= 0 else q
+            q_text = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
+            overflow_products.append(
+                ContractCartProduct(category=category, name=name, quantity_text=q_text)
+            )
+
     if items_count is None and products:
         items_count = len(products)
 
@@ -272,6 +291,7 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
         total_text=total_text,
         not_found=not_found,
         products=products,
+        overflow_products=overflow_products,
     )
 
 
