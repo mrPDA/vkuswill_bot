@@ -53,6 +53,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "recipe_runtime": "domain",
     "recipe_batch_fallback": "domain",
     "recipe_quantity_base": "domain",
+    "recipe_search_vocabulary": "domain",
     "recipe_quantity_rules": "domain",
     "recipe_quantity_calculator": "domain",
     "recipe_cart_recovery": "domain",
