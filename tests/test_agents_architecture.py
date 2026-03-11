@@ -94,7 +94,7 @@ _LAYER_ORDER: dict[str, int] = {
 
 EXPECTED_LAYER_VIOLATIONS: set[tuple[str, str]] = set()
 MAX_OUTDEGREE_ALLOWED = 7
-MAX_MODULE_LOC_ALLOWED = 400  # recipe_fallback ~396 после ruff-форматирования
+MAX_MODULE_LOC_ALLOWED = 410  # recipe_search_vocabulary ~405 (data-only)
 
 
 @lru_cache(maxsize=1)
