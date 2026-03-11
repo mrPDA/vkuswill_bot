@@ -46,10 +46,14 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
 )
 from vkuswill_bot.agents.meal_plan_types import parse_meal_plan_request
 from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
+
 ProgressReporter = Callable[[str], Awaitable[None]]
 FallbackToStandardTurn = Callable[[str], Awaitable[str]]
+
+
 class MealPlanExecutorAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
+
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
     async def _call_mcp_tool(
         self,
@@ -74,6 +78,8 @@ class MealPlanExecutorAgentProtocol(Protocol):
         args: dict[str, Any],
         result: str,
     ) -> None: ...
+
+
 async def run_meal_plan_turn(
     *,
     agent: MealPlanExecutorAgentProtocol,
@@ -308,18 +314,18 @@ async def run_meal_plan_turn(
         pantry_filtered,
         deferred_ingredients,
     ) = await search_products_day_by_day(
-            agent=agent,
-            state=state,
-            user_id=user_id,
-            llm_provider=llm_provider,
-            dishes_payload=dishes_payload,
-            ingredients_by_dish=ingredients_by_dish,
-            phase2_deadline_at=search_deadline_at,
-            trace=trace,
-            filter_pantry_fn=filter_pantry_ingredients_for_search,
-            aggregate_ingredients_fn=aggregate_ingredients_for_search,
-            prioritize_ingredients_fn=prioritize_ingredients_for_search,
-        )
+        agent=agent,
+        state=state,
+        user_id=user_id,
+        llm_provider=llm_provider,
+        dishes_payload=dishes_payload,
+        ingredients_by_dish=ingredients_by_dish,
+        phase2_deadline_at=search_deadline_at,
+        trace=trace,
+        filter_pantry_fn=filter_pantry_ingredients_for_search,
+        aggregate_ingredients_fn=aggregate_ingredients_for_search,
+        prioritize_ingredients_fn=prioritize_ingredients_for_search,
+    )
     finish_search_span(
         span=search_span,
         products=products,

@@ -427,9 +427,10 @@ async def test_run_meal_plan_turn_filters_pantry_before_search(
     )
 
     assert "https://shop.example/cart/pantry-filter" in result
-    assert seen["aggregated_calls"] == [
-        [{"name": "Помидор", "search_query": "помидор", "quantity": 1.0, "unit": "шт"}]
-    ] * 7
+    assert (
+        seen["aggregated_calls"]
+        == [[{"name": "Помидор", "search_query": "помидор", "quantity": 1.0, "unit": "шт"}]] * 7
+    )
     metadata = trace.updates[-1]["metadata"]
     assert metadata["meal_plan_pantry_filtered"] == ["Вода", "Соль"]
 

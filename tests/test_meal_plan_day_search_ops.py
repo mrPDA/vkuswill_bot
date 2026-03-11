@@ -112,28 +112,31 @@ async def test_search_products_day_by_day_uses_overall_deadline_for_each_day(
         _fake_search_products,
     )
 
-    products, not_found, _used_fallback, stats, pantry_filtered, deferred = (
-        await search_products_day_by_day(
-            agent=object(),
-            state=_State(),
-            user_id=1,
-            llm_provider="qwen_openai",
-            dishes_payload=[
-                {"name": "День 1", "day": 1},
-                {"name": "День 2", "day": 2},
-            ],
-            ingredients_by_dish={
-                "день 1": [{"name": "рис", "search_query": "рис", "quantity": 1, "unit": "шт"}],
-                "день 2": [
-                    {"name": "гречка", "search_query": "гречка", "quantity": 2, "unit": "шт"}
-                ],
-            },
-            phase2_deadline_at=12345.0,
-            trace=None,
-            filter_pantry_fn=lambda items, explicit_pantry_requests: (items, []),
-            aggregate_ingredients_fn=lambda items: items,
-            prioritize_ingredients_fn=lambda items: (items, []),
-        )
+    (
+        products,
+        not_found,
+        _used_fallback,
+        stats,
+        pantry_filtered,
+        deferred,
+    ) = await search_products_day_by_day(
+        agent=object(),
+        state=_State(),
+        user_id=1,
+        llm_provider="qwen_openai",
+        dishes_payload=[
+            {"name": "День 1", "day": 1},
+            {"name": "День 2", "day": 2},
+        ],
+        ingredients_by_dish={
+            "день 1": [{"name": "рис", "search_query": "рис", "quantity": 1, "unit": "шт"}],
+            "день 2": [{"name": "гречка", "search_query": "гречка", "quantity": 2, "unit": "шт"}],
+        },
+        phase2_deadline_at=12345.0,
+        trace=None,
+        filter_pantry_fn=lambda items, explicit_pantry_requests: (items, []),
+        aggregate_ingredients_fn=lambda items: items,
+        prioritize_ingredients_fn=lambda items: (items, []),
     )
 
     assert captured_deadlines == [12345.0, 12345.0]

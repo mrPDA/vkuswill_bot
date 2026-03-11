@@ -18,10 +18,13 @@ from vkuswill_bot.agents.recipe_runtime import (
 )
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
 from vkuswill_bot.services.prompts import get_recipe_extraction_prompt_with_metadata
+
 SearchFn = Callable[[str], Awaitable[str]]
 _DEFAULT_FALLBACK_SEARCH_CONCURRENCY = 6
 _RECIPE_FALLBACK_MAX_TOKENS = 900
 _RECIPE_FALLBACK_TEMPERATURE = 0.1
+
+
 @dataclass(slots=True)
 class RecipeExtractionDebug:
     rows: list[dict[str, Any]]
@@ -46,6 +49,8 @@ class RecipeExtractionDebug:
         if self.prompt_metadata:
             payload["prompt"] = self.prompt_metadata
         return payload
+
+
 def _safe_float(value: Any, *, default: float = 0.0) -> float:
     if isinstance(value, bool):
         return default
@@ -53,6 +58,7 @@ def _safe_float(value: Any, *, default: float = 0.0) -> float:
         return float(value)
     except (TypeError, ValueError):
         return default
+
 
 async def extract_recipe_ingredients_with_llm(
     *,
@@ -70,6 +76,7 @@ async def extract_recipe_ingredients_with_llm(
         timeout_seconds=timeout_seconds,
     )
     return debug.rows
+
 
 async def extract_recipe_ingredients_with_llm_debug(
     *,
@@ -189,6 +196,8 @@ async def extract_recipe_ingredients_with_llm_debug(
         error_message=last_error_message,
         prompt_metadata=prompt_metadata,
     )
+
+
 async def fallback_recipe_ingredients(
     arguments: dict[str, Any],
     *,
@@ -245,6 +254,8 @@ async def fallback_recipe_ingredients(
         },
         ensure_ascii=False,
     )
+
+
 async def fallback_recipe_search(
     arguments: dict[str, Any],
     *,
