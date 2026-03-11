@@ -7,6 +7,11 @@ from typing import Any
 
 from vkuswill_bot.agents.recipe_pantry import normalize_text
 from vkuswill_bot.agents.recipe_quantity_calculator import RecipeQuantityCalculator
+from vkuswill_bot.agents.recipe_search_vocabulary import (
+    COMPOUND_PREFIX_WORDS,
+    FALLBACK_QUERY_ALIASES,
+    FALLBACK_QUERY_REMOVABLE_WORDS,
+)
 from vkuswill_bot.agents.tool_result_compactor import _safe_float
 from vkuswill_bot.services.search_processor import SearchProcessor
 
@@ -41,63 +46,10 @@ _FALLBACK_QUERY_SPLIT_RE = (
     re.compile(r"\s+или\s+.*$", flags=re.IGNORECASE),
     re.compile(r"\s+для\s+.*$", flags=re.IGNORECASE),
 )
-_FALLBACK_QUERY_REMOVABLE_WORDS = frozenset(
-    {
-        "белая",
-        "белое",
-        "белые",
-        "белый",
-        "длиннозерная",
-        "длиннозерное",
-        "длиннозерные",
-        "длиннозерный",
-        "длиннозёрная",
-        "длиннозёрное",
-        "длиннозёрные",
-        "длиннозёрный",
-        "для",
-        "желтая",
-        "желтое",
-        "желтые",
-        "желтый",
-        "жёлтая",
-        "жёлтое",
-        "жёлтые",
-        "жёлтый",
-        "замороженная",
-        "замороженное",
-        "замороженные",
-        "замороженный",
-        "красная",
-        "красное",
-        "красные",
-        "красный",
-        "куриное",
-        "куриные",
-        "очищенная",
-        "очищенное",
-        "очищенный",
-        "репчатый",
-        "свежая",
-        "свежее",
-        "свежие",
-        "свежий",
-        "или",
-    }
-)
-_FALLBACK_QUERY_ALIASES = {
-    "брокколи свежая или замороженная": "брокколи",
-    "желтый болгарский перец": "болгарский перец",
-    "жёлтый болгарский перец": "болгарский перец",
-    "красный болгарский перец": "болгарский перец",
-    "куриные яйца": "яйца",
-    "рис белый длиннозерный": "рис",
-    "рис белый длиннозёрный": "рис",
-    "филе семги": "семга",
-    "филе сёмги": "семга",
-    "хлеб белый для тостов": "хлеб",
-    "яйцо куриное": "яйца",
-}
+
+_FALLBACK_QUERY_REMOVABLE_WORDS = FALLBACK_QUERY_REMOVABLE_WORDS
+_FALLBACK_QUERY_ALIASES = FALLBACK_QUERY_ALIASES
+_COMPOUND_PREFIX_WORDS = COMPOUND_PREFIX_WORDS
 
 
 def parse_quantity_hint(text: str) -> tuple[float, str, str] | None:
@@ -152,6 +104,28 @@ def build_fallback_search_queries(*, query: str, ingredient_name: str) -> list[s
     return candidates
 
 
+def _extract_core_noun(text: str) -> str | None:
+    """Extract the core food noun by stripping compound prefixes.
+
+    For "филе куриной грудки" -> "грудки", for "стебель сельдерея" -> "сельдерея".
+    Returns None when no simplification is possible.
+    """
+    tokens = text.strip().lower().split()
+    if len(tokens) < 2:
+        return None
+    norm_first = normalize_text(tokens[0]).replace("ё", "е")
+    if norm_first in _COMPOUND_PREFIX_WORDS:
+        remainder = " ".join(tokens[1:]).strip()
+        cleaned = " ".join(
+            t
+            for t in remainder.split()
+            if normalize_text(t).replace("ё", "е") not in _FALLBACK_QUERY_REMOVABLE_WORDS
+        ).strip()
+        if cleaned and cleaned != text.strip().lower():
+            return cleaned
+    return None
+
+
 def _expand_fallback_query_variants(raw: str) -> list[str]:
     original = str(raw).strip(" ,.;:").strip()
     normalized = SearchProcessor.clean_search_query(original).strip(" ,.;:").strip()
@@ -179,6 +153,11 @@ def _expand_fallback_query_variants(raw: str) -> list[str]:
         simplified = " ".join(tokens).strip()
         if simplified:
             variants.append(simplified)
+
+    core_noun = _extract_core_noun(normalized)
+    if core_noun:
+        variants.append(core_noun)
+
     deduped: list[str] = []
     seen_keys: set[str] = set()
     for value in variants:

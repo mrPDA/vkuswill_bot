@@ -15,7 +15,7 @@ FilterPantryFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 AggregateIngredientsFn = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 PrioritizeIngredientsFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 
-_DAY_SEARCH_CONCURRENCY = 2
+_DAY_SEARCH_CONCURRENCY = 3
 
 
 @dataclass(slots=True)
@@ -307,11 +307,21 @@ async def search_products_day_by_day(
         stats.fallback_reason = "day_by_day_mixed"
 
     merged_products = merge_products(all_products)
+
+    found_names_lower = {
+        str(p.get("name", "")).strip().lower()
+        for p in merged_products
+        if str(p.get("name", "")).strip()
+    }
+    deduplicated_not_found = [
+        item for item in all_not_found if item.strip().lower() not in found_names_lower
+    ]
+
     stats.final_products_count = len(merged_products)
-    stats.final_not_found_count = len(all_not_found)
+    stats.final_not_found_count = len(deduplicated_not_found)
     return (
         merged_products,
-        all_not_found,
+        deduplicated_not_found,
         stats.used_chunk_fallback,
         stats,
         sorted(pantry_filtered_all),
