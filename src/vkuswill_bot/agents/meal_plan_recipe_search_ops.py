@@ -23,6 +23,7 @@ _RECIPE_SEARCH_CHUNK_SIZE = 5
 _RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
 _LOCAL_PRODUCTS_SEARCH_LIMIT = 10
 _LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 6.0
+_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY = 10
 
 
 class MealPlanRecipeSearchAgentProtocol(Protocol):
@@ -103,6 +104,11 @@ def _should_use_chunk_fallback(
     return False, ""
 
 
+def create_global_mcp_search_semaphore() -> asyncio.Semaphore:
+    """Create a shared semaphore to cap total concurrent MCP search calls."""
+    return asyncio.Semaphore(_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY)
+
+
 async def search_products(
     *,
     agent: MealPlanRecipeSearchAgentProtocol,
@@ -112,6 +118,7 @@ async def search_products(
     aggregated_ingredients: list[dict[str, Any]],
     phase2_deadline_at: float,
     prefer_local_only: bool = False,
+    global_mcp_semaphore: asyncio.Semaphore | None = None,
 ) -> tuple[list[dict[str, Any]], list[str], bool, RecipeSearchStats]:
     def _raise_tool_error_if_any(raw: str) -> str:
         payload = parse_json_payload(raw)
@@ -126,21 +133,28 @@ async def search_products(
         return raw
 
     async def _call_products_search(query: str) -> str:
-        raw = await call_with_timeout_retry(
-            operation=lambda: agent._call_mcp_tool(
-                name="vkusvill_products_search",
-                arguments={"q": query, "limit": _LOCAL_PRODUCTS_SEARCH_LIMIT},
-                llm_provider=llm_provider,
-                call_cache=state.mcp_call_cache,
-                user_id=user_id,
-            ),
-            timeout_seconds=min(
-                RECIPE_SEARCH_TIMEOUT_SECONDS,
-                _LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS,
-            ),
-            hard_deadline_at=phase2_deadline_at,
-            retries=0,
-        )
+        async def _do_search() -> str:
+            return await call_with_timeout_retry(
+                operation=lambda: agent._call_mcp_tool(
+                    name="vkusvill_products_search",
+                    arguments={"q": query, "limit": _LOCAL_PRODUCTS_SEARCH_LIMIT},
+                    llm_provider=llm_provider,
+                    call_cache=state.mcp_call_cache,
+                    user_id=user_id,
+                ),
+                timeout_seconds=min(
+                    RECIPE_SEARCH_TIMEOUT_SECONDS,
+                    _LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS,
+                ),
+                hard_deadline_at=phase2_deadline_at,
+                retries=0,
+            )
+
+        if global_mcp_semaphore is not None:
+            async with global_mcp_semaphore:
+                raw = await _do_search()
+        else:
+            raw = await _do_search()
         return _raise_tool_error_if_any(cast(str, raw))
 
     async def _fallback_chunk_with_products_search(

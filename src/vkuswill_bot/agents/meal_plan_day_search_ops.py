@@ -7,7 +7,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
-from vkuswill_bot.agents.meal_plan_recipe_search_ops import search_products
+from vkuswill_bot.agents.meal_plan_recipe_search_ops import (
+    create_global_mcp_search_semaphore,
+    search_products,
+)
 from vkuswill_bot.agents.meal_plan_runtime_ops import merge_products
 from vkuswill_bot.agents.meal_plan_trace_ops import finish_search_span, start_span
 
@@ -125,6 +128,7 @@ async def search_products_day_by_day(
     all_not_found: list[str] = []
     pantry_filtered_all: set[str] = set()
     deferred_all: set[str] = set()
+    global_mcp_semaphore = create_global_mcp_search_semaphore()
 
     day_items = sorted(grouped_days.items())
 
@@ -208,6 +212,7 @@ async def search_products_day_by_day(
                 aggregated_ingredients=prioritized,
                 phase2_deadline_at=day_deadline_at,
                 prefer_local_only=True,
+                global_mcp_semaphore=global_mcp_semaphore,
             )
             finish_search_span(
                 span=day_span,
