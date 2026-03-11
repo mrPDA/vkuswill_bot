@@ -22,8 +22,8 @@ _PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 24
 _RECIPE_SEARCH_CHUNK_SIZE = 5
 _RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
 _LOCAL_PRODUCTS_SEARCH_LIMIT = 10
-_LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 6.0
-_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY = 10
+_LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 8.0
+_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY = 6
 
 
 class MealPlanRecipeSearchAgentProtocol(Protocol):
@@ -139,7 +139,7 @@ async def search_products(
                     name="vkusvill_products_search",
                     arguments={"q": query, "limit": _LOCAL_PRODUCTS_SEARCH_LIMIT},
                     llm_provider=llm_provider,
-                    call_cache=state.mcp_call_cache,
+                    call_cache=None,
                     user_id=user_id,
                 ),
                 timeout_seconds=min(
