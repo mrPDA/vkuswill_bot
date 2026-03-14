@@ -248,8 +248,8 @@ def test_items_count_with_groups_sums_group_sizes() -> None:
         "products": merged_products,
         "link": "https://vkusvill.ru/?share_basket=1",
         "groups": [
-            _make_group_dict("День 1", [shared, p2]),   # 2 товара
-            _make_group_dict("День 2", [shared, p3]),   # 2 товара
+            _make_group_dict("День 1", [shared, p2]),  # 2 товара
+            _make_group_dict("День 2", [shared, p3]),  # 2 товара
         ],
     }
 
