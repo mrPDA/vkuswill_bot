@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from vkuswill_bot.agents.meal_plan_response_utils import build_contract_cart_summary
 from vkuswill_bot.agents.meal_plan_cart_ops import (
     _MAX_CART_PRODUCTS,
     create_grouped_carts,
@@ -210,3 +211,94 @@ async def test_create_grouped_carts_no_products() -> None:
     )
     assert stats.attempted is False
     assert cart_data == {"not_found": ["milk"]}
+
+
+# ── build_contract_cart_summary: items_count с группами ────────────────────
+
+
+def _make_group_dict(
+    day_label: str,
+    products: list[dict[str, Any]],
+    link: str = "https://vkusvill.ru/?share_basket=1",
+    cart_created: bool = True,
+) -> dict[str, Any]:
+    return {
+        "day_label": day_label,
+        "day_numbers": [],
+        "link": link,
+        "products": products,
+        "cart_created": cart_created,
+    }
+
+
+def test_items_count_with_groups_sums_group_sizes() -> None:
+    """items_count должен равняться сумме товаров по группам, а не размеру merged списка.
+
+    Сценарий: товар «молоко» нужен в оба дня → входит в обе корзины.
+    merged products = 3 уникальных товара.
+    группа день 1 = 2 товара, группа день 2 = 2 товара → итого 4.
+    """
+    shared = {"xml_id": 1, "name": "молоко", "q": 1, "category": "молочка"}
+    p2 = {"xml_id": 2, "name": "хлеб", "q": 1, "category": "выпечка"}
+    p3 = {"xml_id": 3, "name": "масло", "q": 1, "category": "молочка"}
+
+    merged_products = [shared, p2, p3]  # 3 уникальных позиции
+
+    cart_data: dict[str, Any] = {
+        "products": merged_products,
+        "link": "https://vkusvill.ru/?share_basket=1",
+        "groups": [
+            _make_group_dict("День 1", [shared, p2]),   # 2 товара
+            _make_group_dict("День 2", [shared, p3]),   # 2 товара
+        ],
+    }
+
+    summary = build_contract_cart_summary(cart_data)
+    assert summary.items_count == 4, (
+        f"Ожидалось 4 (сумма по группам), получено {summary.items_count}"
+    )
+    assert len(summary.groups) == 2
+    assert summary.groups[0].items_count == 2
+    assert summary.groups[1].items_count == 2
+
+
+def test_items_count_without_groups_uses_products() -> None:
+    """Без групп items_count берётся из price_summary.count или len(products)."""
+    products = [
+        {"xml_id": 1, "name": "хлеб", "q": 1, "category": "выпечка"},
+        {"xml_id": 2, "name": "молоко", "q": 2, "category": "молочка"},
+    ]
+    cart_data: dict[str, Any] = {
+        "products": products,
+        "link": "https://vkusvill.ru/?share_basket=1",
+    }
+
+    summary = build_contract_cart_summary(cart_data)
+    assert summary.items_count == 2
+    assert summary.groups == []
+
+
+def test_items_count_with_groups_ignores_price_summary_count() -> None:
+    """price_summary.count из merged списка должен быть проигнорирован при наличии групп."""
+    p1 = {"xml_id": 1, "name": "хлеб", "q": 1, "category": "выпечка"}
+    p2 = {"xml_id": 2, "name": "молоко", "q": 1, "category": "молочка"}
+    p3 = {"xml_id": 3, "name": "масло", "q": 1, "category": "молочка"}
+
+    cart_data: dict[str, Any] = {
+        "products": [p1, p2, p3],
+        "link": "https://vkusvill.ru/?share_basket=1",
+        "price_summary": {
+            "count": 3,  # ← неверный merged count, должен быть перебит группами
+            "total_text": "Итого: 300.00 руб",
+            "items": ["хлеб x 1 = 100.00 руб", "молоко x 1 = 100.00 руб", "масло x 1 = 100.00 руб"],
+        },
+        "groups": [
+            _make_group_dict("День 1", [p1, p2]),  # 2
+            _make_group_dict("День 2", [p2, p3]),  # 2
+        ],
+    }
+
+    summary = build_contract_cart_summary(cart_data)
+    assert summary.items_count == 4, (
+        f"price_summary.count=3 не должен использоваться при наличии групп, получено {summary.items_count}"
+    )
