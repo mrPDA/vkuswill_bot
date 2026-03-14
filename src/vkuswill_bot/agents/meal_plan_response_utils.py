@@ -298,7 +298,11 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
                 )
             )
 
-    if items_count is None and products:
+    if groups:
+        # При наличии групп суммируем по группам: один товар может входить
+        # в несколько корзин (разные дни), поэтому merged products занижают счёт.
+        items_count = sum(g.items_count for g in groups)
+    elif items_count is None and products:
         items_count = len(products)
 
     return ContractCartSummary(
