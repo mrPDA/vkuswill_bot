@@ -10,7 +10,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from vkuswill_bot.agents.llm_helpers import extract_message, extract_text
+from vkuswill_bot.agents.llm_helpers import extract_message, extract_text, estimate_usage_details
+from vkuswill_bot.services.llm_adapters import extract_usage_details
 from vkuswill_bot.services.prompt_registry import get_registry
 from vkuswill_bot.services.prompts import PromptProfile
 
@@ -238,6 +239,9 @@ async def classify_user_intent(
     if result.profile is None:
         logger.info("Intent classification returned unparsable response: %r", content)
     if generation is not None:
+        usage_details = extract_usage_details(response)
+        if usage_details is None:
+            usage_details = estimate_usage_details(messages=messages, message=message)
         generation.end(
             output={
                 "raw": result.raw_output,
@@ -245,6 +249,7 @@ async def classify_user_intent(
                 "confidence": result.confidence,
                 "reason": result.reason,
             },
+            usage_details=usage_details,
             metadata={
                 "prompt": prompt_metadata,
                 "resolved_profile": result.profile,
