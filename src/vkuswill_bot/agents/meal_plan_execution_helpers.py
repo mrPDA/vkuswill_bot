@@ -101,6 +101,8 @@ async def generate_plan_with_deadline(
         )
     except TimeoutError:
         return None, "Превышен turn deadline"
+    except Exception as exc:
+        return None, f"Ошибка генерации плана: {type(exc).__name__}"
     return plan, ""
 
 
