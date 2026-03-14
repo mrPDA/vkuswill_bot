@@ -232,6 +232,14 @@ async def _create_single_cart(
     if not products:
         return None, stats
 
+    if len(products) > _MAX_CART_PRODUCTS:
+        logger.warning(
+            "Truncating cart from %d to %d products (API limit)",
+            len(products),
+            _MAX_CART_PRODUCTS,
+        )
+        products = products[:_MAX_CART_PRODUCTS]
+
     cart_args = CartProcessor.fix_cart_args({"products": products})
     cart_result = ""
     try:
