@@ -104,11 +104,7 @@ def render_meal_plan_contract_response(
 
     # --- Cart ---
     cart = contract.cart_summary
-    items_count = (
-        str(cart.items_count)
-        if isinstance(cart.items_count, int)
-        else "н/д"
-    )
+    items_count = str(cart.items_count) if isinstance(cart.items_count, int) else "н/д"
 
     cart_groups = cart.groups
     if len(cart_groups) > 1:

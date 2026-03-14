@@ -24,12 +24,14 @@ def _make_products(n: int, prefix: str = "prod") -> list[dict[str, Any]]:
     items = []
     for i in range(n):
         _NEXT_XML_ID += 1
-        items.append({
-            "xml_id": _NEXT_XML_ID,
-            "name": f"{prefix}_{i + 1}",
-            "q": 1,
-            "category": "test",
-        })
+        items.append(
+            {
+                "xml_id": _NEXT_XML_ID,
+                "name": f"{prefix}_{i + 1}",
+                "q": 1,
+                "category": "test",
+            }
+        )
     return items
 
 
@@ -112,9 +114,7 @@ class _MockAgent:
         link = self._link_template.format(n=self.cart_calls)
         return json.dumps({"ok": True, "data": {"link": link}})
 
-    def _ensure_cart_price_summary(
-        self, *, cart_data: Any, product_index: Any
-    ) -> None:
+    def _ensure_cart_price_summary(self, *, cart_data: Any, product_index: Any) -> None:
         pass
 
     def _capture_cart_snapshot(
