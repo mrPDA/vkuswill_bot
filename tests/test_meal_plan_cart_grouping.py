@@ -300,5 +300,6 @@ def test_items_count_with_groups_ignores_price_summary_count() -> None:
 
     summary = build_contract_cart_summary(cart_data)
     assert summary.items_count == 4, (
-        f"price_summary.count=3 не должен использоваться при наличии групп, получено {summary.items_count}"
+        "price_summary.count=3 не должен использоваться"
+        f" при наличии групп, получено {summary.items_count}"
     )
