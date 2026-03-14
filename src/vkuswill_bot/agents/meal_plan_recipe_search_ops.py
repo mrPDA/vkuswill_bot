@@ -147,7 +147,7 @@ async def search_products(
                     _LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS,
                 ),
                 hard_deadline_at=phase2_deadline_at,
-                retries=0,
+                retries=1,
             )
 
         if global_mcp_semaphore is not None:
