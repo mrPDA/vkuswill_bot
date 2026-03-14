@@ -16,7 +16,7 @@ from vkuswill_bot.agents.meal_plan_phase2_ops import (
     enforce_phase2_safety_policy,
 )
 from vkuswill_bot.agents.meal_plan_ingredient_collection import IngredientCollectionStats
-from vkuswill_bot.agents.meal_plan_cart_ops import maybe_create_cart_from_products
+from vkuswill_bot.agents.meal_plan_cart_ops import _create_single_cart
 from vkuswill_bot.agents.meal_plan_types import MealPlan, MealPlanDish, parse_meal_plan_request
 
 
@@ -239,7 +239,7 @@ async def test_phase2_retry_failure_returns_recomputed_safe_payload(
 
 
 @pytest.mark.asyncio
-async def test_maybe_create_cart_from_products_does_not_retry_after_timeout() -> None:
+async def test_create_single_cart_does_not_retry_after_timeout() -> None:
     class _Agent:
         def __init__(self) -> None:
             self.calls = 0
@@ -264,15 +264,6 @@ async def test_maybe_create_cart_from_products_does_not_retry_after_timeout() ->
                 ensure_ascii=False,
             )
 
-        def _ensure_cart_price_summary(
-            self,
-            *,
-            cart_data: dict[str, Any],
-            product_index: dict[int, dict[str, Any]],
-        ) -> None:
-            if "price_summary" not in cart_data:
-                cart_data["price_summary"] = {"count": len(cart_data.get("products", []))}
-
         def _capture_cart_snapshot(
             self,
             *,
@@ -284,18 +275,17 @@ async def test_maybe_create_cart_from_products_does_not_retry_after_timeout() ->
             self.snapshots += 1
 
     agent = _Agent()
-    cart_data, cart_stats = await maybe_create_cart_from_products(
+    cart_data, cart_stats = await _create_single_cart(
         agent=agent,
         state=_State(),
         user_id=77,
         llm_provider="qwen_openai",
         products=[{"xml_id": 11, "q": 1}],
-        not_found=[],
         phase2_deadline_at=time.monotonic() + 1.0,
         timeout_seconds=0.01,
     )
 
-    assert cart_data == {"products": [{"xml_id": 11, "q": 1}], "not_found": []}
+    assert cart_data is None
     assert cart_stats.cart_created is False
     assert cart_stats.has_link is False
     assert cart_stats.failed_before_response is True
@@ -305,7 +295,7 @@ async def test_maybe_create_cart_from_products_does_not_retry_after_timeout() ->
 
 
 @pytest.mark.asyncio
-async def test_maybe_create_cart_from_products_reports_exception_details() -> None:
+async def test_create_single_cart_reports_exception_details() -> None:
     class _Agent:
         async def _call_mcp_tool(
             self,
@@ -318,14 +308,6 @@ async def test_maybe_create_cart_from_products_reports_exception_details() -> No
         ) -> str:
             raise TimeoutError("deadline exceeded")
 
-        def _ensure_cart_price_summary(
-            self,
-            *,
-            cart_data: dict[str, Any],
-            product_index: dict[int, dict[str, Any]],
-        ) -> None:
-            raise AssertionError("must not be called")
-
         def _capture_cart_snapshot(
             self,
             *,
@@ -336,18 +318,17 @@ async def test_maybe_create_cart_from_products_reports_exception_details() -> No
         ) -> None:
             raise AssertionError("must not be called")
 
-    cart_data, cart_stats = await maybe_create_cart_from_products(
+    cart_data, cart_stats = await _create_single_cart(
         agent=_Agent(),
         state=_State(),
         user_id=77,
         llm_provider="qwen_openai",
         products=[{"xml_id": 11, "q": 1}],
-        not_found=[],
         phase2_deadline_at=time.monotonic() + 1.0,
         timeout_seconds=0.1,
     )
 
-    assert cart_data == {"products": [{"xml_id": 11, "q": 1}], "not_found": []}
+    assert cart_data is None
     assert cart_stats.cart_created is False
     assert cart_stats.failed_before_response is True
     assert cart_stats.error_type == "TimeoutError"

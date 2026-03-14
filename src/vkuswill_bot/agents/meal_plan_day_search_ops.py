@@ -121,7 +121,15 @@ async def search_products_day_by_day(
     filter_pantry_fn: FilterPantryFn,
     aggregate_ingredients_fn: AggregateIngredientsFn,
     prioritize_ingredients_fn: PrioritizeIngredientsFn,
-) -> tuple[list[dict[str, Any]], list[str], bool, MealPlanDaySearchStats, list[str], list[str]]:
+) -> tuple[
+    list[dict[str, Any]],
+    list[str],
+    bool,
+    MealPlanDaySearchStats,
+    list[str],
+    list[str],
+    dict[int, list[dict[str, Any]]],
+]:
     grouped_days = _group_dishes_by_day(dishes_payload)
     stats = MealPlanDaySearchStats(day_count=len(grouped_days))
     all_products: list[dict[str, Any]] = []
@@ -251,7 +259,9 @@ async def search_products_day_by_day(
         *[_run_day(day, day_dishes, semaphore) for day, day_dishes in day_items]
     )
 
+    products_by_day: dict[int, list[dict[str, Any]]] = {}
     for day_result in sorted(day_results, key=lambda row: int(row["day"])):
+        products_by_day[int(day_result["day"])] = list(day_result["products"])
         pantry_filtered_all.update(day_result["pantry_filtered"])
         deferred_all.update(day_result["deferred"])
         stats.aggregated_ingredients_count += int(day_result["aggregated_count"])
@@ -331,4 +341,5 @@ async def search_products_day_by_day(
         stats,
         sorted(pantry_filtered_all),
         sorted(deferred_all),
+        products_by_day,
     )

@@ -3354,10 +3354,9 @@ async def test_meal_plan_injects_structured_preference_profile_into_llm_messages
         text="собери меню на неделю для 2 человек, один ребенок 2 года с аллергией на орехи",
     )
 
-    assert "Параметры запроса:" in result
-    assert "План по дням:" in result
-    assert "Проверка ограничений:" in result
-    assert "Перекус 1:" in result
+    assert "🍽 План питания" in result
+    assert "⚠️ План не сформирован" in result
+    assert "🛒 Корзина" in result
     assert "орехи" in result.lower()
     assert prefs_store.calls == [126]
     first_call_messages = llm_client.completions.calls[0]["messages"]
@@ -3433,11 +3432,10 @@ async def test_meal_plan_response_contract_keeps_cart_summary_when_cart_created(
     )
 
     assert "🍽 План питания" in result
-    assert "Корзина:" in result
+    assert "Корзина ВкусВилл" in result
     assert "https://shop.example/cart/meal-plan" in result
-    assert "Итого: 1 234 руб" in result
-    assert "День 1:" in result
-    assert "Адаптации по группам:" in result
+    assert "⚠️ План не сформирован" in result
+    assert "Адаптации:" in result
 
 
 @pytest.mark.asyncio

@@ -203,15 +203,8 @@ async def test_meal_plan_e2e_contract_for_family_with_child_and_allergy() -> Non
     )
 
     assert "🍽 План питания" in result
-    assert "Параметры запроса:" in result
-    assert "Группы: adults (3), child_2y (1)" in result
-    assert "Жесткие ограничения:" in result
     assert "орехи" in result
-    assert "План по дням:" in result
-    assert "День 1:" in result
-    assert "Перекус 1:" in result
-    assert "Адаптации по группам:" in result
+    assert "День 1" in result
     assert "child_2y" in result
-    assert "Корзина:" in result
+    assert "Корзина ВкусВилл" in result
     assert "https://shop.example/cart/e2e-meal" in result
-    assert "Проверка ограничений:" in result

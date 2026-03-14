@@ -23,8 +23,9 @@ from vkuswill_bot.agents.meal_plan_phase2_ops import (
     collect_ingredients_for_dishes,
     enforce_phase2_safety_policy,
 )
-from vkuswill_bot.agents.meal_plan_cart_ops import maybe_create_cart_from_products
+from vkuswill_bot.agents.meal_plan_cart_ops import create_grouped_carts
 from vkuswill_bot.agents.meal_plan_day_search_ops import search_products_day_by_day
+from vkuswill_bot.agents.meal_plan_runtime_ops import merge_products
 from vkuswill_bot.agents.meal_plan_trace_ops import (
     finish_cart_span,
     finish_ingredient_span,
@@ -313,6 +314,7 @@ async def run_meal_plan_turn(
         search_stats,
         pantry_filtered,
         deferred_ingredients,
+        products_by_day,
     ) = await search_products_day_by_day(
         agent=agent,
         state=state,
@@ -345,15 +347,17 @@ async def run_meal_plan_turn(
         name="meal-plan.create-cart",
         input={"products_count": len(products), "not_found_count": len(not_found)},
     )
-    cart_data, cart_stats = await maybe_create_cart_from_products(
+    cart_data, cart_stats = await create_grouped_carts(
         agent=agent,
         state=state,
         user_id=user_id,
         llm_provider=llm_provider,
         products=products,
+        products_by_day=products_by_day,
         not_found=not_found,
         phase2_deadline_at=phase2_deadline_at,
         timeout_seconds=CART_CREATE_TIMEOUT_SECONDS,
+        merge_fn=merge_products,
     )
     finish_cart_span(span=cart_span, stats=cart_stats)
     if isinstance(diagnostics, dict):
