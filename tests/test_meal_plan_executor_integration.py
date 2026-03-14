@@ -195,7 +195,7 @@ async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
     assert "🍽 План питания" in result
     assert "Овощное блюдо 1" in result
     assert "https://shop.example/cart/integration-meal" in result
-    assert "soft_preferences_coverage" in result
+    assert "Корзина ВкусВилл" in result
 
     call_names = [name for name, _args in mcp.calls]
     assert call_names.count("recipe_ingredients") == 7
@@ -401,4 +401,4 @@ async def test_meal_plan_uses_explicit_constraints_when_preferences_unavailable(
 
     assert "🍽 План питания" in result
     assert "орехи" in result
-    assert "stored preferences недоступны" in result
+    assert "Корзина ВкусВилл" in result

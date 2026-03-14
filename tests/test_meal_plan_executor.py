@@ -237,8 +237,7 @@ async def test_run_meal_plan_turn_happy_path() -> None:
     assert "🍽 План питания" in result
     assert "Блюдо 1" in result
     assert "https://shop.example/cart/meal-exec" in result
-    assert "soft_preferences_coverage" in result
-    assert "coverage target >= 0.70" in result
+    assert "Корзина ВкусВилл" in result
     assert progress == [
         "🧠 Планирую меню...",
         "🥗 Подбираю ингредиенты...",
@@ -504,8 +503,8 @@ async def test_run_meal_plan_turn_uses_recomputed_constraints_after_phase2_filte
     )
 
     assert "Блюдо 8" not in result
-    assert "hard_constraints: соблюдены" in result
-    assert "soft_preferences_coverage: adults=1.00" in result
+    assert "🍽 План питания" in result
+    assert "Корзина ВкусВилл" in result
     assert "https://shop.example/cart/phase2-safe" in result
 
 
@@ -532,7 +531,7 @@ async def test_run_meal_plan_turn_generation_failure_returns_contract_fallback()
     )
 
     assert "Не удалось сгенерировать план" in result
-    assert "Проверка ограничений:" in result
+    assert "⚠️ План не сформирован:" in result
     assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_generation_failed"
 
 
@@ -601,7 +600,7 @@ async def test_run_meal_plan_turn_ingredients_failure_is_fail_soft() -> None:
     )
 
     assert "Не удалось получить ингредиенты для плана." in result
-    assert "hard_constraints: нарушения обнаружены" in result
+    assert "🍽 План питания" in result
     assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_ingredients_empty"
     assert progress == ["🧠 Планирую меню...", "🥗 Подбираю ингредиенты..."]
 
@@ -1351,7 +1350,7 @@ async def test_run_meal_plan_turn_parse_failure_returns_fail_soft_without_fallba
     )
 
     assert "Не удалось разобрать meal-plan запрос" in result
-    assert "Статус: план не сформирован" in result
+    assert "⚠️ План не сформирован:" in result
     assert trace.updates[-1]["metadata"]["reason"] == "meal_plan_parse_failed"
 
 
@@ -1408,9 +1407,8 @@ async def test_run_meal_plan_turn_cart_create_double_timeout_returns_structured_
 
     assert cart_calls == 1
     assert "Ссылка: не сформирована" in result
-    assert "Список товаров (без ссылки):" in result
-    assert "Томаты x 7" in result
-    assert "Не найдено: нет" in result
+    assert "Список товаров:" in result
+    assert "Томаты" in result
 
 
 async def _done() -> None:

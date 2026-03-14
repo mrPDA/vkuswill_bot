@@ -119,6 +119,7 @@ async def test_search_products_day_by_day_uses_overall_deadline_for_each_day(
         stats,
         pantry_filtered,
         deferred,
+        _products_by_day,
     ) = await search_products_day_by_day(
         agent=object(),
         state=_State(),

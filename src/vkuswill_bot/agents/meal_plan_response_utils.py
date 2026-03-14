@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from vkuswill_bot.agents.meal_plan_response_contract_model import (
+    ContractCartGroup,
     ContractCartProduct,
     ContractCartSummary,
 )
@@ -262,23 +263,39 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
         q_text = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
         products.append(ContractCartProduct(category=category, name=name, quantity_text=q_text))
 
-    overflow_products: list[ContractCartProduct] = []
-    overflow_raw = cart_data.get("overflow_products")
-    if isinstance(overflow_raw, list):
-        for row in overflow_raw:
-            if not isinstance(row, dict):
+    groups: list[ContractCartGroup] = []
+    groups_raw = cart_data.get("groups")
+    if isinstance(groups_raw, list):
+        for g_row in groups_raw:
+            if not isinstance(g_row, dict):
                 continue
-            name = str(row.get("name", "")).strip() or "товар"
-            category = str(row.get("category", "")).strip() or "прочее"
-            q_raw = row.get("q", 1)
-            try:
-                q = float(q_raw)
-            except (TypeError, ValueError):
-                q = 1.0
-            q = 1.0 if q <= 0 else q
-            q_text = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
-            overflow_products.append(
-                ContractCartProduct(category=category, name=name, quantity_text=q_text)
+            g_label = str(g_row.get("day_label", "")).strip()
+            g_link = str(g_row.get("link", "")).strip()
+            g_products_raw = g_row.get("products", [])
+            g_products: list[ContractCartProduct] = []
+            if isinstance(g_products_raw, list):
+                for row in g_products_raw:
+                    if not isinstance(row, dict):
+                        continue
+                    name = str(row.get("name", "")).strip() or "товар"
+                    category = str(row.get("category", "")).strip() or "прочее"
+                    q_raw = row.get("q", 1)
+                    try:
+                        q = float(q_raw)
+                    except (TypeError, ValueError):
+                        q = 1.0
+                    q = 1.0 if q <= 0 else q
+                    q_text = f"{int(q)}" if q.is_integer() else f"{q:.2f}"
+                    g_products.append(
+                        ContractCartProduct(category=category, name=name, quantity_text=q_text)
+                    )
+            groups.append(
+                ContractCartGroup(
+                    day_label=g_label,
+                    link=g_link,
+                    items_count=len(g_products),
+                    products=g_products,
+                )
             )
 
     if items_count is None and products:
@@ -291,7 +308,7 @@ def build_contract_cart_summary(cart_data: dict[str, Any] | None) -> ContractCar
         total_text=total_text,
         not_found=not_found,
         products=products,
-        overflow_products=overflow_products,
+        groups=groups,
     )
 
 

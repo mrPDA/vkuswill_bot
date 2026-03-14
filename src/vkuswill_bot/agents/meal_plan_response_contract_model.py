@@ -44,6 +44,14 @@ class ContractCartProduct:
 
 
 @dataclass(slots=True)
+class ContractCartGroup:
+    day_label: str
+    link: str
+    items_count: int
+    products: list[ContractCartProduct] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class ContractCartSummary:
     items_count: int | None
     total_rub: int | None
@@ -51,7 +59,7 @@ class ContractCartSummary:
     total_text: str = ""
     not_found: list[str] = field(default_factory=list)
     products: list[ContractCartProduct] = field(default_factory=list)
-    overflow_products: list[ContractCartProduct] = field(default_factory=list)
+    groups: list[ContractCartGroup] = field(default_factory=list)
 
 
 @dataclass(slots=True)
