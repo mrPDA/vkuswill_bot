@@ -19,7 +19,7 @@ from vkuswill_bot.services.tool_input_normalizers import (
     normalize_multilingual_grocery_text,
 )
 from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
-from vkuswill_bot.agents.response_analysis import is_cart_intent
+from vkuswill_bot.agents.response_analysis import count_expected_recipe_courses, is_cart_intent
 from vkuswill_bot.services.prompts import PromptProfile
 
 
@@ -157,9 +157,12 @@ class TurnState:
     recipe_to_cart_recovery_used: bool = False
     textual_tool_call_recovery_used: bool = False
     step_budget_warning_used: bool = False
+    multi_course_recovery_used: bool = False
     single_search_steps_streak: int = 0
     tools_called_this_turn: bool = False
     recipe_flow_started_this_turn: bool = False
+    recipe_calls_this_turn: int = 0
+    multi_course_expected: int = 0
     total_llm_input_chars: int = 0
     mcp_call_cache: dict[str, str] = field(default_factory=dict)
     search_query_by_xml_id_this_turn: dict[int, str] = field(default_factory=dict)
@@ -276,6 +279,10 @@ async def build_turn_state(
         "meal_plan",
     )
 
+    multi_course_expected = 0
+    if prompt_profile == "recipe":
+        multi_course_expected = count_expected_recipe_courses(normalized_text)
+
     return TurnState(
         history=normalized_history,
         previous_cart_products=previous_cart_products,
@@ -297,4 +304,5 @@ async def build_turn_state(
         route_override_from=route_override_from,
         route_override_to=route_override_to,
         route_override_reason=route_override_reason,
+        multi_course_expected=multi_course_expected,
     )

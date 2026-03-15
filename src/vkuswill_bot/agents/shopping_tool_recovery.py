@@ -6,11 +6,13 @@ from typing import Any
 
 from vkuswill_bot.agents.recovery_hints import (
     FORCE_BATCH_SEARCH_HINT,
+    FORCE_MULTI_COURSE_CONTINUATION_HINT,
     FORCE_RECIPE_TO_CART_HINT,
     FORCE_STEP_BUDGET_WARNING_HINT,
 )
 from vkuswill_bot.agents.recovery_policy import (
     should_force_batch_search_hint,
+    should_force_multi_course_continuation,
     should_force_recipe_to_cart_hint,
     should_force_step_budget_warning,
 )
@@ -23,6 +25,20 @@ def apply_post_step_recovery_hints(
     step: int,
     max_tool_calls: int,
 ) -> None:
+    if should_force_multi_course_continuation(
+        cart_data_this_turn=state.cart_data_this_turn,
+        recipe_calls_this_turn=state.recipe_calls_this_turn,
+        multi_course_expected=state.multi_course_expected,
+        multi_course_recovery_used=state.multi_course_recovery_used,
+        step=step,
+        max_tool_calls=max_tool_calls,
+    ):
+        state.multi_course_recovery_used = True
+        state.cart_data_this_turn = None
+        state.history.append({"role": "system", "content": FORCE_MULTI_COURSE_CONTINUATION_HINT})
+        state.history = agent._normalize_history(state.history)
+        return
+
     if should_force_recipe_to_cart_hint(
         cart_intent=state.cart_intent,
         recipe_flow_started_this_turn=state.recipe_flow_started_this_turn,
