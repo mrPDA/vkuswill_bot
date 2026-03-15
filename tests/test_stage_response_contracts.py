@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -17,6 +18,18 @@ from stage_response_contract_cases import SCENARIOS, StageScenario
 pytestmark = pytest.mark.stage
 
 
+def _is_explicit_stage_invocation() -> bool:
+    argv = sys.argv[1:]
+    if any(arg.endswith("test_stage_response_contracts.py") for arg in argv):
+        return True
+    for index, arg in enumerate(argv):
+        if arg == "-m" and index + 1 < len(argv) and "stage" in argv[index + 1]:
+            return True
+        if arg.startswith("-m") and "stage" in arg[2:]:
+            return True
+    return False
+
+
 @dataclass(slots=True)
 class _StageConfig:
     base_url: str
@@ -28,6 +41,12 @@ class _StageConfig:
 
     @classmethod
     def from_env(cls) -> _StageConfig:
+        if not _is_explicit_stage_invocation():
+            pytest.skip(
+                "Stage response-contract tests run only when explicitly selected. "
+                "Use `pytest tests/test_stage_response_contracts.py -m stage`."
+            )
+
         if os.getenv("RUN_STAGE_RESPONSE_CONTRACTS") != "1":
             pytest.skip(
                 "Stage response-contract tests are disabled. "
