@@ -187,9 +187,7 @@ def restore_previous_quantities_for_additive_update(
         if current_q <= 0:
             current_q = 1.0
         previous_q = prev_by_xml_id[xml_id]
-        if abs(current_q - 1.0) > 1e-9:
-            continue
-        if abs(previous_q - 1.0) <= 1e-9:
+        if abs(current_q - previous_q) < 0.01:
             continue
         row["q"] = previous_q
         updated = True

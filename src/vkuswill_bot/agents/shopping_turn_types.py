@@ -14,6 +14,9 @@ from vkuswill_bot.agents.recipe_pantry import (
     extract_explicit_pantry_requests,
     has_explicit_egg_pack_request,
 )
+from vkuswill_bot.services.tool_input_normalizers import (
+    normalize_colloquial_numerals,
+)
 from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
 from vkuswill_bot.agents.response_analysis import is_cart_intent
 from vkuswill_bot.services.prompts import PromptProfile
@@ -248,7 +251,8 @@ async def build_turn_state(
     )
 
     product_index_this_turn: dict[int, dict[str, Any]] = build_product_index_from_history(history)
-    history.append({"role": "user", "content": text})
+    display_text = normalize_colloquial_numerals(text)
+    history.append({"role": "user", "content": display_text})
     normalized_history = agent._normalize_history(history)
 
     user_preferences: dict[str, str] = {}
