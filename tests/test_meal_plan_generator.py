@@ -42,87 +42,34 @@ def _resp(content: str) -> dict[str, Any]:
     return {"choices": [{"message": {"content": content}}]}
 
 
-def _build_dishes(*, audience: str = "adults", cuisine: str = "italian") -> list[dict[str, Any]]:
-    meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
-    return [
-        {
-            "name": f"Блюдо {idx}",
-            "day": idx,
-            "meal_type": meal_types[idx - 1],
-            "servings_total": 2,
-            "audience_groups": [audience],
-            "cuisine_tags": [cuisine],
-        }
-        for idx in range(1, 8)
-    ]
+def _build_dishes(
+    *, audience: str = "adults", cuisine: str = "italian", days: int = 7,
+) -> list[dict[str, Any]]:
+    meal_types = ["breakfast", "lunch", "dinner"]
+    dishes: list[dict[str, Any]] = []
+    idx = 0
+    for day in range(1, days + 1):
+        for mt in meal_types:
+            idx += 1
+            dishes.append(
+                {
+                    "name": f"Блюдо {idx}",
+                    "day": day,
+                    "meal_type": mt,
+                    "servings_total": 2,
+                    "audience_groups": [audience],
+                    "cuisine_tags": [cuisine],
+                }
+            )
+    return dishes
 
 
 @pytest.mark.asyncio
 async def test_generate_meal_plan_accepts_repaired_json_without_retry() -> None:
     request = parse_meal_plan_request("меню на неделю для 2 человек", {})
-    repaired_payload = """```json
-{
-  "schema_version": 1,
-  "dishes": [
-    {
-      "name": "Блюдо 1",
-      "day": 1,
-      "meal_type": "breakfast",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 2",
-      "day": 2,
-      "meal_type": "lunch",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 3",
-      "day": 3,
-      "meal_type": "dinner",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 4",
-      "day": 4,
-      "meal_type": "breakfast",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 5",
-      "day": 5,
-      "meal_type": "lunch",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 6",
-      "day": 6,
-      "meal_type": "dinner",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"]
-    },
-    {
-      "name": "Блюдо 7",
-      "day": 7,
-      "meal_type": "lunch",
-      "servings_total": 2,
-      "audience_groups": ["adults"],
-      "cuisine_tags": ["russian"],
-    }
-  ]
-}
-```"""
+    dishes = _build_dishes(audience="adults", cuisine="russian")
+    payload = {"schema_version": 1, "dishes": dishes}
+    repaired_payload = "```json\n" + json.dumps(payload, ensure_ascii=False) + "\n```"
     agent = _FakeGeneratorAgent([_resp(repaired_payload)])
 
     plan, error = await generate_meal_plan(
@@ -134,7 +81,7 @@ async def test_generate_meal_plan_accepts_repaired_json_without_retry() -> None:
     assert error == ""
     assert plan is not None
     assert plan.schema_version == 1
-    assert len(plan.dishes) == 7
+    assert len(plan.dishes) == 21
     assert plan.dishes[0].name == "Блюдо 1"
     assert isinstance(request.applied_preferences_trace, list)
     assert len(agent.calls) == 1
@@ -214,23 +161,24 @@ async def test_generate_meal_plan_returns_error_when_retry_not_json() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_meal_plan_logs_phase1_violation_as_warning(caplog: pytest.LogCaptureFixture) -> None:
-    """Phase 1 (dish-name heuristic) is non-blocking — plan passes through."""
-    request = parse_meal_plan_request("меню на неделю для 2 человек, один веган", {})
-    payload = {
-        "schema_version": 1,
-        "dishes": [
-            {
-                "name": f"Куриное блюдо {idx}",
-                "day": idx,
-                "meal_type": "lunch",
-                "servings_total": 2,
-                "audience_groups": ["adults"],
-                "cuisine_tags": ["russian"],
-            }
-            for idx in range(1, 8)
-        ],
-    }
+async def test_generate_meal_plan_logs_phase1_violation_as_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Phase 1 (dish-name heuristic) is non-blocking for diet violations."""
+    request = parse_meal_plan_request("меню на 2 дня для 2 человек, веган", {})
+    meal_types = ["breakfast", "lunch", "dinner"]
+    dishes = [
+        {
+            "name": f"Куриное блюдо {idx}",
+            "day": (idx - 1) // 3 + 1,
+            "meal_type": meal_types[(idx - 1) % 3],
+            "servings_total": 2,
+            "audience_groups": ["adults"],
+            "cuisine_tags": ["russian"],
+        }
+        for idx in range(1, 7)
+    ]
+    payload = {"schema_version": 1, "dishes": dishes}
     agent = _FakeGeneratorAgent(
         [
             _resp(json.dumps(payload, ensure_ascii=False)),
@@ -266,7 +214,7 @@ async def test_generate_meal_plan_rejects_invalid_dishes_count() -> None:
     )
 
     assert plan is None
-    assert "7..10" in error
+    assert "14..21" in error
 
 
 @pytest.mark.asyncio

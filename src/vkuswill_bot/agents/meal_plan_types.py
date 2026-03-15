@@ -103,7 +103,9 @@ class MealPlanRequest:
 
     @property
     def meals_per_day(self) -> int:
-        return len(self.requested_meal_types) if self.requested_meal_types else 1
+        if self.requested_meal_types:
+            return len(self.requested_meal_types)
+        return 3 if self.days >= 3 else 1
 
     def group_ids(self) -> set[str]:
         return {group.id for group in self.groups}
@@ -120,8 +122,11 @@ class MealPlanRequest:
             "preferences_trace": self.preferences_trace,
             "applied_preferences_trace": self.applied_preferences_trace,
         }
-        if self.requested_meal_types:
-            d["requested_meal_types"] = self.requested_meal_types
+        meal_types = self.requested_meal_types
+        if not meal_types and self.days >= 3:
+            meal_types = ["breakfast", "lunch", "dinner"]
+        if meal_types:
+            d["requested_meal_types"] = meal_types
         return d
 
 

@@ -11,6 +11,27 @@ import pytest
 
 from vkuswill_bot.agents.shopping_agent import ShoppingAgent
 
+_FULL_WEEK_MEALS = ["breakfast", "lunch", "dinner"]
+
+
+def _build_full_week_plan(
+    *, name_prefix: str = "Овощное блюдо", cuisine: str = "italian",
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "dishes": [
+            {
+                "name": f"{name_prefix} {idx + 1}",
+                "day": idx // 3 + 1,
+                "meal_type": _FULL_WEEK_MEALS[idx % 3],
+                "servings_total": 2,
+                "audience_groups": ["adults"],
+                "cuisine_tags": [cuisine],
+            }
+            for idx in range(21)
+        ],
+    }
+
 
 class _FakeDialogManager:
     def __init__(self) -> None:
@@ -157,21 +178,7 @@ class _BrokenRolloutController:
 
 @pytest.mark.asyncio
 async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
-    meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
-    plan_payload = {
-        "schema_version": 1,
-        "dishes": [
-            {
-                "name": f"Овощное блюдо {idx}",
-                "day": idx,
-                "meal_type": meal_types[idx - 1],
-                "servings_total": 2,
-                "audience_groups": ["adults"],
-                "cuisine_tags": ["italian"],
-            }
-            for idx in range(1, 8)
-        ],
-    }
+    plan_payload = _build_full_week_plan()
     llm_client = _FakeLLMClient(
         [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
     )
@@ -198,7 +205,7 @@ async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
     assert "Корзина ВкусВилл" in result
 
     call_names = [name for name, _args in mcp.calls]
-    assert call_names.count("recipe_ingredients") == 7
+    assert call_names.count("recipe_ingredients") == 21
     assert call_names.count("recipe_search") == 0
     assert call_names.count("vkusvill_cart_link_create") == 1
     assert call_names.count("vkusvill_products_search") >= 7
@@ -256,21 +263,7 @@ async def test_shopping_agent_disables_executor_when_rollout_controller_fails() 
 
 @pytest.mark.asyncio
 async def test_shopping_agent_allows_explicit_unvalidated_rollout_override() -> None:
-    meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
-    plan_payload = {
-        "schema_version": 1,
-        "dishes": [
-            {
-                "name": f"Овощное блюдо {idx}",
-                "day": idx,
-                "meal_type": meal_types[idx - 1],
-                "servings_total": 2,
-                "audience_groups": ["adults"],
-                "cuisine_tags": ["italian"],
-            }
-            for idx in range(1, 8)
-        ],
-    }
+    plan_payload = _build_full_week_plan()
     llm_client = _FakeLLMClient(
         [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
     )
@@ -299,7 +292,7 @@ async def test_shopping_agent_allows_explicit_unvalidated_rollout_override() -> 
 
     assert "🍽 План питания" in result
     call_names = [name for name, _args in mcp.calls]
-    assert call_names.count("recipe_ingredients") == 7
+    assert call_names.count("recipe_ingredients") == 21
     assert call_names.count("recipe_search") == 0
     assert call_names.count("vkusvill_products_search") >= 7
     assert call_names.count("vkusvill_cart_link_create") == 1
@@ -360,21 +353,7 @@ async def test_shopping_agent_disables_meal_plan_routing_when_feature_flag_off()
 
 @pytest.mark.asyncio
 async def test_meal_plan_uses_explicit_constraints_when_preferences_unavailable() -> None:
-    meal_types = ["breakfast", "lunch", "dinner", "breakfast", "lunch", "dinner", "lunch"]
-    plan_payload = {
-        "schema_version": 1,
-        "dishes": [
-            {
-                "name": f"Овощное блюдо {idx}",
-                "day": idx,
-                "meal_type": meal_types[idx - 1],
-                "servings_total": 2,
-                "audience_groups": ["adults"],
-                "cuisine_tags": ["russian"],
-            }
-            for idx in range(1, 8)
-        ],
-    }
+    plan_payload = _build_full_week_plan(cuisine="russian")
     llm_client = _FakeLLMClient(
         [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
     )

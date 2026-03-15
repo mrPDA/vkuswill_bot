@@ -120,63 +120,39 @@ class _AllowAllRolloutController:
 
 @pytest.mark.asyncio
 async def test_meal_plan_e2e_contract_for_family_with_child_and_allergy() -> None:
+    _meal_names = [
+        ("Овсяная каша", "breakfast"),
+        ("Овощной суп", "lunch"),
+        ("Рис с овощами", "dinner"),
+        ("Творог с фруктами", "breakfast"),
+        ("Куриные тефтели", "lunch"),
+        ("Запеканка", "dinner"),
+        ("Гречка с овощами", "breakfast"),
+        ("Рагу из индейки", "lunch"),
+        ("Салат с курицей", "dinner"),
+        ("Блины", "breakfast"),
+        ("Щи", "lunch"),
+        ("Индейка с рисом", "dinner"),
+        ("Каша пшённая", "breakfast"),
+        ("Борщ", "lunch"),
+        ("Котлеты рыбные", "dinner"),
+        ("Омлет", "breakfast"),
+        ("Суп-пюре тыквенный", "lunch"),
+        ("Пельмени", "dinner"),
+        ("Сырники", "breakfast"),
+        ("Куриный суп", "lunch"),
+        ("Плов", "dinner"),
+    ]
     dishes = [
         {
-            "name": "Овсяная каша",
-            "day": 1,
-            "meal_type": "breakfast",
+            "name": name,
+            "day": idx // 3 + 1,
+            "meal_type": mt,
             "servings_total": 4,
             "audience_groups": ["adults", "child_2y"],
             "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Овощной суп",
-            "day": 2,
-            "meal_type": "lunch",
-            "servings_total": 4,
-            "audience_groups": ["adults", "child_2y"],
-            "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Индейка с рисом",
-            "day": 3,
-            "meal_type": "dinner",
-            "servings_total": 4,
-            "audience_groups": ["adults"],
-            "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Творог с фруктами",
-            "day": 4,
-            "meal_type": "breakfast",
-            "servings_total": 4,
-            "audience_groups": ["adults", "child_2y"],
-            "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Куриные тефтели",
-            "day": 5,
-            "meal_type": "lunch",
-            "servings_total": 4,
-            "audience_groups": ["adults", "child_2y"],
-            "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Запеканка",
-            "day": 6,
-            "meal_type": "dinner",
-            "servings_total": 4,
-            "audience_groups": ["adults", "child_2y"],
-            "cuisine_tags": ["russian"],
-        },
-        {
-            "name": "Гречка с овощами",
-            "day": 7,
-            "meal_type": "lunch",
-            "servings_total": 4,
-            "audience_groups": ["adults"],
-            "cuisine_tags": ["russian"],
-        },
+        }
+        for idx, (name, mt) in enumerate(_meal_names)
     ]
     llm_payload = {"schema_version": 1, "dishes": dishes}
     llm_client = _FakeLLMClient(
