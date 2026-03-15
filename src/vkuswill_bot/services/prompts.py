@@ -49,6 +49,8 @@ _FALLBACK_MEAL_PLAN_GENERATION_PROMPT = (
     "Верни только JSON с полями schema_version=1 и dishes[].\n"
     "Сгенерируй {min_dishes}..{max_dishes} уникальных блюд, без повторов названий.\n"
     "Распредели блюда по ВСЕМ {days} дням — у каждого дня минимум 1 блюдо.\n"
+    "Если в запросе указаны requested_meal_types (например breakfast+lunch+dinner),\n"
+    "КАЖДЫЙ день ОБЯЗАН содержать ВСЕ указанные типы приёмов пищи.\n"
     "Все названия блюд ДОЛЖНЫ быть на русском языке.\n"
     "Постарайся обеспечить soft_preferences coverage >= 0.70 по каждой группе.\n"
     "Параметры запроса:\n{request_payload}\n\n"

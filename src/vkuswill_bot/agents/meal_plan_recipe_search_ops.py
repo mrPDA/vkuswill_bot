@@ -22,7 +22,7 @@ from vkuswill_bot.agents.recipe_fallback import fallback_recipe_search
 
 logger = logging.getLogger(__name__)
 
-_PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 24
+_PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 32
 _RECIPE_SEARCH_CHUNK_SIZE = 5
 _RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
 _LOCAL_PRODUCTS_SEARCH_LIMIT = 10

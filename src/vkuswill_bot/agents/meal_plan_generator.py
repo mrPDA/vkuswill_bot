@@ -85,7 +85,7 @@ def _validate_meal_plan_payload(
     dishes_raw = payload.get("dishes")
     if not isinstance(dishes_raw, list):
         return None, "dishes должен быть списком"
-    min_dishes, max_dishes = dish_count_range(request.days)
+    min_dishes, max_dishes = dish_count_range(request.days, request.meals_per_day)
     if not (min_dishes <= len(dishes_raw) <= max_dishes):
         return None, f"dishes должен содержать {min_dishes}..{max_dishes} блюд"
 
