@@ -238,6 +238,49 @@ class TestRestorePreviousQuantities:
         assert result["products"][0]["q"] == 3
 
 
+class TestHallucinatedXmlIdFilter:
+    """Filter out xml_ids not found in product_index (LLM hallucinations)."""
+
+    def test_drops_unknown_xml_ids(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {
+                "products": [
+                    {"xml_id": 111, "q": 1},
+                    {"xml_id": 12345, "q": 1},
+                    {"xml_id": 222, "q": 2},
+                    {"xml_id": 99999, "q": 1},
+                ]
+            },
+            product_index={
+                111: {"xml_id": 111, "name": "Молоко", "unit": "шт"},
+                222: {"xml_id": 222, "name": "Хлеб", "unit": "шт"},
+            },
+        )
+        products = result["products"]
+        xml_ids = [p["xml_id"] for p in products]
+        assert xml_ids == [111, 222]
+
+    def test_keeps_all_when_all_valid(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 2}, {"xml_id": 2, "q": 3}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Рис", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Гречка", "unit": "шт"},
+            },
+        )
+        assert len(result["products"]) == 2
+
+    def test_no_filter_when_product_index_empty(self) -> None:
+        """Without product_index, no filtering is applied."""
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 12345, "q": 1}]},
+        )
+        assert len(result["products"]) == 1
+
+
 class TestMaxQtyCap:
     """NEG02: max qty safeguard caps absurd quantities after unit normalization."""
 
