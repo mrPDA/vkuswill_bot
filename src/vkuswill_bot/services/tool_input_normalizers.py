@@ -53,6 +53,9 @@ def clean_search_query(query: str) -> str:
     return cleaned or query
 
 
+MAX_ITEM_QTY = 20
+
+
 def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
     """Исправить аргументы корзины: подставить q=1 и объединить дубли xml_id."""
     products = arguments.get("products")

@@ -238,6 +238,34 @@ class TestRestorePreviousQuantities:
         assert result["products"][0]["q"] == 3
 
 
+class TestMaxQtyCap:
+    """NEG02: max qty safeguard caps absurd quantities after unit normalization."""
+
+    def test_caps_absurd_qty_at_20(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 30}, {"xml_id": 2, "q": 15}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Орехи", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Мёд", "unit": "шт"},
+            },
+        )
+        assert result["products"][0]["q"] == 20
+        assert result["products"][1]["q"] == 15
+
+    def test_normal_qty_unchanged(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 6}, {"xml_id": 2, "q": 12}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Рис", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Молоко", "unit": "шт"},
+            },
+        )
+        assert result["products"][0]["q"] == 6
+        assert result["products"][1]["q"] == 12
+
+
 # ── normalize_recipe_search_args ──────────────────────────────────
 
 

@@ -9,6 +9,7 @@ from typing import Any
 
 from vkuswill_bot.agents.quantity_utils import DISCRETE_UNITS, round_kilogram_quantity
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.tool_input_normalizers import MAX_ITEM_QTY
 
 _EGG_PACK_SIZE = 10
 _ADDITIVE_CART_MARKERS = (
@@ -78,6 +79,12 @@ def preprocess_cart_link_args(
             continue
         if unit in {"кг", "kg"}:
             item["q"] = round_kilogram_quantity(q)
+
+    for item in products:
+        if isinstance(item, dict):
+            q = _safe_float(item.get("q"), default=1.0)
+            if q > MAX_ITEM_QTY:
+                item["q"] = MAX_ITEM_QTY
     return normalized
 
 
