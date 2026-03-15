@@ -280,7 +280,7 @@ async def build_turn_state(
     )
 
     multi_course_expected = 0
-    if prompt_profile == "recipe":
+    if prompt_profile in ("recipe", "cart"):
         multi_course_expected = count_expected_recipe_courses(normalized_text)
 
     return TurnState(
