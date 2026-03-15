@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import re
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
@@ -18,6 +17,13 @@ from aiogram.types import (
     Message,
 )
 
+from vkuswill_bot.bot.telegram_delivery import (
+    MAX_TELEGRAM_MESSAGE_LENGTH,
+    _extract_cart_link,
+    _sanitize_telegram_html,
+    _split_message,
+    build_telegram_delivery_preview,
+)
 from vkuswill_bot.services.chat_engine import ChatEngineProtocol
 
 if TYPE_CHECKING:
@@ -26,45 +32,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Максимальная длина одного сообщения в Telegram
-MAX_TELEGRAM_MESSAGE_LENGTH = 4096
-
-# ---------------------------------------------------------------------------
-# HTML-санитизация: whitelist безопасных Telegram-тегов
-# ---------------------------------------------------------------------------
-
-# Теги, которые поддерживает Telegram Bot API в ParseMode.HTML
-_ALLOWED_TAGS = frozenset(
-    {
-        "b",
-        "strong",
-        "i",
-        "em",
-        "u",
-        "ins",
-        "s",
-        "strike",
-        "del",
-        "code",
-        "pre",
-        "a",
-        "blockquote",
-        "tg-spoiler",
-        "tg-emoji",
-    }
-)
-
-# Regex: находит все HTML-теги  <tag ...>, </tag>, <tag/>
-_TAG_RE = re.compile(r"<(/?)([a-zA-Z][a-zA-Z0-9-]*)((?:\s+[^>]*)?)(/?\s*)>")
-
-# Regex: валидирует атрибут href с http/https URL (для <a>)
-_SAFE_HREF_RE = re.compile(r'^\s+href\s*=\s*"https?://[^"]*"\s*$')
-
-# Regex: извлекает URL из ссылки «Открыть корзину» в ответе LLM
-_CART_LINK_RE = re.compile(
-    r'<a\s+href="(https?://[^"]+)"[^>]*>[^<]*(?:корзин|[Cc]art)[^<]*</a>',
-    re.IGNORECASE,
-)
+__all__ = [
+    "MAX_TELEGRAM_MESSAGE_LENGTH",
+    "_extract_cart_link",
+    "_sanitize_telegram_html",
+    "_split_message",
+]
 
 
 def _freemium_user_note() -> str:
@@ -81,87 +54,6 @@ def _freemium_user_note() -> str:
         f"+{app_config.feedback_cart_bonus} корзины "
         f"(1 раз в {app_config.feedback_bonus_cooldown_days} дней)"
     )
-
-
-def _sanitize_telegram_html(text: str) -> str:
-    """Санитизация HTML по whitelist-принципу.
-
-    Разрешённые теги Telegram (b, i, a href, code, pre и др.) —
-    пропускаются. Все остальные теги (script, img, iframe и пр.) —
-    экранируются в &lt;/&gt;.
-
-    HTML-сущности (&nbsp;, &amp; и др.) сохраняются как есть.
-    """
-
-    def _check_tag(match: re.Match) -> str:
-        full = match.group(0)
-        closing = match.group(1)  # "/" для закрывающих тегов
-        tag = match.group(2).lower()
-        attrs = match.group(3)  # строка атрибутов
-
-        # Тег не в whitelist — экранируем
-        if tag not in _ALLOWED_TAGS:
-            return full.replace("<", "&lt;").replace(">", "&gt;")
-
-        # Закрывающий тег — безопасен
-        if closing:
-            return full
-
-        # <a href="https://..."> — проверяем что href безопасен
-        if tag == "a" and attrs.strip():
-            if not _SAFE_HREF_RE.match(attrs):
-                return full.replace("<", "&lt;").replace(">", "&gt;")
-            return full
-
-        # Остальные разрешённые теги — убираем атрибуты для безопасности
-        # (предотвращает <b onclick="..."> и подобное)
-        if attrs.strip():
-            return f"<{tag}>"
-
-        return full
-
-    return _TAG_RE.sub(_check_tag, text)
-
-
-def _extract_cart_link(text: str) -> tuple[str, InlineKeyboardMarkup | None]:
-    """Извлечь URL корзины из HTML, удалить текстовую ссылку, вернуть кнопку.
-
-    Возвращает (очищенный текст, InlineKeyboardMarkup | None).
-    Текстовая ссылка убирается — остаётся только inline-кнопка.
-    """
-    match = _CART_LINK_RE.search(text)
-    if not match:
-        return text, None
-    cart_url = match.group(1)
-
-    # Удаляем текстовую ссылку и окружающие пустые строки
-    cleaned = _CART_LINK_RE.sub("", text)
-    # Убираем возможные эмодзи-префиксы (🛒) перед удалённой ссылкой
-    cleaned = re.sub(r"[\U0001f6d2\U0001f6d2]\s*\n*", "", cleaned)
-    # Схлопываем тройные+ пустые строки до двойных
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned).strip()
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="\U0001f6d2 Открыть корзину",
-                    url=cart_url,
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    text="\U0001f44d Подобрано хорошо",
-                    callback_data="cart_fb_pos",
-                ),
-                InlineKeyboardButton(
-                    text="\U0001f44e Не то",
-                    callback_data="cart_fb_neg",
-                ),
-            ],
-        ],
-    )
-    return cleaned, keyboard
 
 
 router = Router()
@@ -1227,19 +1119,10 @@ async def handle_text(
             with contextlib.suppress(Exception):
                 await progress_msg.delete()
 
-    # Санитизация: пропускаем только Telegram-безопасные HTML-теги,
-    # экранируем опасные (script, img, iframe и пр.)
-    safe_response = _sanitize_telegram_html(response)
-
-    # Извлекаем URL корзины → inline-кнопка, убираем текстовую ссылку
-    safe_response, cart_keyboard = _extract_cart_link(safe_response)
-
-    # Разбиваем длинные сообщения по лимиту Telegram
-    chunks = _split_message(safe_response, MAX_TELEGRAM_MESSAGE_LENGTH)
-    for i, chunk in enumerate(chunks):
-        is_last = i == len(chunks) - 1
-        # Inline-кнопку прикрепляем к последнему чанку
-        await message.answer(chunk, reply_markup=cart_keyboard if is_last else None)
+    preview = build_telegram_delivery_preview(response)
+    for i, chunk in enumerate(preview.chunks):
+        is_last = i == len(preview.chunks) - 1
+        await message.answer(chunk, reply_markup=preview.cart_keyboard if is_last else None)
 
 
 async def _send_typing_periodically(
@@ -1254,32 +1137,6 @@ async def _send_typing_periodically(
             logger.debug("Ошибка отправки typing indicator: %s", e)
         with contextlib.suppress(asyncio.TimeoutError):
             await asyncio.wait_for(stop_event.wait(), timeout=4.0)
-
-
-def _split_message(text: str, max_length: int) -> list[str]:
-    """Разбить длинное сообщение на части для Telegram."""
-    if len(text) <= max_length:
-        return [text]
-
-    chunks: list[str] = []
-    while text:
-        if len(text) <= max_length:
-            chunks.append(text)
-            break
-
-        # Ищем подходящее место для разрыва
-        split_pos = text.rfind("\n\n", 0, max_length)
-        if split_pos == -1:
-            split_pos = text.rfind("\n", 0, max_length)
-        if split_pos == -1:
-            split_pos = text.rfind(" ", 0, max_length)
-        if split_pos == -1:
-            split_pos = max_length
-
-        chunks.append(text[:split_pos])
-        text = text[split_pos:].lstrip()
-
-    return chunks
 
 
 # ---------------------------------------------------------------------------
