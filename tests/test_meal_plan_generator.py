@@ -214,7 +214,8 @@ async def test_generate_meal_plan_returns_error_when_retry_not_json() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_meal_plan_rejects_hard_constraint_violation() -> None:
+async def test_generate_meal_plan_logs_phase1_violation_as_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Phase 1 (dish-name heuristic) is non-blocking — plan passes through."""
     request = parse_meal_plan_request("меню на неделю для 2 человек, один веган", {})
     payload = {
         "schema_version": 1,
@@ -233,7 +234,6 @@ async def test_generate_meal_plan_rejects_hard_constraint_violation() -> None:
     agent = _FakeGeneratorAgent(
         [
             _resp(json.dumps(payload, ensure_ascii=False)),
-            _resp(json.dumps(payload, ensure_ascii=False)),
         ]
     )
 
@@ -243,8 +243,9 @@ async def test_generate_meal_plan_rejects_hard_constraint_violation() -> None:
         llm_provider="qwen_openai",
     )
 
-    assert plan is None
-    assert "hard_constraints violated" in error
+    assert plan is not None
+    assert error == ""
+    assert "phase1 dish-name heuristic (non-blocking)" in caplog.text
 
 
 @pytest.mark.asyncio
