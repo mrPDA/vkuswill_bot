@@ -378,3 +378,23 @@ class TestNormalizeColloquialNumerals:
         from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
 
         assert normalize_colloquial_numerals(text) == expected
+
+
+class TestNormalizeMultilingualGroceryText:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "I need milk, bread, eggs and cheese please",
+                "молоко, хлеб, яйца и сыр",
+            ),
+            ("moloko 2 litra, hleb, maslo", "молоко 2 литра, хлеб, масло"),
+            ("сыр и хлеб", "сыр и хлеб"),
+        ],
+    )
+    def test_normalize(self, text: str, expected: str) -> None:
+        from vkuswill_bot.services.tool_input_normalizers import (
+            normalize_multilingual_grocery_text,
+        )
+
+        assert normalize_multilingual_grocery_text(text) == expected

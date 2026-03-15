@@ -34,6 +34,7 @@ source .env
 set +a
 export RUN_STAGE_RESPONSE_CONTRACTS=1
 export STAGE_BASE_URL="https://89.169.138.16"
+export STAGE_VERIFY_SSL=0
 ```
 
 Нужны:
@@ -42,6 +43,8 @@ export STAGE_BASE_URL="https://89.169.138.16"
 - `LANGFUSE_HOST`
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
+
+`STAGE_VERIFY_SSL=0` по умолчанию подходит для текущего stage с self-signed TLS на debug API. Если сертификат станет доверенным, можно включить строгую проверку через `STAGE_VERIFY_SSL=1`.
 
 Запуск:
 

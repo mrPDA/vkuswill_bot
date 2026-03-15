@@ -23,6 +23,37 @@ _COLLOQUIAL_NUMERALS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bчетверть\b", re.I), "0.25"),
 ]
 
+_MULTILINGUAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\bi\s+need\b", re.I), ""),
+    (re.compile(r"\bplease\b", re.I), ""),
+    (re.compile(r"\band\b", re.I), " и "),
+    (re.compile(r"\bsour\s+cream\b", re.I), "сметана"),
+    (re.compile(r"\bpotatoes\b", re.I), "картофель"),
+    (re.compile(r"\bpotato\b", re.I), "картофель"),
+    (re.compile(r"\btomatoes\b", re.I), "помидоры"),
+    (re.compile(r"\btomato\b", re.I), "помидоры"),
+    (re.compile(r"\bchicken\b", re.I), "курица"),
+    (re.compile(r"\bbutter\b", re.I), "масло"),
+    (re.compile(r"\bcheese\b", re.I), "сыр"),
+    (re.compile(r"\beggs\b", re.I), "яйца"),
+    (re.compile(r"\begg\b", re.I), "яйца"),
+    (re.compile(r"\bbread\b", re.I), "хлеб"),
+    (re.compile(r"\bmilk\b", re.I), "молоко"),
+    (re.compile(r"\brice\b", re.I), "рис"),
+    (re.compile(r"\bcream\b", re.I), "сливки"),
+    (re.compile(r"\bkefir\b", re.I), "кефир"),
+    (re.compile(r"\bmoloko\b", re.I), "молоко"),
+    (re.compile(r"\bhleb\b", re.I), "хлеб"),
+    (re.compile(r"\bmaslo\b", re.I), "масло"),
+    (re.compile(r"\bsyr\b", re.I), "сыр"),
+    (re.compile(r"\bsir\b", re.I), "сыр"),
+    (re.compile(r"\byaic[ao]?\b", re.I), "яйца"),
+    (re.compile(r"\byaits[ao]?\b", re.I), "яйца"),
+    (re.compile(r"\blitra\b", re.I), "литра"),
+    (re.compile(r"\blitrov\b", re.I), "литров"),
+    (re.compile(r"\blitr\b", re.I), "литр"),
+]
+
 
 def normalize_colloquial_numerals(text: str) -> str:
     """Replace colloquial Russian numerals with digit equivalents."""
@@ -30,6 +61,23 @@ def normalize_colloquial_numerals(text: str) -> str:
     for pattern, replacement in _COLLOQUIAL_NUMERALS:
         result = pattern.sub(replacement, result)
     return result
+
+
+def normalize_multilingual_grocery_text(text: str) -> str:
+    """Map common English/translit grocery terms to Russian equivalents."""
+    if not text or not re.search(r"[A-Za-z]", text):
+        return text
+
+    result = text
+    for pattern, replacement in _MULTILINGUAL_REPLACEMENTS:
+        result = pattern.sub(replacement, result)
+
+    result = re.sub(r"\s+", " ", result)
+    result = re.sub(r"\s+,", ",", result)
+    result = re.sub(r",\s*,+", ", ", result)
+    result = re.sub(r"\s+\.", ".", result)
+    result = re.sub(r"\s+([!?])", r"\1", result)
+    return result.strip(" ,") or text
 
 
 # Паттерн для удаления количества/единиц из поискового запроса.
