@@ -54,7 +54,12 @@ HABR_STRATEGY.md
 TEST_REVIEW_RECOMMENDATIONS.md
 articles/
 docs/*
+# Эти onboarding-доки сознательно трекаются и доступны из README/AGENTS.
 !docs/PRIVACY_POLICY.md
+!docs/integration-setup.md
+!docs/agent-kickoff.md
+!docs/TEAM_HISPANIOLA.md
+!docs/ARCHITECTURE.md
 
 # Shell-скрипты (локальные)
 run.sh

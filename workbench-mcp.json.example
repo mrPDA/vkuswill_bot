@@ -1,0 +1,24 @@
+{
+  "_comment": "Шаблон конфигурации Git/MCP Workbench для Cursor IDE. Скопируй в .cursor/mcp.json и замени пути на свои.",
+  "mcpServers": {
+    "git_mcp_workbench": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "<PATH_TO_MCP_WORKBENCH_REPO>",
+        "python",
+        "-m",
+        "git_mcp_workbench.interfaces.mcp_server"
+      ],
+      "env": {
+        "TARGET_REPO_PATH": "<PATH_TO_THIS_REPO>",
+        "NOTESFORLLM_COMMAND": "uv",
+        "NOTESFORLLM_ARGS": "run --directory <PATH_TO_NOTESFORLLM_REPO> --extra mcp python -m notesforllm.mcp_server.run",
+        "NOTESFORLLM_SPACE_ID": "<PRODUCT_SPACE_UUID>",
+        "NOTESFORLLM_VERIFICATION_SPACE_ID": "<VERIFICATION_SPACE_UUID>",
+        "NOTESFORLLM_AGENT_ID": "vkuswill-bot-workbench"
+      }
+    }
+  }
+}
