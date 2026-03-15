@@ -31,6 +31,16 @@ def _stable_prompts():
         yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_mcp_circuit_breaker():
+    """Reset module-level MCP circuit breaker so tests don't leak state."""
+    from vkuswill_bot.agents.meal_plan_ingredient_collection import _mcp_recipe_breaker
+
+    _mcp_recipe_breaker.record_success()
+    yield
+    _mcp_recipe_breaker.record_success()
+
+
 @pytest.fixture
 def mcp_client() -> VkusvillMCPClient:
     """MCP-клиент с тестовым URL."""
