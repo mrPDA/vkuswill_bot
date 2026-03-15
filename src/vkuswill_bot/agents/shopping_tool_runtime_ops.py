@@ -90,9 +90,24 @@ async def execute_tool_calls(
     else:
         state.single_search_steps_streak = 0
 
+    cart_created_this_step = False
     for tool_call in tool_calls:
         tool_name = str(tool_call.get("name", "")).strip()
         tool_call_id = str(tool_call.get("id", "")).strip()
+
+        if tool_name == "vkusvill_cart_link_create" and (
+            cart_created_this_step or state.cart_data_this_turn is not None
+        ):
+            state.history.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call_id,
+                    "name": tool_name,
+                    "content": '{"ok":true,"data":{"note":"duplicate call skipped"}}',
+                }
+            )
+            continue
+
         raw_tool_args = parse_tool_args(tool_call.get("arguments"))
         raw_tool_args_snapshot = copy.deepcopy(raw_tool_args)
         requested_quantity_overrides: dict[int, float] = {}
@@ -175,6 +190,7 @@ async def execute_tool_calls(
             if requested_products_snapshot and "requested_products" not in cart_data:
                 cart_data["requested_products"] = requested_products_snapshot
             state.cart_data_this_turn = cart_data
+            cart_created_this_step = True
 
         agent._capture_cart_snapshot(
             user_id=user_id,

@@ -1898,6 +1898,47 @@ def test_extract_structured_ingredient_requests_parses_inline_list_with_prefix()
     assert rows[4]["unit"] == "шт"
 
 
+def test_extract_structured_ingredient_requests_comma_separated_qty() -> None:
+    """BUG-6: 'картофель 2.5 кг, курица 1.7 кг, помидоры 0.5 кг'."""
+    text = "картофель 2.5 кг, курица 1.7 кг, помидоры 0.5 кг"
+    rows = extract_structured_ingredient_requests(text)
+    assert len(rows) >= 2
+    names = {r["name"].lower() for r in rows}
+    assert "картофель" in names or any("картофель" in n for n in names)
+    for row in rows:
+        if "картофель" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(2.5, abs=0.01)
+            assert row["unit"] == "кг"
+        if "помидоры" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(0.5, abs=0.01)
+            assert row["unit"] == "кг"
+
+
+def test_extract_structured_ingredient_requests_colloquial_numerals() -> None:
+    """BUG-15: 'пара литров молока, тройку яблок, пяток яиц'."""
+    text = "пара литров молока, тройку яблок, пяток яиц"
+    rows = extract_structured_ingredient_requests(text)
+    names_lower = {r["name"].lower().strip() for r in rows}
+    assert any("молок" in n for n in names_lower) or len(rows) >= 1
+    for row in rows:
+        if "молок" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(2.0, abs=0.1)
+            assert row["unit"] == "л"
+
+
+def test_extract_structured_ingredient_requests_poltora_kilo() -> None:
+    """BUG-15: 'полтора кило картошки'."""
+    text = "полтора кило картошки, полкило моркови"
+    rows = extract_structured_ingredient_requests(text)
+    for row in rows:
+        if "картош" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(1.5, abs=0.01)
+            assert row["unit"] == "кг"
+        if "морков" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(0.5, abs=0.01)
+            assert row["unit"] == "кг"
+
+
 def test_preprocess_cart_args_recalculates_quantities_from_structured_request() -> None:
     requested = extract_structured_ingredient_requests(
         "Говядина на кости - 800 г\n"

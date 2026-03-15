@@ -431,6 +431,79 @@ class TestHardConstraintValidation:
         violations = validate_hard_constraints(request=request, dishes=dishes)
         assert any("орех" in v.lower() for v in violations)
 
+    def test_gluten_allergen_rejects_oat_dish(self) -> None:
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Овсяная каша", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Салат", 1, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рис", 1, "dinner", 2, ["adults"], []),
+            MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рагу", 2, "dinner", 2, ["adults"], []),
+            MealPlanDish("Каша рисовая", 3, "breakfast", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert any("глютен" in v.lower() and "овсяная" in v.lower() for v in violations)
+
+    def test_gluten_allergen_rejects_pasta(self) -> None:
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Макароны по-флотски", 1, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рис", 1, "dinner", 2, ["adults"], []),
+            MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Салат", 2, "dinner", 2, ["adults"], []),
+            MealPlanDish("Рагу", 3, "lunch", 2, ["adults"], []),
+            MealPlanDish("Каша рисовая", 3, "breakfast", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert any("глютен" in v.lower() and "макарон" in v.lower() for v in violations)
+
+    def test_compound_allergens_split_correctly(self) -> None:
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на молоко и глютен", EMPTY_PROFILE
+        )
+        allergens = request.groups[0].hard_constraints.get("allergens_excluded", [])
+        assert "молоко" in allergens
+        assert "глютен" in allergens
+
+    def test_dairy_allergen_rejects_cheese(self) -> None:
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на молоко", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Сырники", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Рис", 1, "lunch", 2, ["adults"], []),
+            MealPlanDish("Салат", 1, "dinner", 2, ["adults"], []),
+            MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рагу", 2, "dinner", 2, ["adults"], []),
+            MealPlanDish("Каша рисовая", 3, "breakfast", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert any("молоко" in v.lower() for v in violations)
+
+    def test_gluten_zapekanka_no_false_positive(self) -> None:
+        """Запеканка не должна ложно срабатывать на ореховый аллерген."""
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на орехи", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Запеканка", 1, "dinner", 2, ["adults"], []),
+            MealPlanDish("Каша", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рис", 2, "dinner", 2, ["adults"], []),
+            MealPlanDish("Гречка", 3, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Тыквенный суп", 3, "lunch", 2, ["adults"], []),
+            MealPlanDish("Рагу", 3, "dinner", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert not any("запеканка" in v.lower() for v in violations)
+
 
 # ═══════════════════════════════════════════════════
 # TP-11: Soft coverage (кухни)

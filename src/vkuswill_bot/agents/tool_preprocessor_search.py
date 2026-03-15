@@ -5,6 +5,9 @@ from __future__ import annotations
 from typing import Any
 
 from vkuswill_bot.services.search_processor import SearchProcessor
+from vkuswill_bot.services.tool_input_normalizers import (
+    clean_search_query as _clean_search_query,
+)
 
 
 def apply_preferences_to_query(query: str, user_prefs: dict[str, str]) -> str:
@@ -29,21 +32,27 @@ def preprocess_products_search_args(
     normalized_search_args = dict(tool_args)
     if "page" in normalized_search_args:
         normalized_search_args.pop("page", None)
-    prefs = user_preferences or {}
-    if not prefs:
-        return normalized_search_args
+
     query_key = None
     if isinstance(normalized_search_args.get("q"), str):
         query_key = "q"
     elif isinstance(normalized_search_args.get("query"), str):
         query_key = "query"
-    if query_key is None:
+    if query_key is not None:
+        original_query = str(normalized_search_args.get(query_key, "")).strip()
+        if original_query:
+            cleaned = _clean_search_query(original_query)
+            if cleaned and cleaned != original_query:
+                normalized_search_args[query_key] = cleaned
+
+    prefs = user_preferences or {}
+    if not prefs or query_key is None:
         return normalized_search_args
-    original_query = str(normalized_search_args.get(query_key, "")).strip()
-    if not original_query:
+    current_query = str(normalized_search_args.get(query_key, "")).strip()
+    if not current_query:
         return normalized_search_args
-    enhanced_query = apply_preferences_to_query(original_query, prefs)
-    if enhanced_query == original_query:
+    enhanced_query = apply_preferences_to_query(current_query, prefs)
+    if enhanced_query == current_query:
         return normalized_search_args
     return {**normalized_search_args, query_key: enhanced_query}
 

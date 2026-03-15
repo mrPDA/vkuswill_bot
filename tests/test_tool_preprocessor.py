@@ -4,8 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-
 import json
+
+import pytest
 
 from vkuswill_bot.agents.tool_preprocessor import (
     apply_preferences_to_query,
@@ -107,6 +108,25 @@ class TestPreprocessToolArgsSearch:
             user_preferences={"молоко": "безлактозное"},
         )
         assert "безлактозное" in result["q"]
+
+    def test_strips_quantity_from_search_query(self) -> None:
+        """BUG-7: 'яйца 30 штук' should become 'яйца'."""
+        result = preprocess_tool_args(
+            "vkusvill_products_search",
+            {"q": "яйца 30 штук"},
+        )
+        assert "30" not in result["q"]
+        assert "штук" not in result["q"]
+        assert "яйца" in result["q"]
+
+    def test_strips_quantity_kg_from_search_query(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_products_search",
+            {"q": "картофель 2.5 кг"},
+        )
+        assert "2.5" not in result["q"]
+        assert "кг" not in result["q"]
+        assert "картофель" in result["q"]
 
     def test_unknown_tool_passthrough(self) -> None:
         args = {"foo": "bar"}
@@ -274,3 +294,27 @@ class TestInjectPreferenceMismatchHint:
         )
         parsed = json.loads(result)
         assert "relevance_warning" not in parsed.get("data", {})
+
+
+class TestNormalizeColloquialNumerals:
+    """BUG-15: разговорные числительные → цифры."""
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            ("полтора кило картошки", "1.5 кг картошки"),
+            ("полкило моркови", "0.5 кг моркови"),
+            ("пару литров молока", "2 литров молока"),
+            ("тройку яблок", "3 яблок"),
+            ("пяток яиц", "5 яиц"),
+            ("десяток яиц", "10 яиц"),
+            ("дюжину булочек", "12 булочек"),
+            ("четверть кило масла", "0.25 кг масла"),
+            ("полтора литра молока", "1.5 л молока"),
+            ("без числительных", "без числительных"),
+        ],
+    )
+    def test_normalize(self, text: str, expected: str) -> None:
+        from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
+
+        assert normalize_colloquial_numerals(text) == expected
