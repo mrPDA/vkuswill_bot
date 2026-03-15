@@ -16,16 +16,49 @@ _PEOPLE_RE = re.compile(r"для\s+(\d+)\s+(?:чел|человек)", flags=re.
 _CHILD_COUNT_RE = re.compile(r"(\d+)\s*(?:ребен(?:ок|ка|ку|ком)|дет(?:и|ей|ям|ьми))", re.IGNORECASE)
 _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет|год|г)", re.IGNORECASE)
 _ALLERGY_RE = re.compile(r"аллерг\w*\s+на\s+([^\n,.;:]+)", re.IGNORECASE)
+_WITHOUT_RE = re.compile(
+    r"без\s+(лактоз\w*|глютен\w*|молочн\w*|сахар\w*|мяс\w*|рыб\w*|яиц\w*|оре\w*)",
+    re.IGNORECASE,
+)
 _SEGMENTED_ADULTS_RE = re.compile(r"один[^.]{0,60}(другой|второй)", re.IGNORECASE)
 
+_REQUESTED_MEAL_MARKERS: dict[str, tuple[str, ...]] = {
+    "breakfast": ("завтрак",),
+    "lunch": ("обед",),
+    "dinner": ("ужин",),
+}
 
-def dish_count_range(days: int) -> tuple[int, int]:
-    """Acceptable (min, max) dish count for a given plan duration."""
+_EXCLUSION_NORMALIZE: dict[str, str] = {
+    "лактоз": "лактоза",
+    "глютен": "глютен",
+    "молочн": "молочные",
+    "сахар": "сахар",
+    "мяс": "мясо",
+    "рыб": "рыба",
+    "яиц": "яйца",
+    "оре": "орехи",
+}
+
+
+def dish_count_range(days: int, meals_per_day: int = 1) -> tuple[int, int]:
+    """Acceptable (min, max) dish count for a given plan duration.
+
+    When meals_per_day > 1 (e.g. breakfast+lunch+dinner=3), the range
+    scales up to ensure adequate coverage across all daily slots.
+    """
+    if meals_per_day <= 1:
+        if days <= 2:
+            return 3, 6
+        if days <= 7:
+            return 7, 10
+        return days, min(days + 4, 21)
+
+    total_slots = days * meals_per_day
     if days <= 2:
-        return 3, 6
-    if days <= 7:
-        return 7, 10
-    return days, min(days + 4, 21)
+        return max(3, total_slots - 1), total_slots
+    min_dishes = max(7, total_slots * 2 // 3)
+    max_dishes = min(total_slots, 28)
+    return min_dishes, max_dishes
 
 
 _DIET_KEYWORDS = {
@@ -66,13 +99,18 @@ class MealPlanRequest:
     operational_preferences: dict[str, Any] = field(default_factory=dict)
     preferences_trace: list[dict[str, Any]] = field(default_factory=list)
     applied_preferences_trace: list[dict[str, Any]] = field(default_factory=list)
+    requested_meal_types: list[str] = field(default_factory=list)
+
+    @property
+    def meals_per_day(self) -> int:
+        return len(self.requested_meal_types) if self.requested_meal_types else 1
 
     def group_ids(self) -> set[str]:
         return {group.id for group in self.groups}
 
     def to_prompt_dict(self) -> dict[str, Any]:
-        min_d, max_d = dish_count_range(self.days)
-        return {
+        min_d, max_d = dish_count_range(self.days, self.meals_per_day)
+        d: dict[str, Any] = {
             "people_total": self.people_total,
             "days": self.days,
             "min_dishes": min_d,
@@ -82,6 +120,9 @@ class MealPlanRequest:
             "preferences_trace": self.preferences_trace,
             "applied_preferences_trace": self.applied_preferences_trace,
         }
+        if self.requested_meal_types:
+            d["requested_meal_types"] = self.requested_meal_types
+        return d
 
 
 @dataclass(slots=True)
@@ -176,14 +217,32 @@ def _extract_cuisines(text: str) -> list[str]:
 
 
 def _extract_allergens(text: str) -> list[str]:
-    match = _ALLERGY_RE.search(text.lower())
-    if not match:
-        return []
-    raw = match.group(1).strip()
-    if not raw:
-        return []
-    parts = re.split(r"\s+и\s+|,\s*", raw)
-    return [p.strip() for p in parts if p.strip()]
+    low = text.lower()
+    result: list[str] = []
+    match = _ALLERGY_RE.search(low)
+    if match:
+        raw = match.group(1).strip()
+        if raw:
+            parts = re.split(r"\s+и\s+|,\s*", raw)
+            result.extend(p.strip() for p in parts if p.strip())
+    for m in _WITHOUT_RE.finditer(low):
+        word = m.group(1).strip()
+        for prefix, normalized in _EXCLUSION_NORMALIZE.items():
+            if word.startswith(prefix):
+                if normalized not in result:
+                    result.append(normalized)
+                break
+    return result
+
+
+def _extract_requested_meal_types(text: str) -> list[str]:
+    """Extract meal types explicitly mentioned by the user."""
+    low = text.lower()
+    types: list[str] = []
+    for meal_type, markers in _REQUESTED_MEAL_MARKERS.items():
+        if any(marker in low for marker in markers):
+            types.append(meal_type)
+    return types
 
 
 def _merge_unique(left: list[str], right: list[str]) -> list[str]:
@@ -302,10 +361,13 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
             )
         )
 
+    requested_meal_types = _extract_requested_meal_types(text)
+
     return MealPlanRequest(
         people_total=people_total,
         days=days,
         groups=groups,
         operational_preferences=operational,
         preferences_trace=preferences_trace,
+        requested_meal_types=requested_meal_types,
     )

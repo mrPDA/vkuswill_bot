@@ -68,6 +68,7 @@ _ALLERGEN_ALIASES: dict[str, set[str]] = {
     "nuts": _NUT_MARKERS,
     "орехи": _NUT_MARKERS,
     "lactose": _DAIRY_MARKERS,
+    "лактоза": _DAIRY_MARKERS,
     "молоко": _DAIRY_MARKERS,
     "молочные": _DAIRY_MARKERS,
     "молочное": _DAIRY_MARKERS,
