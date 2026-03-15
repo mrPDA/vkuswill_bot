@@ -487,6 +487,60 @@ class TestHardConstraintValidation:
         violations = validate_hard_constraints(request=request, dishes=dishes)
         assert any("молоко" in v.lower() for v in violations)
 
+    def test_bez_glutena_in_dish_name_no_false_positive(self) -> None:
+        """'без глютена' in dish name must NOT trigger gluten allergen violation."""
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish(
+                "Овощной суп на курином бульоне без глютена",
+                1, "lunch", 2, ["adults"], ["русская"],
+            ),
+            MealPlanDish("Гречневая каша на воде", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Запечённая курица с овощами", 2, "dinner", 2, ["adults"], []),
+            MealPlanDish("Рис с тушеной индейкой", 3, "lunch", 2, ["adults"], []),
+            MealPlanDish("Картофельное пюре", 3, "dinner", 2, ["adults"], []),
+            MealPlanDish("Фруктовый салат", 2, "snack_1", 2, ["adults"], []),
+            MealPlanDish("Овощное рагу", 3, "breakfast", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert not any("без глютена" in v.lower() for v in violations)
+
+    def test_mannaya_kasha_correctly_flagged_for_gluten(self) -> None:
+        """Манная каша contains wheat → must be flagged for gluten allergen."""
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Манная каша на воде", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Рис с овощами", 1, "lunch", 2, ["adults"], []),
+            MealPlanDish("Гречневая каша", 2, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп овощной", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Картофель", 3, "dinner", 2, ["adults"], []),
+            MealPlanDish("Фрукты", 2, "snack_1", 2, ["adults"], []),
+            MealPlanDish("Запечённая рыба", 3, "lunch", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert any("манная" in v.lower() for v in violations)
+
+    def test_bezglyutenovye_compound_no_false_positive(self) -> None:
+        """Compound 'безглютеновые' must NOT trigger gluten violation."""
+        request = parse_meal_plan_request(
+            "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
+        )
+        dishes = [
+            MealPlanDish("Безглютеновые оладьи из гречневой крупы", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Рис с овощами", 1, "lunch", 2, ["adults"], []),
+            MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),
+            MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
+            MealPlanDish("Картофель", 3, "dinner", 2, ["adults"], []),
+            MealPlanDish("Запечённая рыба", 3, "lunch", 2, ["adults"], []),
+            MealPlanDish("Фруктовый салат", 2, "snack_1", 2, ["adults"], []),
+        ]
+        violations = validate_hard_constraints(request=request, dishes=dishes)
+        assert not any("безглютенов" in v.lower() for v in violations)
+
     def test_gluten_zapekanka_no_false_positive(self) -> None:
         """Запеканка не должна ложно срабатывать на ореховый аллерген."""
         request = parse_meal_plan_request(
