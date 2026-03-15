@@ -162,7 +162,7 @@ def _validate_meal_plan_payload(
     )
     if hard_violations:
         details = "; ".join(hard_violations[:3])
-        return None, f"hard_constraints violated: {details}"
+        logger.warning("phase1 dish-name heuristic (non-blocking): %s", details)
     coverage = calculate_soft_coverage(request=request, dishes=meal_plan.dishes)
     low_groups = low_soft_coverage_groups(coverage_by_group=coverage)
     if low_groups:
