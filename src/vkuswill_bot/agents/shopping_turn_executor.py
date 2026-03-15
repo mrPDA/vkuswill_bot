@@ -8,6 +8,7 @@ import time
 from typing import TYPE_CHECKING, Any
 from vkuswill_bot.agents.exceptions import LLMOverloadedError
 from vkuswill_bot.agents.meal_plan_executor import run_meal_plan_turn
+from vkuswill_bot.agents.multi_course_executor import run_multi_course_turn
 from vkuswill_bot.agents.shopping_turn_message_ops import (
     build_turn_llm_input,
     estimate_usage,
@@ -209,6 +210,62 @@ async def run_locked_turn(
                     trace_id=metrics_trace_id,
                 )
         return result
+
+    # --- Multi-course recipe executor ---
+    _mc_fallback_active = getattr(agent, "_multi_course_fallback_active", False)
+    can_use_multi_course = (
+        state.multi_course_expected >= 2
+        and state.prompt_profile in ("recipe", "cart")
+        and not _mc_fallback_active
+    )
+    if can_use_multi_course:
+
+        async def _mc_fallback(reason: str) -> str:
+            notice = f"⚠️ {reason}. Перехожу к стандартной обработке запроса."
+            agent._multi_course_fallback_active = True
+            try:
+                fallback_text = await run_locked_turn(
+                    agent=agent,
+                    user_id=user_id,
+                    text=text,
+                    on_progress=on_progress,
+                    llm_provider=llm_provider,
+                    record_routing_event=False,
+                )
+            finally:
+                agent._multi_course_fallback_active = False
+            return f"{notice}\n\n{fallback_text}".strip()
+
+        started_at = time.monotonic()
+        result = await run_multi_course_turn(
+            agent=agent,
+            state=state,
+            user_id=user_id,
+            text=text,
+            llm_provider=llm_provider,
+            trace=trace,
+            on_progress=_progress,
+            fallback_to_standard_turn=_mc_fallback,
+            diagnostics=diagnostics,
+        )
+        diagnostics["execution_path"] = "multi_course_executor"
+        diagnostics["multi_course_result"] = (
+            "fallback" if "Перехожу к стандартной обработке запроса." in result else "success"
+        )
+        if metrics_sink is not None:
+            with contextlib.suppress(Exception):
+                await metrics_sink.record_executor_result(
+                    outcome=(
+                        "fallback"
+                        if "Перехожу к стандартной обработке запроса." in result
+                        else "success"
+                    ),
+                    latency_ms=(time.monotonic() - started_at) * 1000,
+                    user_id=user_id,
+                    trace_id=metrics_trace_id,
+                )
+        return result
+
     diagnostics["execution_path"] = "standard_turn"
     tools = await agent._get_tools()
     tool_step_processor: Any = DefaultToolStepProcessor()
