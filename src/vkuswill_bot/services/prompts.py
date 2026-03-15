@@ -13,6 +13,7 @@ import re
 from pathlib import Path
 from typing import Any, Literal
 
+from vkuswill_bot.services.cart_intent_heuristics import looks_like_cart_product_list
 from vkuswill_bot.services.prompt_registry import get_registry
 
 logger = logging.getLogger(__name__)
@@ -361,6 +362,8 @@ def detect_prompt_profile(text: str) -> PromptProfile:
     if any(marker in low for marker in strong_recipe_markers):
         return "recipe"
     if any(marker in low for marker in cart_markers):
+        return "cart"
+    if looks_like_cart_product_list(low):
         return "cart"
     if any(marker in low for marker in dish_name_markers):
         return "recipe"
