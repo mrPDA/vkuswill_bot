@@ -12,6 +12,7 @@ from vkuswill_bot.agents.intent_markers import (
     MODIFY_EXISTING_CART_MARKERS,
     STATUS_QUERY_MARKERS,
 )
+from vkuswill_bot.services.cart_intent_heuristics import looks_like_cart_product_list
 
 
 def is_additive_cart_intent(user_text: str) -> bool:
@@ -21,7 +22,9 @@ def is_additive_cart_intent(user_text: str) -> bool:
 
 def is_cart_intent(user_text: str) -> bool:
     normalized = user_text.lower()
-    return any(marker in normalized for marker in CART_INTENT_MARKERS)
+    return any(marker in normalized for marker in CART_INTENT_MARKERS) or (
+        looks_like_cart_product_list(user_text)
+    )
 
 
 def looks_like_partial_recipe_reply(text: str) -> bool:
