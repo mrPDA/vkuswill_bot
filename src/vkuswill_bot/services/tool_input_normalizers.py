@@ -16,10 +16,10 @@ _COLLOQUIAL_NUMERALS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\bчетверть\s+кило\b", re.I), "0.25 кг"),
     (re.compile(r"\bполтора\b", re.I), "1.5"),
     (re.compile(r"\bпар[уае]\b", re.I), "2"),
-    (re.compile(r"\bтройк[уае]\b", re.I), "3"),
-    (re.compile(r"\bпяточ?к[уае]?\b", re.I), "5"),
-    (re.compile(r"\bдесято?к\b", re.I), "10"),
-    (re.compile(r"\bдюжин[уае]?\b", re.I), "12"),
+    (re.compile(r"\bтройк[уае]\b", re.I), "3 шт"),
+    (re.compile(r"\bпяточ?к[уае]?\b", re.I), "5 шт"),
+    (re.compile(r"\bдесято?к\b", re.I), "10 шт"),
+    (re.compile(r"\bдюжин[уае]?\b", re.I), "12 шт"),
     (re.compile(r"\bчетверть\b", re.I), "0.25"),
 ]
 
