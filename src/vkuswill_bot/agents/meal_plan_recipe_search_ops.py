@@ -303,6 +303,26 @@ async def search_products(
                     },
                 )
             chunk_products, chunk_not_found = extract_products_from_recipe_search(chunk_result)
+            if not chunk_products:
+                try:
+                    (
+                        fallback_products,
+                        fallback_not_found,
+                    ) = await _fallback_chunk_with_products_search(chunk)
+                except Exception:
+                    return chunk_products, chunk_not_found, None
+                return (
+                    fallback_products,
+                    fallback_not_found,
+                    {
+                        "fallback_used": "local_products_search",
+                        "source_error_type": None,
+                        "source_error_message": "recipe_search_empty",
+                        "chunk_size": len(chunk),
+                        "products_count": len(fallback_products),
+                        "not_found_count": len(fallback_not_found),
+                    },
+                )
             return chunk_products, chunk_not_found, None
 
     chunks = [

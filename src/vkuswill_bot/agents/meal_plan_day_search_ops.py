@@ -219,7 +219,7 @@ async def search_products_day_by_day(
                 llm_provider=llm_provider,
                 aggregated_ingredients=prioritized,
                 phase2_deadline_at=day_deadline_at,
-                prefer_local_only=True,
+                prefer_local_only=False,
                 global_mcp_semaphore=global_mcp_semaphore,
             )
             finish_search_span(

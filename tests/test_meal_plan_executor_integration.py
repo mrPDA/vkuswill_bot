@@ -206,7 +206,7 @@ async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
 
     call_names = [name for name, _args in mcp.calls]
     assert call_names.count("recipe_ingredients") == 21
-    assert call_names.count("recipe_search") == 0
+    assert call_names.count("recipe_search") >= 7
     assert call_names.count("vkusvill_cart_link_create") == 1
     assert call_names.count("vkusvill_products_search") >= 7
     assert len(llm_client.completions.calls) == 1
@@ -293,7 +293,7 @@ async def test_shopping_agent_allows_explicit_unvalidated_rollout_override() -> 
     assert "🍽 План питания" in result
     call_names = [name for name, _args in mcp.calls]
     assert call_names.count("recipe_ingredients") == 21
-    assert call_names.count("recipe_search") == 0
+    assert call_names.count("recipe_search") >= 7
     assert call_names.count("vkusvill_products_search") >= 7
     assert call_names.count("vkusvill_cart_link_create") == 1
 
