@@ -38,6 +38,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "user_store": "io",
     # Shared
     "chat_engine": "shared",
+    "cart_intent_heuristics": "shared",
     "dialog_history_utils": "shared",
     "dialog_types": "shared",
     "langfuse_tracing": "shared",
