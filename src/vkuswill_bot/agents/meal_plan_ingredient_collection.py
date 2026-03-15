@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,10 +13,70 @@ from vkuswill_bot.agents.recipe_batch_fallback import extract_recipe_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_ops import extract_ingredients
 from vkuswill_bot.agents.meal_plan_runtime_policy import call_with_timeout_retry
 
+logger = logging.getLogger(__name__)
+
 _MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 2.0
 _BATCH_RECIPE_EXTRACTION_TIMEOUT_SECONDS = 60.0
 _BATCH_RECIPE_EXTRACTION_CHUNK_SIZE = 4
 _BATCH_RECIPE_EXTRACTION_CONCURRENCY = 3
+
+_CB_FAILURE_THRESHOLD = 3
+_CB_COOLDOWN_SECONDS = 120.0
+
+
+class _McpRecipeCircuitBreaker:
+    """Skip MCP recipe_ingredients calls after consecutive timeouts.
+
+    States:
+      CLOSED  — MCP calls proceed normally.
+      OPEN    — MCP calls are skipped; dishes go straight to batch fallback.
+
+    After ``cooldown_seconds`` the breaker auto-resets to CLOSED so that
+    a recovered MCP server is picked up without a process restart.
+    """
+
+    __slots__ = ("_cooldown", "_failures", "_open_until", "_threshold")
+
+    def __init__(
+        self,
+        *,
+        threshold: int = _CB_FAILURE_THRESHOLD,
+        cooldown_seconds: float = _CB_COOLDOWN_SECONDS,
+    ) -> None:
+        self._threshold = threshold
+        self._cooldown = cooldown_seconds
+        self._failures = 0
+        self._open_until: float = 0.0
+
+    @property
+    def is_open(self) -> bool:
+        if self._failures < self._threshold:
+            return False
+        if time.monotonic() >= self._open_until:
+            logger.info("MCP recipe_ingredients circuit breaker cooldown expired, resetting")
+            self._failures = 0
+            self._open_until = 0.0
+            return False
+        return True
+
+    def record_success(self) -> None:
+        if self._failures:
+            logger.info("MCP recipe_ingredients succeeded, circuit breaker reset")
+        self._failures = 0
+        self._open_until = 0.0
+
+    def record_failure(self) -> None:
+        self._failures += 1
+        if self._failures >= self._threshold and self._open_until == 0.0:
+            self._open_until = time.monotonic() + self._cooldown
+            logger.info(
+                "MCP recipe_ingredients circuit breaker OPEN after %d failures (cooldown %.0fs)",
+                self._failures,
+                self._cooldown,
+            )
+
+
+_mcp_recipe_breaker = _McpRecipeCircuitBreaker()
 
 
 class MealPlanIngredientCollectionAgentProtocol(Protocol):
@@ -181,6 +243,8 @@ async def collect_ingredients_for_dishes(
     ) -> tuple[str, int, list[dict[str, Any]], dict[str, Any]]:
         dish_name = str(dish["name"])
         servings = _effective_servings_for_dish(dish=dish, group_sizes=group_sizes)
+        if _mcp_recipe_breaker.is_open:
+            return dish_name, servings, [], {"status": "circuit_open"}
         async with semaphore:
             try:
                 result = await call_with_timeout_retry(
@@ -196,6 +260,7 @@ async def collect_ingredients_for_dishes(
                     retries=0,
                 )
             except Exception as exc:
+                _mcp_recipe_breaker.record_failure()
                 return (
                     dish_name,
                     servings,
@@ -209,7 +274,9 @@ async def collect_ingredients_for_dishes(
             rows = extract_ingredients(result)
             parsed = parse_json_payload(result)
             if rows:
+                _mcp_recipe_breaker.record_success()
                 return dish_name, servings, rows, {"status": "success", "rows": len(rows)}
+            _mcp_recipe_breaker.record_failure()
             error = str(parsed.get("error", "")).strip() if isinstance(parsed, dict) else ""
             message = str(parsed.get("message", "")).strip() if isinstance(parsed, dict) else ""
             return (
