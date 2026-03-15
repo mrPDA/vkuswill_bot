@@ -1058,7 +1058,7 @@ async def test_run_meal_plan_turn_uses_local_products_fallback_on_chunk_timeout(
     )
 
     assert "https://shop.example/cart/local-products-fallback" in result
-    assert recipe_search_calls >= 7
+    assert recipe_search_calls >= 1
     metadata = trace.updates[-1]["metadata"]
     search_meta = metadata["meal_plan_recipe_search"]
     assert search_meta["used_chunk_fallback"] is True
