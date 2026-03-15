@@ -80,6 +80,7 @@ markers = [
     "security: SAST-тесты безопасности кода",
     "ai_safety: тесты безопасности ИИ-ассистента",
     "validation: тесты валидации входных данных",
+    "stage: stage/integration smoke and contract checks",
 ]
 
 [tool.coverage.run]

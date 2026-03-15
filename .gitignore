@@ -60,6 +60,8 @@ docs/*
 !docs/agent-kickoff.md
 !docs/TEAM_HISPANIOLA.md
 !docs/ARCHITECTURE.md
+!docs/stage-cicd-rules.json
+!docs/stage-response-contracts.md
 
 # Shell-скрипты (локальные)
 run.sh
