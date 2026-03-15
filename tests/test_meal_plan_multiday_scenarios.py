@@ -337,15 +337,15 @@ class TestMealPlanDayValidation:
 
     def test_all_dishes_in_range_3_days(self) -> None:
         request = self._make_request(3)
-        dishes = self._make_dishes([1, 1, 2, 2, 3, 3, 3], ["adults"])
+        dishes = self._make_dishes([1, 1, 1, 2, 2, 2, 3, 3, 3], ["adults"])
         payload = {"schema_version": 1, "dishes": dishes}
         meal_plan, error = _validate_meal_plan_payload(payload, request)
         assert meal_plan is not None, f"Unexpected error: {error}"
-        assert len(meal_plan.dishes) == 7
+        assert len(meal_plan.dishes) == 9
 
     def test_dish_day_out_of_range_rejected(self) -> None:
         request = self._make_request(3)
-        dishes = self._make_dishes([1, 2, 3, 4, 1, 2, 3], ["adults"])
+        dishes = self._make_dishes([1, 1, 1, 2, 2, 2, 3, 3, 4], ["adults"])
         payload = {"schema_version": 1, "dishes": dishes}
         meal_plan, error = _validate_meal_plan_payload(payload, request)
         assert meal_plan is None
@@ -353,7 +353,9 @@ class TestMealPlanDayValidation:
 
     def test_day_0_rejected(self) -> None:
         request = self._make_request(7)
-        dishes = self._make_dishes([0, 1, 2, 3, 4, 5, 6], ["adults"])
+        days = [d for d in range(1, 8) for _ in range(3)]
+        days[0] = 0
+        dishes = self._make_dishes(days, ["adults"])
         payload = {"schema_version": 1, "dishes": dishes}
         meal_plan, error = _validate_meal_plan_payload(payload, request)
         assert meal_plan is None
@@ -369,7 +371,8 @@ class TestMealPlanDayValidation:
 
     def test_14_day_plan_with_spread(self) -> None:
         request = self._make_request(14)
-        dishes = self._make_dishes(list(range(1, 15)), ["adults"])
+        days = [d for d in range(1, 15) for _ in range(2)]
+        dishes = self._make_dishes(days, ["adults"])
         payload = {"schema_version": 1, "dishes": dishes}
         meal_plan, error = _validate_meal_plan_payload(payload, request)
         assert meal_plan is not None, f"Unexpected error: {error}"
@@ -530,7 +533,9 @@ class TestHardConstraintValidation:
             "Меню на 3 дня для 2 человек с аллергией на глютен", EMPTY_PROFILE
         )
         dishes = [
-            MealPlanDish("Безглютеновые оладьи из гречневой крупы", 1, "breakfast", 2, ["adults"], []),
+            MealPlanDish(
+                "Безглютеновые оладьи из гречневой крупы", 1, "breakfast", 2, ["adults"], [],
+            ),
             MealPlanDish("Рис с овощами", 1, "lunch", 2, ["adults"], []),
             MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),
             MealPlanDish("Суп", 2, "lunch", 2, ["adults"], []),
@@ -602,7 +607,7 @@ class TestSoftCoverageCuisines:
 
 
 class TestDishCountLimits:
-    """TP-12: валидация допускает 7..10 блюд."""
+    """TP-12: валидация допускает 14..21 блюд (7 дней × 3 приёма)."""
 
     @staticmethod
     def _make_payload(count: int) -> dict:
@@ -625,27 +630,27 @@ class TestDishCountLimits:
     def _request() -> MealPlanRequest:
         return parse_meal_plan_request("Рацион на неделю для 2 человек", EMPTY_PROFILE)
 
-    def test_6_dishes_rejected(self) -> None:
-        payload = self._make_payload(6)
+    def test_13_dishes_rejected(self) -> None:
+        payload = self._make_payload(13)
         meal_plan, error = _validate_meal_plan_payload(payload, self._request())
         assert meal_plan is None
-        assert "7..10" in error
+        assert "14..21" in error
 
-    def test_7_dishes_accepted(self) -> None:
-        payload = self._make_payload(7)
+    def test_14_dishes_accepted(self) -> None:
+        payload = self._make_payload(14)
         meal_plan, error = _validate_meal_plan_payload(payload, self._request())
         assert meal_plan is not None, f"Unexpected: {error}"
 
-    def test_10_dishes_accepted(self) -> None:
-        payload = self._make_payload(10)
+    def test_21_dishes_accepted(self) -> None:
+        payload = self._make_payload(21)
         meal_plan, error = _validate_meal_plan_payload(payload, self._request())
         assert meal_plan is not None, f"Unexpected: {error}"
 
-    def test_11_dishes_rejected(self) -> None:
-        payload = self._make_payload(11)
+    def test_22_dishes_rejected(self) -> None:
+        payload = self._make_payload(22)
         meal_plan, error = _validate_meal_plan_payload(payload, self._request())
         assert meal_plan is None
-        assert "7..10" in error
+        assert "14..21" in error
 
 
 # ═══════════════════════════════════════════════════
@@ -846,23 +851,22 @@ class TestMealTypes:
 
     @staticmethod
     def _build_payload(meal_type: str) -> dict:
-        dishes = []
-        for i in range(7):
-            dishes.append(
-                {
-                    "name": f"Блюдо {i}",
-                    "day": (i % 7) + 1,
-                    "meal_type": meal_type if i == 0 else ["breakfast", "lunch", "dinner"][i % 3],
-                    "servings_total": 2,
-                    "audience_groups": ["adults"],
-                    "cuisine_tags": [],
-                }
-            )
+        dishes = [
+            {
+                "name": f"Блюдо {i}",
+                "day": (i % 2) + 1,
+                "meal_type": meal_type if i == 0 else ["breakfast", "lunch"][i % 2],
+                "servings_total": 2,
+                "audience_groups": ["adults"],
+                "cuisine_tags": [],
+            }
+            for i in range(4)
+        ]
         return {"schema_version": 1, "dishes": dishes}
 
     @staticmethod
     def _request() -> MealPlanRequest:
-        return parse_meal_plan_request("Меню на неделю для 2 человек", EMPTY_PROFILE)
+        return parse_meal_plan_request("Меню на 2 дня для 2 человек", EMPTY_PROFILE)
 
     @pytest.mark.parametrize(
         "meal_type",

@@ -246,7 +246,10 @@ class TestCountExpectedRecipeCourses:
         assert count_expected_recipe_courses("борщ, стейк и чизкейк") == 3
 
     def test_meal_types_with_dishes(self):
-        text = "Собери продукты для завтрака (омлет), обеда (борщ), ужина (стейк) и десерта (чизкейк)"
+        text = (
+            "Собери продукты для завтрака (омлет), обеда (борщ),"
+            " ужина (стейк) и десерта (чизкейк)"
+        )
         assert count_expected_recipe_courses(text) >= 4
 
     def test_no_dishes(self):
