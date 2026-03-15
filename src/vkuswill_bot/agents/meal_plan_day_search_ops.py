@@ -139,6 +139,7 @@ async def search_products_day_by_day(
     global_mcp_semaphore = create_global_mcp_search_semaphore()
 
     day_items = sorted(grouped_days.items())
+    _recipe_search_disabled = False
 
     async def _run_day(
         day: int,
@@ -219,7 +220,7 @@ async def search_products_day_by_day(
                 llm_provider=llm_provider,
                 aggregated_ingredients=prioritized,
                 phase2_deadline_at=day_deadline_at,
-                prefer_local_only=False,
+                prefer_local_only=_recipe_search_disabled,
                 global_mcp_semaphore=global_mcp_semaphore,
             )
             finish_search_span(
@@ -255,9 +256,20 @@ async def search_products_day_by_day(
             }
 
     semaphore = asyncio.Semaphore(_DAY_SEARCH_CONCURRENCY)
-    day_results = await asyncio.gather(
-        *[_run_day(day, day_dishes, semaphore) for day, day_dishes in day_items]
+
+    probe_day, probe_dishes = day_items[0]
+    probe_result = await _run_day(probe_day, probe_dishes, semaphore)
+    probe_stats = probe_result.get("search_stats")
+    if probe_stats is not None and getattr(probe_stats, "primary_error_type", None) in (
+        "TimeoutError",
+        "asyncio.TimeoutError",
+    ):
+        _recipe_search_disabled = True
+
+    remaining_results = await asyncio.gather(
+        *[_run_day(day, day_dishes, semaphore) for day, day_dishes in day_items[1:]]
     )
+    day_results = [probe_result, *remaining_results]
 
     products_by_day: dict[int, list[dict[str, Any]]] = {}
     for day_result in sorted(day_results, key=lambda row: int(row["day"])):
