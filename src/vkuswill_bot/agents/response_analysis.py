@@ -14,6 +14,29 @@ from vkuswill_bot.agents.intent_markers import (
 )
 from vkuswill_bot.services.cart_intent_heuristics import looks_like_cart_product_list
 
+_MEAL_TYPES = frozenset({
+    "завтрак", "обед", "ужин", "десерт", "полдник", "перекус",
+})
+
+_DISH_STEMS = (
+    "борщ", "суп", "паста", "лазань", "пицц", "салат", "карбонар",
+    "плов", "окрошк", "блин", "оладь", "каш", "омлет", "стейк",
+    "чизкейк", "шарлотк", "котлет", "пельмен", "вареник",
+    "шашлык", "ролл", "суши", "бургер", "тефтел", "запеканк",
+    "ризотто", "гуляш", "азу", "рагу",
+)
+
+
+def count_expected_recipe_courses(text: str) -> int:
+    """Estimate number of distinct dishes/courses the user wants to cook.
+
+    Returns >= 2 when a multi-course request is detected (e.g. breakfast + lunch + dinner).
+    """
+    low = text.lower()
+    meal_count = sum(1 for m in _MEAL_TYPES if m in low)
+    dish_count = sum(1 for d in _DISH_STEMS if d in low)
+    return max(meal_count, dish_count)
+
 
 def is_additive_cart_intent(user_text: str) -> bool:
     normalized = user_text.lower()

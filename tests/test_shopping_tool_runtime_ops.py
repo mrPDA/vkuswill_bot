@@ -88,6 +88,9 @@ def _build_state(**overrides: Any) -> SimpleNamespace:
         "recipe_to_cart_recovery_used": False,
         "search_batch_recovery_used": False,
         "step_budget_warning_used": False,
+        "recipe_calls_this_turn": 0,
+        "multi_course_expected": 0,
+        "multi_course_recovery_used": False,
     }
     base.update(overrides)
     return SimpleNamespace(**base)

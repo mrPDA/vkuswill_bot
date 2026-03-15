@@ -11,6 +11,7 @@ from vkuswill_bot.agents.recovery_policy import (
     should_force_batch_search_hint,
     should_force_cart_link_source_recovery,
     should_force_manual_recovery,
+    should_force_multi_course_continuation,
     should_force_native_tool_call_recovery,
     should_force_recipe_to_cart_hint,
 )
@@ -214,6 +215,45 @@ def test_should_force_batch_search_hint_matrix(
             search_batch_recovery_used=used,
             step=step,
             max_tool_calls=max_tool_calls,
+        )
+        is expected
+    )
+
+
+@pytest.mark.parametrize(
+    ("cart_data", "recipe_calls", "expected_courses", "used", "step", "max_tc", "expected"),
+    [
+        # Cart created after 1 dish, user asked for 3 → should recover
+        ({"link": "http://..."}, 1, 3, False, 5, 25, True),
+        # No cart yet → don't fire
+        (None, 1, 3, False, 5, 25, False),
+        # All dishes processed → don't fire
+        ({"link": "http://..."}, 3, 3, False, 5, 25, False),
+        # Single dish request → don't fire
+        ({"link": "http://..."}, 1, 1, False, 5, 25, False),
+        # Already used → don't fire
+        ({"link": "http://..."}, 1, 3, True, 5, 25, False),
+        # Too close to step limit → don't fire
+        ({"link": "http://..."}, 1, 3, False, 23, 25, False),
+    ],
+)
+def test_should_force_multi_course_continuation(
+    cart_data: dict[str, str] | None,
+    recipe_calls: int,
+    expected_courses: int,
+    used: bool,
+    step: int,
+    max_tc: int,
+    expected: bool,
+) -> None:
+    assert (
+        should_force_multi_course_continuation(
+            cart_data_this_turn=cart_data,
+            recipe_calls_this_turn=recipe_calls,
+            multi_course_expected=expected_courses,
+            multi_course_recovery_used=used,
+            step=step,
+            max_tool_calls=max_tc,
         )
         is expected
     )
