@@ -24,6 +24,7 @@ class _StageConfig:
     langfuse_host: str
     langfuse_public_key: str
     langfuse_secret_key: str
+    verify_stage_ssl: bool
 
     @classmethod
     def from_env(cls) -> _StageConfig:
@@ -52,6 +53,7 @@ class _StageConfig:
             langfuse_host=langfuse_host,
             langfuse_public_key=langfuse_public_key,
             langfuse_secret_key=langfuse_secret_key,
+            verify_stage_ssl=os.getenv("STAGE_VERIFY_SSL", "").strip() == "1",
         )
 
     @property
@@ -127,7 +129,12 @@ async def _call_stage_debug_api(
         "Content-Type": "application/json",
         "X-Debug-Api-Key": config.debug_api_key,
     }
-    async with session.post(f"{config.base_url}{path}", json=payload, headers=headers) as response:
+    async with session.post(
+        f"{config.base_url}{path}",
+        json=payload,
+        headers=headers,
+        ssl=config.verify_stage_ssl,
+    ) as response:
         body = await response.json()
     assert response.status == 200, body
     return body
