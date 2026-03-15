@@ -14,6 +14,7 @@ from vkuswill_bot.agents.recipe_search_vocabulary import (
 )
 from vkuswill_bot.agents.tool_result_compactor import _safe_float
 from vkuswill_bot.services.search_processor import SearchProcessor
+from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
 
 _QUANTITY_UNIT_PATTERN = (
     r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
@@ -54,7 +55,7 @@ _COMPOUND_PREFIX_WORDS = COMPOUND_PREFIX_WORDS
 
 def parse_quantity_hint(text: str) -> tuple[float, str, str] | None:
     """Parse quantity + normalized unit from free text."""
-    normalized = normalize_text(text)
+    normalized = normalize_text(normalize_colloquial_numerals(text))
     if not normalized:
         return None
     match = _RANGE_QUANTITY_RE.search(normalized)
@@ -170,6 +171,12 @@ def _expand_fallback_query_variants(raw: str) -> list[str]:
     return deduped
 
 
+_COMMA_ITEM_WITH_QTY_RE = re.compile(
+    rf"(?P<name>[^\d,;]+?)\s*(?P<qty>\d+(?:[.,]\d+)?)\s*(?P<unit>{_QUANTITY_UNIT_PATTERN})",
+    flags=re.IGNORECASE,
+)
+
+
 def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any]]:
     """Extract structured ingredient rows from user free text."""
     if not user_text.strip():
@@ -195,7 +202,7 @@ def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any
             }
         )
 
-    normalized_text = user_text.replace("\r", "\n")
+    normalized_text = normalize_colloquial_numerals(user_text).replace("\r", "\n")
     for match in _INLINE_INGREDIENT_RE.finditer(normalized_text):
         name_part = str(match.group("name") or "").strip()
         qty_part = str(match.group("qty") or "").strip()
@@ -211,10 +218,37 @@ def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any
             continue
         if _INLINE_INGREDIENT_RE.search(line):
             continue
-        line = re.sub(r"^\s*\d+[.)]\s*", "", line).strip()
+        line = re.sub(r"^\s*\d+[.)]\s+", "", line).strip()
         line = line.lstrip("-• ").strip()
         if not line:
             continue
+
+        comma_segments = re.split(r"[,;]\s*", line)
+        if len(comma_segments) >= 2:
+            any_parsed = False
+            for seg in comma_segments:
+                seg = seg.strip()
+                if not seg:
+                    continue
+                seg_match = _COMMA_ITEM_WITH_QTY_RE.match(seg)
+                if seg_match:
+                    seg_name = seg_match.group("name").strip()
+                    seg_qty = _safe_float(seg_match.group("qty").replace(",", "."), default=-1.0)
+                    seg_unit = RecipeQuantityCalculator._normalize_unit(seg_match.group("unit"))
+                    if seg_qty > 0 and seg_unit and seg_name:
+                        _append_row(seg_name, seg_qty, seg_unit)
+                        any_parsed = True
+                        continue
+                parsed = parse_quantity_hint(seg)
+                if parsed is not None:
+                    quantity, unit, fragment = parsed
+                    name = re.sub(re.escape(fragment), " ", seg, flags=re.IGNORECASE).strip(" ,.-")
+                    if name:
+                        _append_row(name, quantity, unit)
+                        any_parsed = True
+            if any_parsed:
+                continue
+
         name_part = line
         quantity_part = line
         split_match = re.match(r"^(.*?)(?:\s*[-–—:]\s*)(.+)$", line)

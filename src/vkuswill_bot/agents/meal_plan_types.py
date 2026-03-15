@@ -179,8 +179,11 @@ def _extract_allergens(text: str) -> list[str]:
     match = _ALLERGY_RE.search(text.lower())
     if not match:
         return []
-    value = match.group(1).strip()
-    return [value] if value else []
+    raw = match.group(1).strip()
+    if not raw:
+        return []
+    parts = re.split(r"\s+и\s+|,\s*", raw)
+    return [p.strip() for p in parts if p.strip()]
 
 
 def _merge_unique(left: list[str], right: list[str]) -> list[str]:

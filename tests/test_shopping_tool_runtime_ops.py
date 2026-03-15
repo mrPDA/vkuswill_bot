@@ -360,3 +360,55 @@ def test_apply_post_step_recovery_hints_keeps_history_when_no_conditions(monkeyp
     assert state.recipe_to_cart_recovery_used is False
     assert state.search_batch_recovery_used is False
     assert agent.normalize_calls == 0
+
+
+async def _noop_progress(_text: str) -> None:
+    pass
+
+
+@pytest.mark.asyncio
+async def test_cart_link_create_dedup_skips_duplicate_calls() -> None:
+    """PROD-BUG-4: duplicate cart_link_create calls are skipped."""
+    cart_result = json.dumps(
+        {
+            "ok": True,
+            "data": {
+                "link": "https://vkusvill.ru/cart/123",
+                "products": [{"xml_id": 1, "q": 1}],
+            },
+        },
+        ensure_ascii=False,
+    )
+    agent = _FakeAgent(tool_results={"vkusvill_cart_link_create": cart_result})
+    state = _build_state()
+
+    tool_calls = [
+        {
+            "id": "call_1",
+            "name": "vkusvill_cart_link_create",
+            "arguments": json.dumps({"products": [{"xml_id": 1, "q": 1}]}),
+        },
+        {
+            "id": "call_2",
+            "name": "vkusvill_cart_link_create",
+            "arguments": json.dumps({"products": [{"xml_id": 1, "q": 1}]}),
+        },
+    ]
+
+    await execute_tool_calls(
+        agent=agent,
+        state=state,
+        message={"role": "assistant", "content": None, "tool_calls": tool_calls},
+        tool_calls=tool_calls,
+        user_id=1,
+        text="test",
+        llm_provider="test",
+        trace=None,
+        on_progress=_noop_progress,
+    )
+
+    assert len(agent.mcp_calls) == 1
+    assert state.cart_data_this_turn is not None
+    tool_msgs = [m for m in state.history if m.get("role") == "tool"]
+    assert len(tool_msgs) == 2
+    assert "duplicate call skipped" in tool_msgs[1]["content"]

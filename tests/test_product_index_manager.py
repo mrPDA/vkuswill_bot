@@ -53,7 +53,7 @@ def test_update_product_index_skips_placeholder_rows_without_price() -> None:
     assert 2 not in index
 
 
-def test_build_product_index_from_history_uses_last_20_tool_messages() -> None:
+def test_build_product_index_from_history_uses_all_tool_messages() -> None:
     history = [{"role": "system", "content": "sys"}]
     for xml_id in range(1, 22):
         history.append(
@@ -79,10 +79,10 @@ def test_build_product_index_from_history_uses_last_20_tool_messages() -> None:
         )
 
     index = build_product_index_from_history(history)
-    assert 1 not in index
+    assert 1 in index
     assert 2 in index
     assert 21 in index
-    assert len(index) == 20
+    assert len(index) == 21
 
 
 def test_update_search_query_by_xml_id_uses_q_or_query() -> None:

@@ -47,11 +47,11 @@ def update_product_index_from_tool_result(
 def build_product_index_from_history(
     history: list[dict[str, Any]] | None,
 ) -> dict[int, dict[str, Any]]:
-    """Построить product_index из последних 20 tool-сообщений в истории."""
+    """Построить product_index из ВСЕХ tool-сообщений в истории."""
     if not history:
         return {}
     product_index: dict[int, dict[str, Any]] = {}
-    for msg in history[-20:]:
+    for msg in history:
         if msg.get("role") != "tool":
             continue
         tool_name = str(msg.get("name", "")).strip()

@@ -75,10 +75,12 @@ def extract_allergens(text: str, profile: dict[str, Any]) -> list[str]:
 
     match = _ALLERGY_RE.search(text)
     if match:
-        value = match.group(1).strip().lower()
-        if value and value not in seen:
-            seen.add(value)
-            result.append(value)
+        raw = match.group(1).strip().lower()
+        for part in re.split(r"\s+и\s+|,\s*", raw):
+            value = part.strip()
+            if value and value not in seen:
+                seen.add(value)
+                result.append(value)
 
     hard = profile.get("hard_constraints")
     if isinstance(hard, dict):
