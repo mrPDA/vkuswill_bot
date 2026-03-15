@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import os
+import re
 import sys
 from dataclasses import dataclass
 from typing import Any
@@ -113,6 +114,16 @@ def _flatten_product_names(snapshot: dict[str, Any] | None) -> list[str]:
     return names
 
 
+def _extract_product_names_from_response(response_text: str) -> list[str]:
+    names: list[str] = []
+    for line in response_text.splitlines():
+        stripped = line.strip()
+        match = re.match(r"^\d+\.\s+(.+?)\s+x\s+\d", stripped, re.IGNORECASE)
+        if match:
+            names.append(match.group(1).strip().lower())
+    return names
+
+
 def _extract_trace_payload(payload: dict[str, Any]) -> dict[str, Any]:
     if isinstance(payload.get("data"), dict):
         return payload["data"]
@@ -184,7 +195,9 @@ def _assert_response_contract(result: dict[str, Any], scenario: StageScenario) -
     snapshot = result.get("cart_snapshot")
     items_count = int(result.get("items_count") or 0)
     response_text_lower = preview.clean_text.lower()
-    product_names = _flatten_product_names(snapshot)
+    product_names = _flatten_product_names(snapshot) or _extract_product_names_from_response(
+        preview.clean_text
+    )
 
     if contract.expected_profile is not None:
         assert isinstance(diagnostics, dict), result
