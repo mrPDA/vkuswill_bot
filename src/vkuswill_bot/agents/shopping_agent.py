@@ -36,7 +36,7 @@ if TYPE_CHECKING:
     from vkuswill_bot.services.user_store import UserStore
     from vkuswill_bot.services.redis_dialog_manager import RedisDialogManager
 
-_DEFAULT_MAX_TOOL_CALLS = 25
+_DEFAULT_MAX_TOOL_CALLS = 30
 _DEFAULT_MAX_HISTORY = 30
 _DEFAULT_LLM_TIMEOUT_SECONDS = 90.0
 _DEFAULT_LLM_RETRIES = 2

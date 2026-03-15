@@ -221,27 +221,29 @@ def test_should_force_batch_search_hint_matrix(
 
 
 @pytest.mark.parametrize(
-    ("cart_data", "recipe_calls", "expected_courses", "used", "step", "max_tc", "expected"),
+    ("cart_data", "recipe_calls", "expected_courses", "count", "step", "max_tc", "expected"),
     [
         # Cart created after 1 dish, user asked for 3 → should recover
-        ({"link": "http://..."}, 1, 3, False, 5, 25, True),
+        ({"link": "http://..."}, 1, 3, 0, 5, 25, True),
         # No cart yet → don't fire
-        (None, 1, 3, False, 5, 25, False),
+        (None, 1, 3, 0, 5, 25, False),
         # All dishes processed → don't fire
-        ({"link": "http://..."}, 3, 3, False, 5, 25, False),
+        ({"link": "http://..."}, 3, 3, 0, 5, 25, False),
         # Single dish request → don't fire
-        ({"link": "http://..."}, 1, 1, False, 5, 25, False),
-        # Already used → don't fire
-        ({"link": "http://..."}, 1, 3, True, 5, 25, False),
+        ({"link": "http://..."}, 1, 1, 0, 5, 25, False),
+        # Max recoveries reached (expected-1) → don't fire
+        ({"link": "http://..."}, 1, 3, 2, 5, 25, False),
+        # Still have recoveries left → fire
+        ({"link": "http://..."}, 1, 3, 1, 5, 25, True),
         # Too close to step limit → don't fire
-        ({"link": "http://..."}, 1, 3, False, 23, 25, False),
+        ({"link": "http://..."}, 1, 3, 0, 23, 25, False),
     ],
 )
 def test_should_force_multi_course_continuation(
     cart_data: dict[str, str] | None,
     recipe_calls: int,
     expected_courses: int,
-    used: bool,
+    count: int,
     step: int,
     max_tc: int,
     expected: bool,
@@ -251,7 +253,7 @@ def test_should_force_multi_course_continuation(
             cart_data_this_turn=cart_data,
             recipe_calls_this_turn=recipe_calls,
             multi_course_expected=expected_courses,
-            multi_course_recovery_used=used,
+            multi_course_recovery_count=count,
             step=step,
             max_tool_calls=max_tc,
         )

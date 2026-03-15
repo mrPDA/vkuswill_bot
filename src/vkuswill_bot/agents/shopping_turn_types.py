@@ -157,7 +157,7 @@ class TurnState:
     recipe_to_cart_recovery_used: bool = False
     textual_tool_call_recovery_used: bool = False
     step_budget_warning_used: bool = False
-    multi_course_recovery_used: bool = False
+    multi_course_recovery_count: int = 0
     single_search_steps_streak: int = 0
     tools_called_this_turn: bool = False
     recipe_flow_started_this_turn: bool = False
@@ -257,6 +257,24 @@ async def build_turn_state(
 
     product_index_this_turn: dict[int, dict[str, Any]] = build_product_index_from_history(history)
     history.append({"role": "user", "content": normalized_text})
+
+    multi_course_expected = 0
+    if prompt_profile in ("recipe", "cart"):
+        multi_course_expected = count_expected_recipe_courses(normalized_text)
+
+    if multi_course_expected >= 2:
+        history.append({
+            "role": "system",
+            "content": (
+                f"[Мульти-курс: {multi_course_expected} блюд] "
+                "Обработай ВСЕ блюда по порядку. Алгоритм: "
+                "1) вызови recipe_ingredients для КАЖДОГО блюда; "
+                "2) для каждого результата найди товары; "
+                "3) создай ОДНУ корзину со ВСЕМИ продуктами от ВСЕХ блюд. "
+                "НЕ создавай корзину, пока не обработаны ВСЕ блюда!"
+            ),
+        })
+
     normalized_history = agent._normalize_history(history)
 
     user_preferences: dict[str, str] = {}
@@ -278,10 +296,6 @@ async def build_turn_state(
         "recipe",
         "meal_plan",
     )
-
-    multi_course_expected = 0
-    if prompt_profile in ("recipe", "cart"):
-        multi_course_expected = count_expected_recipe_courses(normalized_text)
 
     return TurnState(
         history=normalized_history,

@@ -90,7 +90,7 @@ def _build_state(**overrides: Any) -> SimpleNamespace:
         "step_budget_warning_used": False,
         "recipe_calls_this_turn": 0,
         "multi_course_expected": 0,
-        "multi_course_recovery_used": False,
+        "multi_course_recovery_count": 0,
     }
     base.update(overrides)
     return SimpleNamespace(**base)
