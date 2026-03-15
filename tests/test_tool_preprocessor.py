@@ -205,6 +205,38 @@ class TestRestorePreviousQuantities:
         # xml_id=1 is in overrides → should not be restored.
         assert result["products"][0]["q"] == 1
 
+    def test_restores_on_qty_explosion(self) -> None:
+        """REGR-01: LLM sets q=14 for chicken when user only asked to add rice."""
+        result = restore_previous_quantities_for_additive_update(
+            tool_name="vkusvill_cart_link_create",
+            tool_args={
+                "products": [
+                    {"xml_id": 1, "q": 4},
+                    {"xml_id": 2, "q": 14},
+                    {"xml_id": 3, "q": 1},
+                ]
+            },
+            user_text="ещё добавь рис и гречку",
+            previous_products=[
+                {"xml_id": 1, "q": 1},
+                {"xml_id": 2, "q": 1},
+            ],
+        )
+        prods = result["products"]
+        assert prods[0]["q"] == 1
+        assert prods[1]["q"] == 1
+        assert prods[2]["q"] == 1
+
+    def test_keeps_intentional_small_increase(self) -> None:
+        """User says 'ещё добавь 3 пачки молока' — LLM correctly sets q=3."""
+        result = restore_previous_quantities_for_additive_update(
+            tool_name="vkusvill_cart_link_create",
+            tool_args={"products": [{"xml_id": 1, "q": 3}]},
+            user_text="ещё добавь 3 пачки молока",
+            previous_products=[{"xml_id": 1, "q": 1}],
+        )
+        assert result["products"][0]["q"] == 3
+
 
 # ── normalize_recipe_search_args ──────────────────────────────────
 

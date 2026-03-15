@@ -189,8 +189,14 @@ def restore_previous_quantities_for_additive_update(
         previous_q = prev_by_xml_id[xml_id]
         if abs(current_q - previous_q) < 0.01:
             continue
-        row["q"] = previous_q
-        updated = True
+        if abs(current_q - 1.0) <= 1e-9:
+            if abs(previous_q - 1.0) > 1e-9:
+                row["q"] = previous_q
+                updated = True
+            continue
+        if previous_q > 0 and current_q > previous_q * 3 and current_q > 2:
+            row["q"] = previous_q
+            updated = True
 
     if updated:
         return CartProcessor.fix_cart_args({"products": products})
