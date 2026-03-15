@@ -218,6 +218,40 @@ git push origin feature/amazing-feature
 
 ---
 
+## Агентный workflow (для разработчиков)
+
+Проект разрабатывается командой ИИ-агентов («экипаж Испаньолы»). Правила работы, реестр агентов и workflows описаны в [AGENTS.md](AGENTS.md).
+
+### MCP-сервисы для агентов
+
+| Сервис | Роль | MCP alias |
+|--------|------|-----------|
+| **notesforllm** | Persistent memory — checkpoints, decisions, handoffs между сессиями | `user-notesforllm` |
+| **Git/MCP Workbench** | Git-aware контекст — status, diff, commits, PR prep. Доступен только после локальной настройки `.cursor/mcp.json`; шаблон в репозитории — `workbench-mcp.json.example`. | `git_mcp_workbench` |
+
+### Настройка
+
+1. Скопировать `.env.example` → `.env` и заполнить секцию `Agent MCP Services`
+2. Подключить MCP-серверы в настройках IDE (Cursor / VS Code)
+   Workbench не считается подключенным по умолчанию: нужен локальный `.cursor/mcp.json`, собранный по `workbench-mcp.json.example`
+3. Проверить конфигурацию: `bash scripts/check-agent-config.sh`
+
+Подробнее — в [docs/integration-setup.md](docs/integration-setup.md).
+
+### Базовый workflow агента
+
+```
+Старт сессии → notes_resume_context() → git status → работа
+     ↓                                                  ↓
+  читаю prior decisions                    checkpoint после milestone
+     ↓                                                  ↓
+  планирую работу                          decision при архитектурном выборе
+                                                        ↓
+                                    Конец сессии → handoff (если не закончено)
+```
+
+---
+
 ## Roadmap
 
 - [x] Голосовой канал — навык Алисы для заказа через Яндекс Станцию
