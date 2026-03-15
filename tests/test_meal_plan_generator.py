@@ -174,7 +174,8 @@ async def test_generate_meal_plan_retries_after_validation_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_generate_meal_plan_rejects_low_soft_coverage() -> None:
+async def test_generate_meal_plan_accepts_low_soft_coverage() -> None:
+    """Low soft_coverage is a warning, not a hard rejection (BUG-1 fix)."""
     request = parse_meal_plan_request(
         "меню на неделю для 2 человек с итальянской кухней",
         {},
@@ -183,12 +184,7 @@ async def test_generate_meal_plan_rejects_low_soft_coverage() -> None:
         "schema_version": 1,
         "dishes": _build_dishes(audience="adults", cuisine="russian"),
     }
-    agent = _FakeGeneratorAgent(
-        [
-            _resp(json.dumps(payload, ensure_ascii=False)),
-            _resp(json.dumps(payload, ensure_ascii=False)),
-        ]
-    )
+    agent = _FakeGeneratorAgent([_resp(json.dumps(payload, ensure_ascii=False))])
 
     plan, error = await generate_meal_plan(
         agent=agent,
@@ -196,8 +192,9 @@ async def test_generate_meal_plan_rejects_low_soft_coverage() -> None:
         llm_provider="qwen_openai",
     )
 
-    assert plan is None
-    assert "soft_preferences coverage < 0.70" in error
+    assert plan is not None
+    assert error == ""
+    assert len(agent.calls) == 1
 
 
 @pytest.mark.asyncio

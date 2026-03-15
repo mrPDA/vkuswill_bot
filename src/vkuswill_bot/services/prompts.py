@@ -46,11 +46,13 @@ _FALLBACK_MEAL_PLAN_GENERATION_PROMPT = (
     "Составь meal plan в JSON-формате для параметров ниже.\n"
     "Учитывай hard_constraints строго, soft_preferences — максимально возможно.\n"
     "Верни только JSON с полями schema_version=1 и dishes[].\n"
-    "Сгенерируй 7..10 уникальных блюд, без повторов названий.\n"
+    "Сгенерируй {min_dishes}..{max_dishes} уникальных блюд, без повторов названий.\n"
+    "Распредели блюда по ВСЕМ {days} дням — у каждого дня минимум 1 блюдо.\n"
+    "Все названия блюд ДОЛЖНЫ быть на русском языке.\n"
     "Постарайся обеспечить soft_preferences coverage >= 0.70 по каждой группе.\n"
     "Параметры запроса:\n{request_payload}\n\n"
     "Формат dishes[]:\n"
-    "- name: string\n"
+    "- name: string (на русском языке)\n"
     "- day: int\n"
     '- meal_type: "breakfast"|"lunch"|"dinner"|"snack_1"|"snack_2"|"snack_3"\n'
     "- servings_total: int >= 1\n- audience_groups: string[]\n- cuisine_tags: string[]"
@@ -173,6 +175,9 @@ def get_meal_plan_generation_prompt_with_metadata(
 ) -> tuple[str, dict[str, Any]]:
     """Получить meal-plan generation prompt вместе с provenance metadata."""
     payload_text = json.dumps(request_payload, ensure_ascii=False)
+    days = request_payload.get("days", 7)
+    min_dishes = request_payload.get("min_dishes", 7)
+    max_dishes = request_payload.get("max_dishes", 10)
     registry = get_registry()
     if registry is not None:
         resolution = registry.resolve(
@@ -181,7 +186,12 @@ def get_meal_plan_generation_prompt_with_metadata(
         )
         if resolution.text:
             return resolution.text, resolution.as_dict()
-    text = _FALLBACK_MEAL_PLAN_GENERATION_PROMPT.format(request_payload=payload_text)
+    text = _FALLBACK_MEAL_PLAN_GENERATION_PROMPT.format(
+        request_payload=payload_text,
+        days=days,
+        min_dishes=min_dishes,
+        max_dishes=max_dishes,
+    )
     return text, {
         "name": "meal-plan-generation",
         "source": "stub",

@@ -18,6 +18,16 @@ _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет
 _ALLERGY_RE = re.compile(r"аллерг\w*\s+на\s+([^\n,.;:]+)", re.IGNORECASE)
 _SEGMENTED_ADULTS_RE = re.compile(r"один[^.]{0,60}(другой|второй)", re.IGNORECASE)
 
+
+def dish_count_range(days: int) -> tuple[int, int]:
+    """Acceptable (min, max) dish count for a given plan duration."""
+    if days <= 2:
+        return 3, 6
+    if days <= 7:
+        return 7, 10
+    return days, min(days + 4, 21)
+
+
 _DIET_KEYWORDS = {
     "vegan": ("веган", "vegan"),
     "vegetarian": ("вегетариан", "vegetarian"),
@@ -61,9 +71,12 @@ class MealPlanRequest:
         return {group.id for group in self.groups}
 
     def to_prompt_dict(self) -> dict[str, Any]:
+        min_d, max_d = dish_count_range(self.days)
         return {
             "people_total": self.people_total,
             "days": self.days,
+            "min_dishes": min_d,
+            "max_dishes": max_d,
             "groups": [group.to_prompt_dict() for group in self.groups],
             "operational_preferences": self.operational_preferences,
             "preferences_trace": self.preferences_trace,

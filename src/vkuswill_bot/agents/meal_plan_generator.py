@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Protocol
 
@@ -14,7 +15,6 @@ from vkuswill_bot.agents.mcp_response_parser import parse_json_payload
 from vkuswill_bot.agents.meal_plan_quality import (
     build_applied_preferences_trace,
     calculate_soft_coverage,
-    format_soft_coverage_error,
     low_soft_coverage_groups,
     validate_hard_constraints_with_trace,
 )
@@ -22,9 +22,12 @@ from vkuswill_bot.agents.meal_plan_types import (
     MealPlan,
     MealPlanDish,
     MealPlanRequest,
+    dish_count_range,
 )
 from vkuswill_bot.services.llm_adapters import extract_usage_details
 from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt_with_metadata
+
+logger = logging.getLogger(__name__)
 
 _MEAL_TYPES = frozenset({"breakfast", "lunch", "dinner", "snack_1", "snack_2", "snack_3"})
 _MEAL_PLAN_GENERATION_MAX_TOKENS = 1200
@@ -82,8 +85,9 @@ def _validate_meal_plan_payload(
     dishes_raw = payload.get("dishes")
     if not isinstance(dishes_raw, list):
         return None, "dishes должен быть списком"
-    if not (7 <= len(dishes_raw) <= 10):
-        return None, "dishes должен содержать 7..10 блюд"
+    min_dishes, max_dishes = dish_count_range(request.days)
+    if not (min_dishes <= len(dishes_raw) <= max_dishes):
+        return None, f"dishes должен содержать {min_dishes}..{max_dishes} блюд"
 
     group_ids = request.group_ids()
     result_dishes: list[MealPlanDish] = []
@@ -145,6 +149,12 @@ def _validate_meal_plan_payload(
             )
         )
 
+    if request.days >= 3:
+        covered_days = {dish.day for dish in result_dishes}
+        missing_days = set(range(1, request.days + 1)) - covered_days
+        if missing_days:
+            return None, f"не все дни покрыты: отсутствуют дни {sorted(missing_days)}"
+
     meal_plan = MealPlan(schema_version=1, dishes=result_dishes)
     hard_violations, phase1_trace = validate_hard_constraints_with_trace(
         request=request,
@@ -156,7 +166,7 @@ def _validate_meal_plan_payload(
     coverage = calculate_soft_coverage(request=request, dishes=meal_plan.dishes)
     low_groups = low_soft_coverage_groups(coverage_by_group=coverage)
     if low_groups:
-        return None, format_soft_coverage_error(low_groups=low_groups)
+        logger.warning("soft_preferences coverage below target: %s", low_groups)
     request.applied_preferences_trace = build_applied_preferences_trace(
         request=request,
         phase1_applied_trace=phase1_trace,
