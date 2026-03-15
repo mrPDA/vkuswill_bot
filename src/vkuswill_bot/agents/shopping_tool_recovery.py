@@ -29,11 +29,11 @@ def apply_post_step_recovery_hints(
         cart_data_this_turn=state.cart_data_this_turn,
         recipe_calls_this_turn=state.recipe_calls_this_turn,
         multi_course_expected=state.multi_course_expected,
-        multi_course_recovery_used=state.multi_course_recovery_used,
+        multi_course_recovery_count=state.multi_course_recovery_count,
         step=step,
         max_tool_calls=max_tool_calls,
     ):
-        state.multi_course_recovery_used = True
+        state.multi_course_recovery_count += 1
         state.cart_data_this_turn = None
         state.history.append({"role": "system", "content": FORCE_MULTI_COURSE_CONTINUATION_HINT})
         state.history = agent._normalize_history(state.history)

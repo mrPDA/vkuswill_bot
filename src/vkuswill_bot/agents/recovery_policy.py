@@ -128,16 +128,17 @@ def should_force_multi_course_continuation(
     cart_data_this_turn: dict[str, Any] | None,
     recipe_calls_this_turn: int,
     multi_course_expected: int,
-    multi_course_recovery_used: bool,
+    multi_course_recovery_count: int,
     step: int,
     max_tool_calls: int,
 ) -> bool:
     """Prevent premature cart creation when multiple dishes are requested."""
+    max_recoveries = max(1, multi_course_expected - 1)
     return bool(
         cart_data_this_turn is not None
         and multi_course_expected >= 2
         and recipe_calls_this_turn < multi_course_expected
-        and not multi_course_recovery_used
+        and multi_course_recovery_count < max_recoveries
         and step < max_tool_calls - 3
     )
 
