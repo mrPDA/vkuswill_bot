@@ -34,10 +34,53 @@ _DIET_FORBIDDEN = {
     "vegetarian": {"говяд", "свинин", "куриц", "курин", "индейк", "рыб", "лосос", "тунец"},
 }
 _PORK_TERMS = {"свинин", "бекон", "ветчин", "pork", "ham", "bacon"}
-_ALLERGEN_ALIASES = {
-    "nuts": {"орех", "миндаль", "фундук", "арахис", "кешью", "грецк"},
-    "орехи": {"орех", "миндаль", "фундук", "арахис", "кешью", "грецк"},
-    "lactose": {"молок", "слив", "сыр", "творог", "йогурт"},
+_NUT_MARKERS = {"орех", "миндаль", "фундук", "арахис", "кешью", "грецк", "фисташ"}
+_DAIRY_MARKERS = {"молок", "слив", "сыр", "творог", "йогурт", "кефир", "ряженк", "сметан"}
+_GLUTEN_MARKERS = {
+    "глютен",
+    "пшениц",
+    "овс",
+    "ржан",
+    "рожь",
+    "ячмен",
+    "ячнев",
+    "манн",
+    "манк",
+    "булгур",
+    "кускус",
+    "кус-кус",
+    "полб",
+    "спельт",
+    "макарон",
+    "лапш",
+    "хлеб",
+    "блин",
+    "мук",
+}
+_EGG_MARKERS = {"яйц", "яичн"}
+_FISH_MARKERS = {"рыб", "лосос", "тунец", "форел", "сёмг", "семг", "треск", "скумбри"}
+_SEAFOOD_MARKERS = {"морепродукт", "креветк", "кальмар", "мидии", "устриц"}
+_SOY_MARKERS = {"соев", "тофу", "соя"}
+
+_ALLERGEN_ALIASES: dict[str, set[str]] = {
+    "nuts": _NUT_MARKERS,
+    "орехи": _NUT_MARKERS,
+    "lactose": _DAIRY_MARKERS,
+    "молоко": _DAIRY_MARKERS,
+    "молочные": _DAIRY_MARKERS,
+    "молочное": _DAIRY_MARKERS,
+    "dairy": _DAIRY_MARKERS,
+    "глютен": _GLUTEN_MARKERS,
+    "gluten": _GLUTEN_MARKERS,
+    "яйца": _EGG_MARKERS,
+    "яйцо": _EGG_MARKERS,
+    "eggs": _EGG_MARKERS,
+    "рыба": _FISH_MARKERS,
+    "fish": _FISH_MARKERS,
+    "морепродукты": _SEAFOOD_MARKERS,
+    "seafood": _SEAFOOD_MARKERS,
+    "соя": _SOY_MARKERS,
+    "soy": _SOY_MARKERS,
 }
 _PHASE1 = "phase1_generation"
 _PHASE2 = "phase2_ingredients"

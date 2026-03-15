@@ -109,6 +109,9 @@ class TestPromptProfiles:
             # Названия блюд без cart-маркера → recipe
             ("Борщ", "recipe"),
             ("Суп", "recipe"),
+            # "порци" → strong recipe marker (BUG-9 fix)
+            ("Собери корзину для борща на 4 порции", "recipe"),
+            ("Лазанья на 6 порций", "recipe"),
         ],
     )
     def test_detect_prompt_profile(self, text: str, profile: PromptProfile):
