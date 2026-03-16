@@ -24,14 +24,14 @@ resource "yandex_compute_instance" "bot" {
 
   resources {
     cores         = var.vm_cores
-    memory        = var.vm_memory # 8 GB: PostgreSQL ~2 GB + bot + Langfuse + Metabase
+    memory        = var.vm_memory
     core_fraction = var.vm_core_fraction
   }
 
   boot_disk {
     initialize_params {
       image_id = data.yandex_compute_image.ubuntu.id
-      size     = var.vm_disk_size # 30 GB: OS + Docker + PG data + backups
+      size     = var.vm_disk_size
       type     = "network-ssd"
     }
   }

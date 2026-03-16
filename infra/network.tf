@@ -76,11 +76,11 @@ resource "yandex_vpc_security_group" "bot" {
     predefined_target = "self_security_group"
   }
 
-  # PostgreSQL на VM для serverless-функции Алисы (из VPC-подсети)
+  # PostgreSQL для serverless-функции Алисы (из той же VPC-подсети)
   ingress {
-    description    = "PostgreSQL from VPC subnet (Alice function → VM)"
+    description    = "PostgreSQL from VPC subnet (Alice function)"
     protocol       = "TCP"
-    port           = 5432
+    port           = 6432
     v4_cidr_blocks = data.yandex_vpc_subnet.default_a.v4_cidr_blocks
   }
 

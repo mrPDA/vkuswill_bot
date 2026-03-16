@@ -25,7 +25,6 @@ packages:
   - gnupg
   - lsb-release
   - jq
-  - awscli
 
 runcmd:
   # Docker GPG key + repository
@@ -45,13 +44,6 @@ runcmd:
   # Create app directory
   - mkdir -p /opt/vkuswill-bot
   - chown deploy:deploy /opt/vkuswill-bot
-
-  # PostgreSQL backup cron (каждые 6 часов)
-  - |
-    cat > /etc/cron.d/pg-backup <<'CRON'
-    0 */6 * * * deploy /opt/vkuswill-bot/pg-backup-s3.sh >> /var/log/pg-backup.log 2>&1
-    CRON
-    chmod 644 /etc/cron.d/pg-backup
 
   # Yandex Cloud CLI (for Lockbox secret fetching)
   - curl -sSL https://storage.yandexcloud.net/yandexcloud-yc/install.sh | bash -s -- -i /opt/yc -n

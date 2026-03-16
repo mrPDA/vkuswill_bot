@@ -78,16 +78,6 @@ docker-logs: ## Показать логи всех контейнеров
 docker-ps: ## Статус контейнеров
 	docker compose ps
 
-# ─── PostgreSQL (production VM) ──────────────────────────────────────────────
-
-pg-backup: ## Ручной бэкап PostgreSQL в S3
-	bash scripts/pg-backup-s3.sh
-	@echo "$(GREEN)Бэкап PostgreSQL завершён.$(RESET)"
-
-pg-status: ## Статус PostgreSQL контейнера
-	@docker exec vkuswill-postgres pg_isready -U postgres 2>/dev/null && echo "$(GREEN)PostgreSQL: OK$(RESET)" || echo "$(YELLOW)PostgreSQL: не доступен$(RESET)"
-	@docker exec vkuswill-postgres psql -U postgres -c "SELECT pg_database.datname, pg_size_pretty(pg_database_size(pg_database.datname)) FROM pg_database WHERE datistemplate = false;" 2>/dev/null || true
-
 # ─── Terraform ───────────────────────────────────────────────────────────────
 
 tf-init: ## Инициализировать Terraform (требует infra/backend.conf)

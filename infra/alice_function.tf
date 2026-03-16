@@ -65,8 +65,8 @@ resource "yandex_function" "alice_skill" {
     ALICE_LANGFUSE_ANONYMIZE_MESSAGES    = tostring(var.alice_langfuse_anonymize_messages)
     ALICE_REDIS_URL                      = var.alice_function_network_id == "" ? "" : "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
     VOICE_LINK_CODE_TTL_MINUTES          = tostring(var.voice_link_code_ttl_minutes)
-    ALICE_DATABASE_URL                   = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_compute_instance.bot.network_interface[0].ip_address}:5432/vkuswill"
-    DATABASE_URL                         = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_compute_instance.bot.network_interface[0].ip_address}:5432/vkuswill"
+    ALICE_DATABASE_URL                   = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
+    DATABASE_URL                         = var.alice_function_network_id == "" ? "" : "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill?sslmode=require"
   }
 
   labels = merge(var.labels, { component = "alice-skill" })

@@ -53,19 +53,19 @@ variable "vm_cores" {
 variable "vm_memory" {
   description = "RAM (GB)"
   type        = number
-  default     = 8
+  default     = 4
 }
 
 variable "vm_core_fraction" {
   description = "Core fraction (%): 20, 50, 100"
   type        = number
-  default     = 100
+  default     = 50
 }
 
 variable "vm_disk_size" {
   description = "Boot disk size (GB)"
   type        = number
-  default     = 30
+  default     = 20
 }
 
 variable "vm_ssh_key_path" {
@@ -74,13 +74,7 @@ variable "vm_ssh_key_path" {
   default     = "~/.ssh/id_rsa.pub"
 }
 
-# ─── PostgreSQL (self-hosted на VM) ──────────────────────────
-
-variable "pg_superuser_password" {
-  description = "PostgreSQL superuser (postgres) password for VM-hosted instance"
-  type        = string
-  sensitive   = true
-}
+# ─── PostgreSQL ──────────────────────────────────────────────
 
 variable "pg_password" {
   description = "PostgreSQL bot user password"
@@ -88,10 +82,10 @@ variable "pg_password" {
   sensitive   = true
 }
 
-variable "pg_backup_bucket" {
-  description = "S3 bucket name for PostgreSQL backups"
-  type        = string
-  default     = "vkuswill-pg-backups"
+variable "pg_disk_size" {
+  description = "PostgreSQL disk size (GB)"
+  type        = number
+  default     = 10
 }
 
 # ─── Redis ───────────────────────────────────────────────────
