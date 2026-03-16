@@ -26,7 +26,14 @@ _REQUESTED_MEAL_MARKERS: dict[str, tuple[str, ...]] = {
     "breakfast": ("завтрак",),
     "lunch": ("обед",),
     "dinner": ("ужин",),
+    "snack": ("перекус", "полдник"),
 }
+
+_MEAL_EXCLUSION_RE = re.compile(
+    r"(?:без\s+(?:обед|завтрак|ужин|перекус)\w*"
+    r"|(?:обед|завтрак|ужин|перекус)\w*\s+не\s+(?:нужн|надо|нуж)\w*)",
+    re.IGNORECASE,
+)
 
 _EXCLUSION_NORMALIZE: dict[str, str] = {
     "лактоз": "лактоза",
@@ -254,12 +261,24 @@ def _extract_allergens(text: str) -> list[str]:
     return result
 
 
+def _extract_excluded_meal_types(text: str) -> set[str]:
+    """Detect meal types the user explicitly excludes."""
+    excluded: set[str] = set()
+    for match in _MEAL_EXCLUSION_RE.finditer(text.lower()):
+        fragment = match.group(0)
+        for meal_type, markers in _REQUESTED_MEAL_MARKERS.items():
+            if any(marker in fragment for marker in markers):
+                excluded.add(meal_type)
+    return excluded
+
+
 def _extract_requested_meal_types(text: str) -> list[str]:
-    """Extract meal types explicitly mentioned by the user."""
+    """Extract meal types explicitly mentioned by the user, respecting exclusions."""
     low = text.lower()
+    excluded = _extract_excluded_meal_types(text)
     types: list[str] = []
     for meal_type, markers in _REQUESTED_MEAL_MARKERS.items():
-        if any(marker in low for marker in markers):
+        if any(marker in low for marker in markers) and meal_type not in excluded:
             types.append(meal_type)
     return types
 
