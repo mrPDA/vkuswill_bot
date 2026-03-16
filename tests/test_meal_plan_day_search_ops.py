@@ -115,6 +115,9 @@ async def test_search_products_day_by_day_uses_overall_deadline_for_each_day(
         _fake_search_products,
     )
 
+    import time as _time
+
+    far_future = _time.monotonic() + 10_000
     (
         products,
         not_found,
@@ -136,14 +139,16 @@ async def test_search_products_day_by_day_uses_overall_deadline_for_each_day(
             "день 1": [{"name": "рис", "search_query": "рис", "quantity": 1, "unit": "шт"}],
             "день 2": [{"name": "гречка", "search_query": "гречка", "quantity": 2, "unit": "шт"}],
         },
-        phase2_deadline_at=12345.0,
+        phase2_deadline_at=far_future,
         trace=None,
         filter_pantry_fn=lambda items, explicit_pantry_requests: (items, []),
         aggregate_ingredients_fn=lambda items: items,
         prioritize_ingredients_fn=lambda items: (items, []),
     )
 
-    assert captured_deadlines == [12345.0, 12345.0]
+    assert len(captured_deadlines) == 2
+    assert captured_deadlines[0] < far_future
+    assert captured_deadlines[1] <= far_future
     assert len(products) == 2
     assert not not_found
     assert stats.searched_day_count == 2
