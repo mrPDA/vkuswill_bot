@@ -11,7 +11,7 @@ from vkuswill_bot.agents.meal_plan_request_profile import (
     extract_segmented_adult_preferences,
 )
 
-_DAYS_RE = re.compile(r"на\s+(\d+)\s+д", flags=re.IGNORECASE)
+_DAYS_RE = re.compile(r"(?:на\s+)?(\d+)\s+д(?:ней|ня|ень)", flags=re.IGNORECASE)
 _PEOPLE_RE = re.compile(r"для\s+(\d+)\s+(?:чел|человек)", flags=re.IGNORECASE)
 _CHILD_COUNT_RE = re.compile(r"(\d+)\s*(?:ребен(?:ок|ка|ку|ком)|дет(?:и|ей|ям|ьми))", re.IGNORECASE)
 _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет|год|г)", re.IGNORECASE)
