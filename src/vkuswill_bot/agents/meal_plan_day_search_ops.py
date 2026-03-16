@@ -268,17 +268,11 @@ async def search_products_day_by_day(
     semaphore = asyncio.Semaphore(_DAY_SEARCH_CONCURRENCY)
 
     probe_day, probe_dishes = day_items[0]
-    probe_start = time.monotonic()
     probe_result = await _run_day(
         probe_day, probe_dishes, semaphore, budget_seconds=_PROBE_BUDGET_SECONDS,
     )
-    probe_latency = time.monotonic() - probe_start
-    probe_stats = probe_result.get("search_stats")
-    if probe_stats is not None and getattr(probe_stats, "primary_error_type", None) in (
-        "TimeoutError",
-        "asyncio.TimeoutError",
-    ):
-        _recipe_search_disabled = True
+
+    _recipe_search_disabled = True
 
     remaining_count = len(day_items) - 1
     remaining_budget = max(0.0, phase2_deadline_at - time.monotonic())
@@ -287,9 +281,6 @@ async def search_products_day_by_day(
         if remaining_count > 0
         else remaining_budget
     )
-
-    if not _recipe_search_disabled and per_day_budget > 0 and probe_latency > per_day_budget * 0.6:
-        _recipe_search_disabled = True
 
     remaining_results = await asyncio.gather(
         *[
