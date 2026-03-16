@@ -298,7 +298,7 @@ async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
 
     monkeypatch.setattr(
         "vkuswill_bot.agents.meal_plan_executor.reserve_deadline",
-        lambda deadline_at, *, reserve_seconds: reserved_deadline,
+        lambda deadline_at, *, reserve_seconds, min_budget_seconds=0.1: reserved_deadline,
     )
     monkeypatch.setattr(
         "vkuswill_bot.agents.meal_plan_day_search_ops.search_products",

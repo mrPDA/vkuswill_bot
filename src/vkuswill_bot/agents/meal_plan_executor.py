@@ -37,6 +37,7 @@ from vkuswill_bot.agents.meal_plan_trace_ops import (
 from vkuswill_bot.agents.meal_plan_runtime_policy import (
     CART_CREATE_TIMEOUT_SECONDS,
     CART_CREATE_RESERVE_SECONDS,
+    MIN_SEARCH_BUDGET_SECONDS,
     PHASE2_DEADLINE_SECONDS,
     RECIPE_INGREDIENTS_TIMEOUT_SECONDS,
     TURN_DEADLINE_SECONDS,
@@ -296,6 +297,7 @@ async def run_meal_plan_turn(
     search_deadline_at = reserve_deadline(
         phase2_deadline_at,
         reserve_seconds=CART_CREATE_RESERVE_SECONDS,
+        min_budget_seconds=MIN_SEARCH_BUDGET_SECONDS,
     )
     search_span = start_span(
         trace=trace,

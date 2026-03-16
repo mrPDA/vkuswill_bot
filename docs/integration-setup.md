@@ -73,11 +73,37 @@ Verification space: name="vkuswill_bot-verification"
 | `notes_resume_context` | Старт сессии — восстановить контекст по task_id |
 | `notes_search` | Найти контекст, когда task_id неизвестен |
 | `notes_list` | Список всех заметок в space |
+| `notes_query` | Structured lookup по workflow, provenance и bridge metadata |
+| `notes_compare` | Сравнить два workflow round вместо ручного diff Markdown |
 | `notes_checkpoint_save` | После meaningful milestone |
+| `notes_test_run_checkpoint` | Для recurring verification / smoke прогонов |
 | `notes_decision_save` | При durable technical decision |
 | `notes_handoff_save` | Конец сессии с незавершённой работой |
 | `notes_task_timeline` | Полная история задачи через несколько сессий |
 | `spaces_list` | Список доступных spaces |
+
+### Operational-memory payload
+
+Чтобы агенты реально использовали новый workflow, сохранять facts не только в prose, но и в structured payload:
+
+- `provenance`: `repo`, `branch`, `head_sha`, `pr_number`, `run_id`, `run_url`, `environment`, `verification_scope`
+- `operational`: `last_good_state`, `unresolved_risks`, `exact_next_command`, `files_in_play`, `known_issues`, `blocked_by`
+- `bridge`: `role`, `target_page_ids`
+
+Рекомендации для `vkuswill_bot`:
+
+- product work: `provenance.repo="vkuswill_bot"`
+- verification work: отдельный verification space и `task_id` формата `vkuswill_bot:verification/<topic>`
+- recurring test loop: `notes_test_run_checkpoint(...)`
+- bugfix loop: `verification_finding -> product_fix -> verification_follow_up` через `bridge`
+
+### Routing hygiene
+
+Перед любым `notes_checkpoint_save(...)`, `notes_decision_save(...)`, `notes_handoff_save(...)` или `notes_test_run_checkpoint(...)` агент должен проверить соответствие `task_id` и target space:
+
+- если `task_id` содержит `:verification/`, использовать только `NOTESFORLLM_VERIFICATION_SPACE_ID`
+- если target space относится к verification и его slug оканчивается на `-verification`, не писать туда обычный product `task_id`
+- не делать silent reroute между product и verification spaces; сначала выбрать правильный `space_id`, а при mismatch падать явно
 
 ---
 
@@ -236,5 +262,9 @@ bash scripts/check-agent-config.sh
 - [ ] MCP-сервер `git_mcp_workbench` сконфигурирован в локальном `.cursor/mcp.json`
 - [ ] Product и verification spaces созданы в notesforllm
 - [ ] `task_id` convention определён: `vkuswill_bot:<issue-or-branch>`
+- [ ] Routing hygiene определён: verification `task_id` идут только в verification space, product `task_id` не идут в verification space
+- [ ] Агенты используют `notes_query(...)` для structured filters вместо broad text search
+- [ ] Checkpoint / decision / handoff заполняют `provenance` и `operational`, когда факты известны
+- [ ] Verification finding → product fix → verification follow-up связываются через `bridge`
 - [ ] Branch binding скрипт работает: `bash scripts/bind-task-branch.sh --list`
 - [ ] Bootstrap-скрипт проходит без ошибок: `bash scripts/check-agent-config.sh`

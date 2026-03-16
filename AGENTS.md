@@ -43,12 +43,23 @@ MCP-сервер `user-notesforllm` (alias: `notesforllm`) — persistent memory
 
 1. **Старт сессии (context restore):**
    - Если `task_id` известен — вызвать `notes_resume_context(space_id, task_id)` **до начала изменений кода**.
+   - Если `notes_resume_context(...)` вернул `synthesis` — использовать его как основной structured snapshot состояния задачи.
    - Если `task_id` неизвестен — вызвать `notes_search(query)` или `notes_list(space_id)` для поиска контекста.
    - Проверить наличие decisions, handoffs и checkpoints по задаче.
 
 2. **Во время работы (checkpoints & decisions):**
+   - Для structured lookup использовать `notes_query(...)`, когда нужны фильтры по `task_id`, `kind`, `status`, `author_agent`, `workflow`, `stage`, `environment`, `verification_scope`, `known_issue`, `bridge_role`, датам или сортировке.
+   - Для сравнения итераций использовать `notes_compare(...)` вместо ручного сравнения двух Markdown checkpoint notes.
+   - До `notes_checkpoint_save(...)`, `notes_decision_save(...)`, `notes_handoff_save(...)` и `notes_test_run_checkpoint(...)` проверять routing hygiene:
+     - `task_id` с `:verification/` писать только в verification space;
+     - space со slug, оканчивающимся на `-verification`, не использовать для обычного product `task_id`;
+     - не делать silent reroute, если routing не совпадает.
    - После meaningful milestone — `notes_checkpoint_save(space_id, title, summary, task_id=..., agent_id=..., status="in_progress", findings=[...], artifacts=[...], next_steps=[...])`.
+   - Для повторяющихся прогонов тестов использовать `notes_test_run_checkpoint(...)` как основной template поверх checkpoint layer.
    - При durable technical decision (архитектура, схема, API, workflow) — `notes_decision_save(space_id, title, decision, why, task_id=..., agent_id=..., alternatives=[...], consequences=[...])`.
+   - Когда известны git или CI факты, заполнять `provenance`: `repo`, `branch`, `head_sha`, `pr_number`, `run_id`, `run_url`, `environment`, `verification_scope`.
+   - Для bootstrap между сессиями заполнять `operational`: `last_good_state`, `unresolved_risks`, `exact_next_command`, `files_in_play`, `known_issues`, `blocked_by`.
+   - Для цепочки `problem -> fix -> recheck` использовать `bridge` с `role` и `target_page_ids`, а не свободный prose.
    - Предпочитать краткие, фактологические записи. Не дублировать весь чат.
 
 3. **Конец сессии (handoff):**
@@ -111,6 +122,7 @@ MCP-сервер `user-notesforllm` (alias: `notesforllm`) — persistent memory
 - Один `task_id` на весь непрерывный workstream — не создавать новый при рестарте сессии.
 - Предпочитать имя ветки или номер issue.
 - Verification-задачи (smoke, debug, integration validation) — **всегда** в формате `verification/<topic>`.
+- Перед записью в notesforllm сначала выбрать правильный `space_id` по типу задачи, а не полагаться на неявный перенос между spaces.
 
 ### Spaces
 
@@ -119,7 +131,7 @@ MCP-сервер `user-notesforllm` (alias: `notesforllm`) — persistent memory
 | **Product space** (`NOTESFORLLM_SPACE_ID`) | Основная работа по репозиторию | Checkpoints, decisions, handoffs по фичам и багам |
 | **Verification space** (`NOTESFORLLM_VERIFICATION_SPACE_ID`) | Smoke, debug, integration validation | Результаты проверок, debug-находки |
 
-Не смешивать product и verification notes в одном space.
+Не смешивать product и verification notes в одном space. Если `task_id` содержит `:verification/`, использовать только `NOTESFORLLM_VERIFICATION_SPACE_ID`. Если space относится к verification, не писать туда обычные product task_id.
 
 ---
 
@@ -133,28 +145,41 @@ MCP-сервер `user-notesforllm` (alias: `notesforllm`) — persistent memory
    → Из .workbench/task-branches.json (по текущей ветке)
    → Или из issue / контекста запроса
    → Привязать ветку: bash scripts/bind-task-branch.sh <task_id>
+   → Если `task_id` содержит `:verification/`, выбрать verification space, иначе product space
 3. Если task_id известен:
    → при локально настроенном Workbench можно вызвать restore_task_context
    → иначе вызвать notes_resume_context(space_id, task_id)
 4. Если task_id неизвестен:
    → notes_search(query) или notes_list(space_id)
-5. Прочитать prior decisions и handoffs
-6. Получить Git-контекст:
+5. Если resume вернул synthesis:
+   → использовать его как primary workflow snapshot
+6. Прочитать prior decisions и handoffs
+7. Получить Git-контекст:
    → git_status, changed_files, recent_commits (через Workbench)
    → Fallback: git status, git diff, git log (Shell)
-7. Начать работу
+8. Начать работу
 ```
 
 ### 2. During Work (выполнение)
 
 ```
-1. После meaningful milestone:
+1. Для structured workflow lookup:
+   → notes_query(...)
+2. Перед любым pattern save:
+   → проверить, что `task_id` и target space совпадают по product/verification routing
+2. Для сравнения повторных раундов:
+   → notes_compare(base_page_id, candidate_page_id)
+3. После meaningful milestone:
    → notes_checkpoint_save(...)
-2. При durable technical decision:
+4. Для повторяющихся тестовых прогонов:
+   → notes_test_run_checkpoint(...)
+5. При наличии repo/run/verification фактов:
+   → заполнять provenance / operational / bridge
+6. При durable technical decision:
    → notes_decision_save(...)
-3. При фрагментации контекста:
+7. При фрагментации контекста:
    → notes_task_timeline(space_id, task_id)
-4. Для Git-контекста:
+8. Для Git-контекста:
    → Workbench tools (preferred) или git shell commands
 ```
 
@@ -192,28 +217,62 @@ notes_checkpoint_save(
 )
 ```
 
-### related_page_ids (только decision)
+### related_page_ids (checkpoint, decision)
 
-`related_page_ids` поддерживается **только** в `notes_decision_save`. Используй для связи decision с предшествующими checkpoint/decision.
+`related_page_ids` поддерживается в `notes_checkpoint_save` и `notes_decision_save`.
+
+- В `notes_checkpoint_save` — для связи текущего раунда с предыдущим checkpoint или baseline page.
+- В `notes_decision_save` — для связи decision с предшествующими checkpoint/decision.
 
 ```
+notes_checkpoint_save(
+  ...,
+  related_page_ids=["<uuid-предыдущего-checkpoint>"]
+)
+
 notes_decision_save(
   ...,
   related_page_ids=["<uuid-предыдущего-checkpoint>"]
 )
 ```
 
-Для checkpoint и handoff связи передаются через `tags` и `findings`, а не через `related_page_ids`.
+Для handoff связи по-прежнему передаются через `task_id`, `session_id`, `verified`, `risks` и `first_next_step`, а не через `related_page_ids`.
+
+### test_run template
+
+Для повторяющихся прогонов тестов предпочитать `notes_test_run_checkpoint(...)` вместо generic checkpoint.
+
+Он сохраняет:
+
+- structured `template_data` для suite/result/counts/failures;
+- human-readable checkpoint content;
+- stable tag `test_run`;
+- совместимость с `notes_query`, `notes_compare` и `notes_resume_context.synthesis`.
+
+### provenance / operational / bridge
+
+Для нового operational-memory workflow:
+
+- `provenance` хранит git/run/env факты, которые нужны для последующей верификации и resume;
+- `operational` хранит bootstrap-факты для следующей сессии;
+- `bridge` связывает verification finding, product fix и verification follow-up.
+
+Минимальная практика для этого репозитория:
+
+- product checkpoint после разработки: `provenance.repo="vkuswill_bot"` и `operational.files_in_play=[...]`
+- verification checkpoint: `provenance.environment="staging"` или `provenance.environment="local"`, `provenance.verification_scope="<suite-or-surface>"`
+- remediation decision/checkpoint: `bridge.role="product_fix"` и `bridge.target_page_ids=["<uuid-verification-finding>"]`
+- follow-up verification: `bridge.role="verification_follow_up"` и `bridge.target_page_ids=["<uuid-product-fix>"]`
 
 ### Verification → Product bridge
 
 Когда verification-находка (из verification space) требует продуктовых изменений:
 
-1. Создать checkpoint в verification space с `findings` и `status="done"`.
-2. Создать decision в product space с `tags=["from-verification"]` и `related_page_ids=["<verification-page-uuid>"]`.
-3. В `findings` product checkpoint указать: `"Originated from verification: <verification-task-id>"`.
+1. Создать checkpoint в verification space с `findings`, `status="done"` и `bridge.role="verification_finding"`.
+2. Создать decision или checkpoint в product space с `bridge.role="product_fix"` и `bridge.target_page_ids=["<verification-page-uuid>"]`.
+3. После фикса создать verification follow-up с `bridge.role="verification_follow_up"` и `bridge.target_page_ids=["<product-fix-page-uuid>"]`.
 
-Это позволяет построить цепочку: verification finding → product decision → remediation.
+Это позволяет построить наблюдаемую цепочку: verification finding → product fix/decision → verification recheck.
 
 ---
 

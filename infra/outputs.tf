@@ -39,17 +39,22 @@ output "redis_url" {
   sensitive   = false
 }
 
-# ─── PostgreSQL ──────────────────────────────────────────────
+# ─── PostgreSQL (self-hosted на VM) ──────────────────────────
 
 output "pg_host" {
-  description = "PostgreSQL FQDN"
-  value       = yandex_mdb_postgresql_cluster.bot.host[0].fqdn
+  description = "PostgreSQL host (localhost on VM)"
+  value       = "localhost:5432"
 }
 
 output "pg_connection" {
   description = "PostgreSQL connection string (masked password)"
-  value       = "postgresql://bot:****@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
+  value       = "postgresql://bot:****@localhost:5432/vkuswill"
   sensitive   = false
+}
+
+output "pg_backup_bucket" {
+  description = "S3 bucket for PostgreSQL backups"
+  value       = yandex_storage_bucket.pg_backups.bucket
 }
 
 # ─── Lockbox ─────────────────────────────────────────────────
@@ -82,7 +87,7 @@ output "s3_log_secret_key" {
 
 output "langfuse_pg_connection" {
   description = "Langfuse PostgreSQL connection string (masked password)"
-  value       = "postgresql://langfuse:****@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse"
+  value       = "postgresql://langfuse:****@localhost:5432/langfuse"
   sensitive   = false
 }
 
