@@ -90,7 +90,7 @@ async def generate_plan_with_deadline(
     trace: Any | None = None,
 ) -> tuple[Any | None, str]:
     try:
-        plan, _ = await asyncio.wait_for(
+        plan, gen_error = await asyncio.wait_for(
             generate_meal_plan(
                 agent=agent,
                 request=request,
@@ -103,7 +103,7 @@ async def generate_plan_with_deadline(
         return None, "Превышен turn deadline"
     except Exception as exc:
         return None, f"Ошибка генерации плана: {type(exc).__name__}"
-    return plan, ""
+    return plan, gen_error
 
 
 def build_phase2_request_payload(
