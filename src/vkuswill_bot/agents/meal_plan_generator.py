@@ -168,7 +168,11 @@ def _validate_meal_plan_payload(
         for day_num in range(1, request.days + 1):
             day_types = by_day.get(day_num, set())
             for mt in effective_meal_types:
-                if mt not in day_types:
+                if mt == "snack":
+                    has_snack = any(dt.startswith("snack") for dt in day_types)
+                    if not has_snack:
+                        gaps.append(f"день {day_num} без {mt}")
+                elif mt not in day_types:
                     gaps.append(f"день {day_num} без {mt}")
         if gaps:
             sample = "; ".join(gaps[:5])
