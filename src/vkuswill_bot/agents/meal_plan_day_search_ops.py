@@ -266,29 +266,18 @@ async def search_products_day_by_day(
             }
 
     semaphore = asyncio.Semaphore(_DAY_SEARCH_CONCURRENCY)
-
-    probe_day, probe_dishes = day_items[0]
-    probe_result = await _run_day(
-        probe_day, probe_dishes, semaphore, budget_seconds=_PROBE_BUDGET_SECONDS,
-    )
-
     _recipe_search_disabled = True
 
-    remaining_count = len(day_items) - 1
-    remaining_budget = max(0.0, phase2_deadline_at - time.monotonic())
-    per_day_budget = (
-        remaining_budget / max(1, (remaining_count + _DAY_SEARCH_CONCURRENCY - 1) // _DAY_SEARCH_CONCURRENCY)
-        if remaining_count > 0
-        else remaining_budget
-    )
+    total_budget = max(0.0, phase2_deadline_at - time.monotonic())
+    num_rounds = max(1, (len(day_items) + _DAY_SEARCH_CONCURRENCY - 1) // _DAY_SEARCH_CONCURRENCY)
+    per_day_budget = total_budget / num_rounds
 
-    remaining_results = await asyncio.gather(
+    day_results = await asyncio.gather(
         *[
             _run_day(day, day_dishes, semaphore, budget_seconds=per_day_budget)
-            for day, day_dishes in day_items[1:]
+            for day, day_dishes in day_items
         ]
     )
-    day_results = [probe_result, *remaining_results]
 
     products_by_day: dict[int, list[dict[str, Any]]] = {}
     for day_result in sorted(day_results, key=lambda row: int(row["day"])):

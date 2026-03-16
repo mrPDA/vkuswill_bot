@@ -147,7 +147,7 @@ async def test_search_products_day_by_day_uses_overall_deadline_for_each_day(
     )
 
     assert len(captured_deadlines) == 2
-    assert captured_deadlines[0] < far_future
+    assert captured_deadlines[0] <= far_future
     assert captured_deadlines[1] <= far_future
     assert len(products) == 2
     assert not not_found
