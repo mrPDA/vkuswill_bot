@@ -162,9 +162,14 @@ class MealPlan:
         }
 
 
+_WORKING_WEEK_RE = re.compile(r"рабоч\w+\s+недел", re.IGNORECASE)
+
+
 def _extract_days(text: str) -> int:
     low = text.lower()
-    if "на неделю" in low:
+    if _WORKING_WEEK_RE.search(low):
+        return 5
+    if "на неделю" in low or "неделю" in low:
         return 7
     match = _DAYS_RE.search(low)
     if not match:
@@ -175,8 +180,17 @@ def _extract_days(text: str) -> int:
         return 7
 
 
+_SOLO_RE = re.compile(
+    r"для\s+(?:одного|одной|себя|меня)|на\s+одного|для\s+1\b",
+    re.IGNORECASE,
+)
+
+
 def _extract_people_total(text: str) -> int:
-    match = _PEOPLE_RE.search(text.lower())
+    low = text.lower()
+    if _SOLO_RE.search(low):
+        return 1
+    match = _PEOPLE_RE.search(low)
     if not match:
         return 2
     try:
