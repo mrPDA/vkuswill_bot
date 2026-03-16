@@ -66,6 +66,7 @@ async def run_locked_turn(
     on_progress: ProgressCallback | None,
     llm_provider: str,
     record_routing_event: bool = True,
+    _skip_meal_plan_executor: bool = False,
 ) -> str:
     """Выполнить полный цикл обработки пользовательского сообщения под user-lock."""
     trace = agent._create_trace(
@@ -110,7 +111,10 @@ async def run_locked_turn(
         allow_unvalidated=bypass.allow_unvalidated,
     )
     user_in_rollout = _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)
-    executor_enabled = bool(getattr(agent, "_meal_plan_executor_enabled", False))
+    executor_enabled = (
+        bool(getattr(agent, "_meal_plan_executor_enabled", False))
+        and not _skip_meal_plan_executor
+    )
     can_use_executor = (
         state.prompt_profile == "meal_plan"
         and executor_enabled
@@ -166,19 +170,15 @@ async def run_locked_turn(
 
         async def _fallback_to_standard_turn(reason: str) -> str:
             notice = f"⚠️ {reason}. Перехожу к стандартной обработке запроса."
-            previous = bool(getattr(agent, "_meal_plan_executor_enabled", False))
-            agent._meal_plan_executor_enabled = False
-            try:
-                fallback_text = await run_locked_turn(
-                    agent=agent,
-                    user_id=user_id,
-                    text=text,
-                    on_progress=on_progress,
-                    llm_provider=llm_provider,
-                    record_routing_event=False,
-                )
-            finally:
-                agent._meal_plan_executor_enabled = previous
+            fallback_text = await run_locked_turn(
+                agent=agent,
+                user_id=user_id,
+                text=text,
+                on_progress=on_progress,
+                llm_provider=llm_provider,
+                record_routing_event=False,
+                _skip_meal_plan_executor=True,
+            )
             return f"{notice}\n\n{fallback_text}".strip()
 
         started_at = time.monotonic()
