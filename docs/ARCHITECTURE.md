@@ -398,3 +398,84 @@ flowchart TB
 | **UserStore** | Пользователи, админы, блокировки, рефералы (PostgreSQL) |
 | **VkusvillMCPClient** | JSON-RPC клиент к MCP-серверу ВкусВилл |
 | **PriceCache** | Кеш цен (in-memory или L1+L2 с Redis) |
+
+---
+
+## Актуальный runtime-поток meal-plan executor
+
+Ниже — фактический поток из `src/vkuswill_bot/agents/meal_plan_executor.py` (а не только общие диаграммы):
+
+1. **Parse запроса**: `parse_meal_plan_request`.
+2. **Phase 1 (генерация плана)**: `generate_plan_with_deadline`.
+3. **Phase 2 (ингредиенты)**: `collect_ingredients_for_dishes`.
+4. **Проверка hard constraints**: `enforce_phase2_safety_policy`  
+   - при нарушениях сначала отбирается безопасный поднабор,
+   - затем выполняется retry генерации, если нужно.
+5. **Поиск товаров по дням**: `search_products_day_by_day`.
+6. **Создание корзины/корзин**: `create_grouped_carts`.
+7. **Детерминированный рендер**: `render_response` (Response Contract v1).
+
+### Таймауты и бюджеты (подтверждено кодом)
+
+Источник: `src/vkuswill_bot/agents/meal_plan_runtime_policy.py`.
+
+| Параметр | Значение |
+|---|---|
+| `TURN_DEADLINE_SECONDS` | 120s |
+| `PHASE2_DEADLINE_SECONDS` | 100s |
+| `RECIPE_INGREDIENTS_TIMEOUT_SECONDS` | 8s |
+| `RECIPE_SEARCH_TIMEOUT_SECONDS` | 10s |
+| `CART_CREATE_TIMEOUT_SECONDS` | 30s |
+| `CART_CREATE_RESERVE_SECONDS` | 28s |
+
+---
+
+## Публичный контракт meal-plan корзины (grouped cart)
+
+Источник: `src/vkuswill_bot/agents/meal_plan_cart_ops.py`,  
+`src/vkuswill_bot/agents/meal_plan_response_utils.py`,  
+`src/vkuswill_bot/agents/meal_plan_response_contract_model.py`.
+
+### Ограничение MCP cart API
+
+- Один вызов `vkusvill_cart_link_create` ограничен **30 товарами** (`_MAX_CART_PRODUCTS = 30`).
+- Если после merge товаров больше 30, используется группировка по дням (`group_days_for_carts`), и создаётся несколько корзин.
+
+### Формат `cart_data` при нескольких корзинах
+
+```json
+{
+  "products": [...],
+  "groups": [
+    {
+      "day_label": "День 1",
+      "day_numbers": [1],
+      "link": "https://vkusvill.ru/?share_basket=...",
+      "products": [...],
+      "cart_created": true
+    }
+  ],
+  "link": "https://vkusvill.ru/?share_basket=...",
+  "not_found": [...]
+}
+```
+
+Примечания:
+- `link` в корне — это первая непустая ссылка из `groups` (для обратной совместимости).
+- В Response Contract `items_count` считается **как сумма товаров по группам**, а не `len(products)`, потому что один и тот же товар может встречаться в нескольких дневных корзинах.
+
+---
+
+## Устойчивость recipe_ingredients: circuit breaker + batch fallback
+
+Источник: `src/vkuswill_bot/agents/meal_plan_ingredient_collection.py`.
+
+- Для MCP-инструмента `recipe_ingredients` включён circuit breaker:
+  - порог открытия: **3** подряд неуспешных вызова (`_CB_FAILURE_THRESHOLD`),
+  - cooldown: **120s** (`_CB_COOLDOWN_SECONDS`),
+  - timeout на один MCP вызов: **2s** (`_MCP_RECIPE_INGREDIENTS_TIMEOUT_SECONDS`).
+- В состоянии OPEN вызовы MCP пропускаются, ингредиенты собираются через LLM batch fallback.
+- Batch fallback выполняется чанками:
+  - размер чанка: **4 блюда**,
+  - параллелизм: **3**,
+  - верхний предел timeout чанка: **60s**.
