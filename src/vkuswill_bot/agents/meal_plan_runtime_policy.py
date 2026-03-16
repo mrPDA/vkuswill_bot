@@ -8,7 +8,10 @@ from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
 TURN_DEADLINE_SECONDS = 120.0
+TURN_DEADLINE_EXTENDED_SECONDS = 180.0
 PHASE2_DEADLINE_SECONDS = 100.0
+PHASE2_DEADLINE_EXTENDED_SECONDS = 155.0
+_EXTENDED_DEADLINE_MIN_DAYS = 5
 RECIPE_INGREDIENTS_TIMEOUT_SECONDS = 8.0
 RECIPE_SEARCH_TIMEOUT_SECONDS = 10.0
 CART_CREATE_TIMEOUT_SECONDS = 30.0
@@ -18,6 +21,13 @@ MCP_RETRY_ATTEMPTS = 1
 MCP_RETRY_BACKOFF_SECONDS = 0.3
 
 T = TypeVar("T")
+
+
+def adaptive_deadlines(days: int) -> tuple[float, float]:
+    """Return (turn_deadline_seconds, phase2_deadline_seconds) scaled to plan size."""
+    if days >= _EXTENDED_DEADLINE_MIN_DAYS:
+        return TURN_DEADLINE_EXTENDED_SECONDS, PHASE2_DEADLINE_EXTENDED_SECONDS
+    return TURN_DEADLINE_SECONDS, PHASE2_DEADLINE_SECONDS
 
 
 def deadline_after(seconds: float) -> float:
