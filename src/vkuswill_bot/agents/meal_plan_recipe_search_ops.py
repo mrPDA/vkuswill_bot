@@ -178,6 +178,8 @@ async def search_products(
         return extract_products_from_recipe_search(fallback_raw)
 
     async def _call_recipe_search(ingredients: list[dict[str, Any]]) -> str:
+        remaining = deadline_remaining(phase2_deadline_at)
+        capped_timeout = min(RECIPE_SEARCH_TIMEOUT_SECONDS, remaining * 0.5)
         return await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
                 name="recipe_search",
@@ -186,8 +188,9 @@ async def search_products(
                 call_cache=state.mcp_call_cache,
                 user_id=user_id,
             ),
-            timeout_seconds=RECIPE_SEARCH_TIMEOUT_SECONDS,
+            timeout_seconds=max(2.0, capped_timeout),
             hard_deadline_at=phase2_deadline_at,
+            retries=0,
         )
 
     used_chunk_fallback = False
