@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -140,14 +141,23 @@ async def search_products_day_by_day(
 
     day_items = sorted(grouped_days.items())
     _recipe_search_disabled = False
+    _PROBE_BUDGET_SECONDS = 15.0
 
     async def _run_day(
         day: int,
         day_dishes: list[dict[str, Any]],
         semaphore: asyncio.Semaphore,
+        *,
+        budget_seconds: float | None = None,
     ) -> dict[str, Any]:
         async with semaphore:
-            day_deadline_at = phase2_deadline_at
+            if budget_seconds is not None:
+                day_deadline_at = min(
+                    phase2_deadline_at,
+                    time.monotonic() + budget_seconds,
+                )
+            else:
+                day_deadline_at = phase2_deadline_at
             day_flat_ingredients = _ingredients_for_day(
                 day_dishes=day_dishes,
                 ingredients_by_dish=ingredients_by_dish,
@@ -256,9 +266,12 @@ async def search_products_day_by_day(
             }
 
     semaphore = asyncio.Semaphore(_DAY_SEARCH_CONCURRENCY)
+    total_budget = max(0.0, phase2_deadline_at - time.monotonic())
 
     probe_day, probe_dishes = day_items[0]
-    probe_result = await _run_day(probe_day, probe_dishes, semaphore)
+    probe_result = await _run_day(
+        probe_day, probe_dishes, semaphore, budget_seconds=_PROBE_BUDGET_SECONDS,
+    )
     probe_stats = probe_result.get("search_stats")
     if probe_stats is not None and getattr(probe_stats, "primary_error_type", None) in (
         "TimeoutError",
@@ -266,8 +279,19 @@ async def search_products_day_by_day(
     ):
         _recipe_search_disabled = True
 
+    remaining_count = len(day_items) - 1
+    remaining_budget = max(0.0, phase2_deadline_at - time.monotonic())
+    per_day_budget = (
+        remaining_budget / max(1, (remaining_count + _DAY_SEARCH_CONCURRENCY - 1) // _DAY_SEARCH_CONCURRENCY)
+        if remaining_count > 0
+        else remaining_budget
+    )
+
     remaining_results = await asyncio.gather(
-        *[_run_day(day, day_dishes, semaphore) for day, day_dishes in day_items[1:]]
+        *[
+            _run_day(day, day_dishes, semaphore, budget_seconds=per_day_budget)
+            for day, day_dishes in day_items[1:]
+        ]
     )
     day_results = [probe_result, *remaining_results]
 
