@@ -17,7 +17,7 @@ from vkuswill_bot.services.search_processor import SearchProcessor
 from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
 
 _QUANTITY_UNIT_PATTERN = (
-    r"кг|kg|г|гр|л|l|мл|ml|шт|штук|шт\.|"
+    r"кг|kg|грамм\w*|гр|г\b|литр\w*|мл|ml|л\b|l\b|штук\w*|шт\.|шт\b|"
     r"зубчик(?:а|ов)?|головк(?:а|и|ок)|лист(?:а|ов)?|"
     r"столов(?:ая|ые)\s+ложк[аи]|чайн(?:ая|ые)\s+ложк[аи]|"
     r"ст\.?\s*ложк[аи]?|ч\.?\s*ложк[аи]?|"
