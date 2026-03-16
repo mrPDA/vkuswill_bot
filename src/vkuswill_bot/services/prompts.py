@@ -360,8 +360,10 @@ def detect_prompt_profile(text: str) -> PromptProfile:
         "недельн",
     )
     has_days_period = re.search(r"на\s+\d+\s+д", low) is not None
+    has_loose_days = re.search(r"\d+\s+д(?:ней|ня|ень)", low) is not None
     has_people_count = re.search(r"для\s+\d+\s+(чел|человек)", low) is not None
     has_period_marker = has_days_period or any(marker in low for marker in meal_plan_period_markers)
+    meal_type_words = ("завтрак", "обед", "ужин", "перекус", "полдник")
     cart_markers = (
         "купи",
         "закажи",
@@ -383,6 +385,9 @@ def detect_prompt_profile(text: str) -> PromptProfile:
     if any(marker in low for marker in meal_plan_strong_markers):
         return "meal_plan"
     if has_period_marker and has_people_count:
+        return "meal_plan"
+    has_meal_type_word = any(w in low for w in meal_type_words)
+    if (has_days_period or has_loose_days) and has_meal_type_word:
         return "meal_plan"
     if any(marker in low for marker in strong_recipe_markers):
         return "recipe"
