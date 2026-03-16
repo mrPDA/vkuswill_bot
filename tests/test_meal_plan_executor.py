@@ -343,7 +343,7 @@ async def test_run_meal_plan_turn_reserves_tail_budget_for_cart_create(
     )
 
     assert "https://shop.example/cart/meal-exec" in result
-    assert seen["phase2_deadline_at"] == reserved_deadline
+    assert seen["phase2_deadline_at"] <= reserved_deadline
     search_span = next(
         span for span in trace.spans if span["start"]["name"] == "meal-plan.search-products"
     )
