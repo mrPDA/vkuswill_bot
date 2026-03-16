@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 readonly PROD_DEPLOY_ROOT="/opt/vkuswill-bot"
 readonly PROD_CONTAINER_NAME="vkuswill-bot"
+readonly PROD_PG_CONTAINER_NAME="vkuswill-postgres"
 readonly PROD_MCP_CONTAINER_NAME="vkuswill-mcp-server"
 readonly PROD_LANGFUSE_CONTAINER_NAME="vkuswill-langfuse"
 readonly PROD_METABASE_CONTAINER_NAME="vkuswill-metabase"
@@ -34,6 +35,7 @@ print_production_config() {
   cat <<EOF
 [deploy-production] DEPLOY_ROOT=${PROD_DEPLOY_ROOT}
 [deploy-production] CONTAINER_NAME=${PROD_CONTAINER_NAME}
+[deploy-production] PG_CONTAINER_NAME=${PROD_PG_CONTAINER_NAME}
 [deploy-production] MCP_CONTAINER_NAME=${PROD_MCP_CONTAINER_NAME}
 [deploy-production] LANGFUSE_CONTAINER_NAME=${PROD_LANGFUSE_CONTAINER_NAME}
 [deploy-production] METABASE_CONTAINER_NAME=${PROD_METABASE_CONTAINER_NAME}
@@ -63,6 +65,7 @@ fi
 
 export DEPLOY_ROOT="${PROD_DEPLOY_ROOT}"
 export CONTAINER_NAME="${PROD_CONTAINER_NAME}"
+export PG_CONTAINER_NAME="${PROD_PG_CONTAINER_NAME}"
 export MCP_CONTAINER_NAME="${PROD_MCP_CONTAINER_NAME}"
 export LANGFUSE_CONTAINER_NAME="${PROD_LANGFUSE_CONTAINER_NAME}"
 export METABASE_CONTAINER_NAME="${PROD_METABASE_CONTAINER_NAME}"

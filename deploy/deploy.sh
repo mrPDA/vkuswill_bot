@@ -24,6 +24,7 @@ LOCKBOX_SECRET_ID=""
 GIGACHAT_MODEL_OVERRIDE=""
 DEPLOY_ROOT="${DEPLOY_ROOT:-/opt/vkuswill-bot}"
 CONTAINER_NAME="${CONTAINER_NAME:-vkuswill-bot}"
+PG_CONTAINER_NAME="${PG_CONTAINER_NAME:-vkuswill-postgres}"
 MCP_CONTAINER_NAME="${MCP_CONTAINER_NAME:-vkuswill-mcp-server}"
 LANGFUSE_CONTAINER_NAME="${LANGFUSE_CONTAINER_NAME:-vkuswill-langfuse}"
 METABASE_CONTAINER_NAME="${METABASE_CONTAINER_NAME:-vkuswill-metabase}"
@@ -495,7 +496,138 @@ ensure_voice_link_nginx_route
 # ─── 6c. Проверка nginx stage debug route ────────────────────
 ensure_stage_debug_nginx_route
 
-# ─── 6c. Запуск Langfuse (self-hosted, если настроен) ────────
+# ─── 6d. Запуск PostgreSQL (self-hosted Docker-контейнер) ─────
+deploy_postgres() {
+  local PG_PORT=5432
+  local PG_DATA_DIR="${DEPLOY_ROOT}/pg-data"
+  local PG_INIT_DIR="${DEPLOY_ROOT}/pg-init"
+  local PG_IMAGE="postgres:16-alpine"
+
+  log "Проверка PostgreSQL (${PG_CONTAINER_NAME})..."
+
+  # Проверить, запущен ли PostgreSQL и здоров ли
+  if docker ps -q -f "name=${PG_CONTAINER_NAME}" | grep -q .; then
+    if docker exec "${PG_CONTAINER_NAME}" pg_isready -U postgres -q 2>/dev/null; then
+      log "PostgreSQL уже запущен и здоров"
+      return 0
+    fi
+    warn "PostgreSQL запущен, но не отвечает. Перезапуск..."
+    docker stop "${PG_CONTAINER_NAME}" --time 30 2>/dev/null || true
+    docker rm "${PG_CONTAINER_NAME}" 2>/dev/null || true
+  elif docker ps -aq -f "name=${PG_CONTAINER_NAME}" | grep -q .; then
+    docker rm "${PG_CONTAINER_NAME}" 2>/dev/null || true
+  fi
+
+  # Извлечь пароли из .env
+  local SUPERUSER_PW BOT_PW LANGFUSE_PW METABASE_PW
+
+  SUPERUSER_PW=$(grep '^PG_SUPERUSER_PASSWORD=' "$ENV_FILE" | cut -d'=' -f2- || echo "")
+  if [[ -z "$SUPERUSER_PW" ]]; then
+    err "PG_SUPERUSER_PASSWORD не найден в ${ENV_FILE}"
+    err "Добавьте PG_SUPERUSER_PASSWORD в Lockbox или .env"
+    return 1
+  fi
+
+  BOT_PW=$(python3 -c "
+from urllib.parse import urlparse, unquote
+import sys
+url = '$(grep "^DATABASE_URL=" "$ENV_FILE" | cut -d"=" -f2-)'
+u = urlparse(url)
+print(unquote(u.password or ''))
+" 2>/dev/null || echo "")
+
+  LANGFUSE_PW=$(python3 -c "
+from urllib.parse import urlparse, unquote
+url = '$(grep "^LANGFUSE_DATABASE_URL=" "$ENV_FILE" | cut -d"=" -f2-)'
+u = urlparse(url)
+print(unquote(u.password or ''))
+" 2>/dev/null || echo "")
+
+  METABASE_PW=$(python3 -c "
+from urllib.parse import urlparse, unquote
+url = '$(grep "^METABASE_DATABASE_URL=" "$ENV_FILE" | cut -d"=" -f2-)'
+u = urlparse(url)
+print(unquote(u.password or ''))
+" 2>/dev/null || echo "")
+
+  if [[ -z "$BOT_PW" ]]; then
+    err "Не удалось извлечь пароль bot из DATABASE_URL"
+    return 1
+  fi
+
+  # Создать директорию данных
+  mkdir -p "${PG_DATA_DIR}"
+  sudo chown -R 999:999 "${PG_DATA_DIR}" 2>/dev/null || true
+  sudo chmod 700 "${PG_DATA_DIR}" 2>/dev/null || true
+
+  # Скопировать init-скрипт
+  mkdir -p "${PG_INIT_DIR}"
+  if [[ -f "${SCRIPT_DIR}/pg-init.sh" ]]; then
+    cp "${SCRIPT_DIR}/pg-init.sh" "${PG_INIT_DIR}/pg-init.sh"
+    chmod 644 "${PG_INIT_DIR}/pg-init.sh"
+  else
+    warn "pg-init.sh не найден в ${SCRIPT_DIR}, PostgreSQL запустится без init-скрипта"
+  fi
+
+  log "Запуск PostgreSQL (${PG_IMAGE})..."
+  docker pull "${PG_IMAGE}" 2>/dev/null || true
+
+  docker run -d \
+    --name "${PG_CONTAINER_NAME}" \
+    --restart unless-stopped \
+    --network host \
+    -e "POSTGRES_USER=postgres" \
+    -e "POSTGRES_PASSWORD=${SUPERUSER_PW}" \
+    -e "PG_BOT_PASSWORD=${BOT_PW}" \
+    -e "PG_LANGFUSE_PASSWORD=${LANGFUSE_PW}" \
+    -e "PG_METABASE_PASSWORD=${METABASE_PW}" \
+    -v "${PG_DATA_DIR}:/var/lib/postgresql/data" \
+    -v "${PG_INIT_DIR}:/docker-entrypoint-initdb.d:ro" \
+    --health-cmd "pg_isready -U postgres" \
+    --health-interval=10s \
+    --health-timeout=5s \
+    --health-start-period=30s \
+    --health-retries=5 \
+    --log-driver json-file \
+    --log-opt max-size=20m \
+    --log-opt max-file=3 \
+    --label "service=postgresql" \
+    "${PG_IMAGE}" \
+    -c "max_connections=100" \
+    -c "shared_buffers=1GB" \
+    -c "effective_cache_size=3GB" \
+    -c "work_mem=8MB" \
+    -c "maintenance_work_mem=256MB" \
+    -c "random_page_cost=1.1" \
+    -c "effective_io_concurrency=200" \
+    -c "wal_buffers=16MB" \
+    -c "min_wal_size=100MB" \
+    -c "max_wal_size=1GB" \
+    -c "checkpoint_completion_target=0.9" \
+    -c "listen_addresses=*" \
+    -c "log_min_duration_statement=1000"
+
+  # Ожидание готовности PostgreSQL
+  local PG_RETRIES=15
+  for i in $(seq 1 "$PG_RETRIES"); do
+    sleep 3
+    if docker exec "${PG_CONTAINER_NAME}" pg_isready -U postgres -q 2>/dev/null; then
+      log "PostgreSQL готов (попытка ${i}/${PG_RETRIES})"
+      return 0
+    fi
+    warn "PostgreSQL не готов, попытка ${i}/${PG_RETRIES}..."
+  done
+
+  err "PostgreSQL не запустился за ${PG_RETRIES} попыток!"
+  err "Логи:"
+  docker logs "${PG_CONTAINER_NAME}" --tail 50 2>&1 || true
+  return 1
+}
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+deploy_postgres
+
+# ─── 6e. Запуск Langfuse (self-hosted, если настроен) ────────
 deploy_langfuse() {
 
   # Проверяем, включён ли Langfuse
@@ -573,7 +705,7 @@ else:
 
 deploy_langfuse
 
-# ─── 6c. Запуск Metabase (BI-дашборды, если настроен) ────────
+# ─── 6f. Запуск Metabase (BI-дашборды, если настроен) ────────
 deploy_metabase() {
 
   # Проверяем, включён ли Metabase

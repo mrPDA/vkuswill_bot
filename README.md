@@ -250,6 +250,14 @@ git push origin feature/amazing-feature
                                     Конец сессии → handoff (если не закончено)
 ```
 
+Для multi-round engineering и verification workflow:
+
+- использовать `notes_query(...)` по `workflow`, `stage`, `environment`, `verification_scope`, `known_issue`, `bridge_role`
+- использовать `notes_test_run_checkpoint(...)` для recurring smoke / verification round
+- сохранять git/run facts в `provenance`, bootstrap facts в `operational`
+- связывать `verification_finding -> product_fix -> verification_follow_up` через `bridge`
+- перед любым `notes_* save` проверять routing hygiene: verification `task_id` писать только в verification space, product `task_id` не писать в verification space
+
 ---
 
 ## Roadmap

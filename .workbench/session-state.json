@@ -1,0 +1,23 @@
+{
+  "events": {
+    "last_restore": {
+      "payload": {
+        "message": "Context restored from notesforllm.",
+        "notes_enabled": true,
+        "ok": true,
+        "payload": {
+          "checkpoints": [],
+          "decisions": [],
+          "handoff": null,
+          "summary": "No prior context found for this task."
+        },
+        "space_id": "e596237d-ac5a-475a-93ac-4ebb026933cb",
+        "space_kind": "product",
+        "task_id": "vkuswill_bot:fix/bugfixes-round2-stage-tests"
+      },
+      "recorded_at": "2026-03-15T07:47:10.126159+00:00"
+    }
+  },
+  "updated_at": "2026-03-15T07:47:10.126159+00:00",
+  "version": 1
+}

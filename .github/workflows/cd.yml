@@ -114,9 +114,11 @@ jobs:
           scp -i ~/.ssh/deploy_key \
             deploy/deploy.sh \
             deploy/deploy-production.sh \
+            deploy/pg-init.sh \
             deploy/nginx-bot.conf \
             deploy/setup-ssl.sh \
             deploy/setup-selfsigned-ssl.sh \
+            scripts/pg-backup-s3.sh \
             "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}:${{ env.DEPLOY_DIR }}/"
 
       - name: Cleanup disk on VM
@@ -184,6 +186,10 @@ jobs:
       - name: Container diagnostics
         if: always()
         run: |
+          echo "=== PostgreSQL container status ==="
+          ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
+            "docker ps -a -f name=vkuswill-postgres --format '{{.Status}}' && echo '--- logs ---' && docker logs vkuswill-postgres --tail 20 2>&1" || true
+          echo ""
           echo "=== Bot container logs (last 50) ==="
           ssh -i ~/.ssh/deploy_key "${{ env.DEPLOY_USER }}@${{ secrets.VM_HOST }}" \
             "docker logs vkuswill-bot --tail 50 2>&1" || true
