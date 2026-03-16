@@ -240,7 +240,17 @@ async def build_turn_state(
         heuristic_profile=heuristic_profile,
         llm_confidence=llm_confidence,
     )
-    if prompt_profile == "meal_plan" and not getattr(
+    if (
+        heuristic_profile == "meal_plan"
+        and prompt_profile != "meal_plan"
+        and intent_conflict_severity is not None
+    ):
+        route_override_applied = True
+        route_override_from = prompt_profile
+        prompt_profile = "meal_plan"
+        route_override_to = prompt_profile
+        route_override_reason = "heuristic_meal_plan_override"
+    elif prompt_profile == "meal_plan" and not getattr(
         agent, "_meal_plan_intent_routing_enabled", True
     ):
         route_override_applied = True

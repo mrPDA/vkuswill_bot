@@ -362,13 +362,17 @@ class TestBuildTurnStateIntegration:
             text="собери корзину на неделю для 4 человек",
         )
 
-        assert state.prompt_profile == "recipe"
+        assert state.prompt_profile == "meal_plan"
         assert state.heuristic_prompt_profile == "meal_plan"
         assert state.llm_prompt_profile == "recipe"
         assert state.llm_prompt_confidence == pytest.approx(0.41)
         assert state.llm_prompt_reason == "mentions food preparation"
         assert state.intent_conflict is True
         assert state.intent_conflict_severity == "high"
+        assert state.route_override_applied is True
+        assert state.route_override_from == "recipe"
+        assert state.route_override_to == "meal_plan"
+        assert state.route_override_reason == "heuristic_meal_plan_override"
 
 
 class TestShoppingAgentClassifyIntent:
