@@ -27,15 +27,9 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = "redis://:${var.redis_password}@${yandex_mdb_redis_cluster.bot.host[0].fqdn}:6379/0"
   }
 
-  # PostgreSQL на VM (Docker, --network host, порт 5432)
   entries {
     key        = "DATABASE_URL"
-    text_value = "postgresql://bot:${urlencode(var.pg_password)}@localhost:5432/vkuswill"
-  }
-
-  entries {
-    key        = "PG_SUPERUSER_PASSWORD"
-    text_value = var.pg_superuser_password
+    text_value = "postgresql://bot:${urlencode(var.pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/vkuswill"
   }
 
   entries {
@@ -110,10 +104,9 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = "http://localhost:3000"
   }
 
-  # Langfuse → PostgreSQL на VM (localhost)
   entries {
     key        = "LANGFUSE_DATABASE_URL"
-    text_value = "postgresql://langfuse:${urlencode(var.langfuse_pg_password)}@localhost:5432/langfuse"
+    text_value = "postgresql://langfuse:${urlencode(var.langfuse_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/langfuse?sslmode=require"
   }
 
   entries {
@@ -153,10 +146,9 @@ resource "yandex_lockbox_secret_version" "bot" {
     text_value = "true"
   }
 
-  # Metabase → PostgreSQL на VM (localhost)
   entries {
     key        = "METABASE_DATABASE_URL"
-    text_value = "postgresql://metabase:${urlencode(var.metabase_pg_password)}@localhost:5432/metabase"
+    text_value = "postgresql://metabase:${urlencode(var.metabase_pg_password)}@${yandex_mdb_postgresql_cluster.bot.host[0].fqdn}:6432/metabase?sslmode=require"
   }
 
   # S3 логирование
@@ -178,21 +170,5 @@ resource "yandex_lockbox_secret_version" "bot" {
   entries {
     key        = "S3_LOG_SECRET_KEY"
     text_value = yandex_iam_service_account_static_access_key.log_writer_s3.secret_key
-  }
-
-  # S3 бэкапы PostgreSQL
-  entries {
-    key        = "PG_BACKUP_BUCKET"
-    text_value = var.pg_backup_bucket
-  }
-
-  entries {
-    key        = "PG_BACKUP_ACCESS_KEY"
-    text_value = yandex_iam_service_account_static_access_key.pg_backup_s3.access_key
-  }
-
-  entries {
-    key        = "PG_BACKUP_SECRET_KEY"
-    text_value = yandex_iam_service_account_static_access_key.pg_backup_s3.secret_key
   }
 }
