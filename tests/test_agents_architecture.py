@@ -24,6 +24,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "shopping_agent_service_mixin": "runtime",
     "shopping_agent_state_ops": "runtime",
     "meal_plan_executor": "runtime",
+    "multi_course_executor": "runtime",
     "meal_plan_execution_helpers": "runtime",
     "meal_plan_trace_ops": "runtime",
     "meal_plan_recipe_search_ops": "runtime",
@@ -94,7 +95,7 @@ _LAYER_ORDER: dict[str, int] = {
 
 EXPECTED_LAYER_VIOLATIONS: set[tuple[str, str]] = set()
 MAX_OUTDEGREE_ALLOWED = 8
-MAX_MODULE_LOC_ALLOWED = 460  # recipe_search_vocabulary ~458 (data-only)
+MAX_MODULE_LOC_ALLOWED = 490  # recipe_search_vocabulary ~484 (data-only)
 
 
 @lru_cache(maxsize=1)

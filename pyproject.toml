@@ -68,6 +68,7 @@ ignore = [
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S106"]  # assert и hardcoded passwords в тестах OK
 "__main__.py" = ["S104"]       # bind 0.0.0.0 для webhook OK
+"scripts/webhook_healthcheck.py" = ["S310"]  # локальный healthcheck к 127.0.0.1
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -80,6 +81,7 @@ markers = [
     "security: SAST-тесты безопасности кода",
     "ai_safety: тесты безопасности ИИ-ассистента",
     "validation: тесты валидации входных данных",
+    "stage: stage/integration smoke and contract checks",
 ]
 
 [tool.coverage.run]

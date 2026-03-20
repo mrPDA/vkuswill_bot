@@ -1,0 +1,130 @@
+# docker-compose.pi.yml — Raspberry Pi / low-RAM: Redis + PostgreSQL + бот
+# Без Langfuse, Metabase (Langfuse — облако, ключи в .env).
+#
+# Webhook: Telegram требует HTTPS. Варианты:
+#   1) Свой домен → профиль caddy (Let's Encrypt): см. .env.pi.example
+#   2) Cloudflare Tunnel → профиль cf-tunnel + CLOUDFLARE_TUNNEL_TOKEN
+#   3) Самоподпись: scripts/pi-selfsigned-ssl.sh <публичный_IP>, каталог ssl/ смонтирован в /app/ssl,
+#      в .env WEBHOOK_CERT_PATH, WEBHOOK_KEY_PATH, WEBHOOK_PORT (например 8443), WEBHOOK_HOST=https://IP:8443
+#
+# Запуск:
+#   docker compose -f docker-compose.pi.yml up -d --build
+#   docker compose -f docker-compose.pi.yml --profile caddy up -d --build
+#   docker compose -f docker-compose.pi.yml --profile cf-tunnel up -d --build
+# AmneziaWG (доступ к api.telegram.org и т.д.): нужен deploy/amnezia-wg0.conf:
+#   python3 scripts/decode_amnezia_vpn.py ~/config.vpn --awg-out deploy/amnezia-wg0.conf
+#   chmod 600 deploy/amnezia-wg0.conf
+# или: make docker-up-pi | make docker-up-pi-caddy | make docker-up-pi-tunnel
+
+services:
+  # AmneziaWG на хосте (network_mode: host) — трафик с Pi/Docker идёт через туннель
+  amnezia-vpn:
+    image: drkivi/amneziawg-for-arm64:latest
+    container_name: amnezia-vpn
+    restart: unless-stopped
+    network_mode: host
+    privileged: true
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    volumes:
+      - ./deploy/amnezia-wg0.conf:/etc/amnezia/amneziawg/wg0.conf:ro
+    command: ["sh", "-c", "awg-quick up wg0 && exec tail -f /dev/null"]
+    healthcheck:
+      test: ["CMD-SHELL", "awg show wg0 >/dev/null 2>&1 || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 8
+      start_period: 45s
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: vkuswill-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: vkuswill
+      POSTGRES_USER: vkuswill
+      POSTGRES_PASSWORD: vkuswill_dev
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Миграции только через MigrationRunner в боте (без дубля initdb.d)
+    # Умеренные лимиты для ~4 GB RAM на хосте
+    command:
+      - postgres
+      - -c
+      - shared_buffers=128MB
+      - -c
+      - max_connections=40
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vkuswill -d vkuswill"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: unless-stopped
+
+  bot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        # У многих провайдеров pypi.org с Pi недоступен; зеркало обходится без VPN
+        UV_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+    container_name: vkuswill-bot
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/vkuswill
+      # Диалоги в Telegram пока только memory (см. config.storage_backend)
+      STORAGE_BACKEND: memory
+      # Облачный Langfuse; LANGFUSE_ENABLED / ключи — из .env
+      LANGFUSE_HOST: https://cloud.langfuse.com
+      # USE_WEBHOOK из .env: false = long polling (работает без публичного HTTPS);
+      # true только вместе с WEBHOOK_HOST (+ Caddy / Tunnel / самоподпись).
+    ports:
+      - "${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
+    volumes:
+      - ./ssl:/app/ssl:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      amnezia-vpn:
+        condition: service_healthy
+    restart: unless-stopped
+
+  # HTTPS для webhook (домен должен указывать на Pi, порты 80/443 доступны с интернета)
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2-alpine
+    container_name: vkuswill-caddy
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      WEBHOOK_DOMAIN: ${WEBHOOK_DOMAIN}
+    volumes:
+      - ./deploy/Caddyfile.pi:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      bot:
+        condition: service_started
+
+  # Cloudflare Tunnel: TLS на стороне CF, на Pi только HTTP у бота
+  cloudflared:
+    profiles: ["cf-tunnel"]
+    image: cloudflare/cloudflared:latest
+    container_name: vkuswill-cloudflared
+    restart: unless-stopped
+    command: tunnel run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on:
+      bot:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  caddy-data:
+  caddy-config:

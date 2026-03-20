@@ -1,0 +1,154 @@
+{
+  "document": {
+    "id": "stage-cicd-rules",
+    "version": "1.1.0",
+    "scope": "staging",
+    "description": "Каноничные правила CI/CD для staging-контура. Предназначено для агентов и автоматизаций.",
+    "sources": [
+      ".github/workflows/ci.yml",
+      ".github/workflows/cd-staging.yml",
+      "scripts/check_staging_deploy_guard.sh",
+      "deploy/deploy-staging.sh",
+      "docs/STAGE_ACCESS.json",
+      "docs/stage-response-contracts.md"
+    ]
+  },
+  "ci": {
+    "workflow_file": ".github/workflows/ci.yml",
+    "trigger": {
+      "push_branches": [
+        "main",
+        "develop"
+      ],
+      "pull_request_branches": [
+        "main"
+      ]
+    },
+    "required_jobs_for_main_push": [
+      "Lint & Format",
+      "Tests (Python 3.11)",
+      "Tests (Python 3.12)",
+      "Tests (Python 3.13)",
+      "Security checks"
+    ],
+    "job_details": {
+      "lint_and_format": [
+        "bash scripts/check_staging_deploy_guard.sh",
+        "uv run ruff check src/ tests/",
+        "uv run ruff format --check src/ tests/"
+      ],
+      "tests": [
+        "uv run pytest -v --tb=short"
+      ],
+      "security": [
+        "gitleaks",
+        "bandit",
+        "pip-audit",
+        "security pytest suites"
+      ]
+    }
+  },
+  "cd_staging": {
+    "workflow_file": ".github/workflows/cd-staging.yml",
+    "trigger": {
+      "type": "workflow_dispatch",
+      "required_input": "tag",
+      "preferred_ref": "main",
+      "allowed_refs_for_validation": [
+        "main",
+        "feature/*",
+        "fix/*",
+        "bugfix/*",
+        "test/*",
+        "chore/*"
+      ]
+    },
+    "gates": [
+      "Pre-deploy tests must pass",
+      "Build & Push to Yandex CR must pass",
+      "Deploy to Staging VM must pass",
+      "Health check on http://127.0.0.1:18080/health must return 200"
+    ],
+    "required_secrets": [
+      "VM_HOST_STG",
+      "VM_SSH_KEY_STG",
+      "LOCKBOX_SECRET_ID_STG",
+      "YC_CR_REGISTRY_ID",
+      "YC_CR_KEY_SECRET"
+    ],
+    "staging_guard_requirements": {
+      "deploy_root": "/opt/vkuswill-bot-stg",
+      "container_name": "vkuswill-bot-stg",
+      "mcp_container_name": "vkuswill-mcp-server-stg",
+      "health_port": 18080,
+      "mcp_default_port": 18081,
+      "deploy_wrapper": "deploy/deploy-staging.sh"
+    }
+  },
+  "agent_runbook": {
+    "preconditions": [
+      "Для promotion на общий stage предпочтителен деплой из main.",
+      "Для branch validation допустим workflow_dispatch с ref текущей ветки, если коммит запушен в origin/<branch>.",
+      "Не запускать CD Staging, пока для выбранного SHA не пройдены хотя бы локальные quality gates и pre-deploy tests workflow."
+    ],
+    "steps": [
+      {
+        "order": 1,
+        "action": "Push selected ref",
+        "command_template": "git push origin <branch>"
+      },
+      {
+        "order": 2,
+        "action": "Run local quality gates",
+        "command_template": "uv run ruff check <files> && uv run pytest <targets>"
+      },
+      {
+        "order": 3,
+        "action": "Start CD Staging",
+        "command_template": "gh workflow run cd-staging.yml --ref <branch> -f tag=stg-<short_sha>"
+      },
+      {
+        "order": 4,
+        "action": "Wait CD Staging completion",
+        "command_template": "gh run watch <cd_staging_run_id> --interval 10"
+      },
+      {
+        "order": 5,
+        "action": "Record final links and status",
+        "command_template": "gh run view <run_id> --json status,conclusion,url"
+      },
+      {
+        "order": 6,
+        "action": "Run post-deploy smoke",
+        "command_template": "curl -ksS https://89.169.138.16/health && uv run pytest tests/test_stage_response_contracts.py -m stage -k <subset>"
+      }
+    ]
+  },
+  "post_deploy_validation": {
+    "health_endpoint": "https://89.169.138.16/health",
+    "response_contract_suite": "tests/test_stage_response_contracts.py",
+    "response_contract_env": [
+      "RUN_STAGE_RESPONSE_CONTRACTS=1",
+      "DEBUG_API_KEY_STG",
+      "LANGFUSE_HOST",
+      "LANGFUSE_PUBLIC_KEY",
+      "LANGFUSE_SECRET_KEY"
+    ],
+    "notesforllm_task_id": "vkuswill_bot:verification/response-contract-stage-tests"
+  },
+  "policies": {
+    "must_not": [
+      "Не использовать .github/workflows/cd.yml для staging-задач.",
+      "Не деплоить staging из SHA без успешного CI.",
+      "Не изменять staging deploy root и имена контейнеров в обход guard-правил.",
+      "Не считать stage подтверждённым только по host/ip без проверки Langfuse."
+    ],
+    "recommended_tag_pattern": "stg-<short_sha>",
+    "rollback_note": "Если CD Staging упал после выката, запустить CD Staging повторно на предыдущем стабильном теге."
+  },
+  "success_criteria": {
+    "ci": "completed/success",
+    "cd_staging": "completed/success",
+    "health_check": "HTTP 200 from internal staging health endpoint"
+  }
+}

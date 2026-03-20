@@ -205,6 +205,109 @@ class TestRestorePreviousQuantities:
         # xml_id=1 is in overrides → should not be restored.
         assert result["products"][0]["q"] == 1
 
+    def test_restores_on_qty_explosion(self) -> None:
+        """REGR-01: LLM sets q=14 for chicken when user only asked to add rice."""
+        result = restore_previous_quantities_for_additive_update(
+            tool_name="vkusvill_cart_link_create",
+            tool_args={
+                "products": [
+                    {"xml_id": 1, "q": 4},
+                    {"xml_id": 2, "q": 14},
+                    {"xml_id": 3, "q": 1},
+                ]
+            },
+            user_text="ещё добавь рис и гречку",
+            previous_products=[
+                {"xml_id": 1, "q": 1},
+                {"xml_id": 2, "q": 1},
+            ],
+        )
+        prods = result["products"]
+        assert prods[0]["q"] == 1
+        assert prods[1]["q"] == 1
+        assert prods[2]["q"] == 1
+
+    def test_keeps_intentional_small_increase(self) -> None:
+        """User says 'ещё добавь 3 пачки молока' — LLM correctly sets q=3."""
+        result = restore_previous_quantities_for_additive_update(
+            tool_name="vkusvill_cart_link_create",
+            tool_args={"products": [{"xml_id": 1, "q": 3}]},
+            user_text="ещё добавь 3 пачки молока",
+            previous_products=[{"xml_id": 1, "q": 1}],
+        )
+        assert result["products"][0]["q"] == 3
+
+
+class TestHallucinatedXmlIdFilter:
+    """Filter out xml_ids not found in product_index (LLM hallucinations)."""
+
+    def test_drops_unknown_xml_ids(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {
+                "products": [
+                    {"xml_id": 111, "q": 1},
+                    {"xml_id": 12345, "q": 1},
+                    {"xml_id": 222, "q": 2},
+                    {"xml_id": 99999, "q": 1},
+                ]
+            },
+            product_index={
+                111: {"xml_id": 111, "name": "Молоко", "unit": "шт"},
+                222: {"xml_id": 222, "name": "Хлеб", "unit": "шт"},
+            },
+        )
+        products = result["products"]
+        xml_ids = [p["xml_id"] for p in products]
+        assert xml_ids == [111, 222]
+
+    def test_keeps_all_when_all_valid(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 2}, {"xml_id": 2, "q": 3}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Рис", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Гречка", "unit": "шт"},
+            },
+        )
+        assert len(result["products"]) == 2
+
+    def test_no_filter_when_product_index_empty(self) -> None:
+        """Without product_index, no filtering is applied."""
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 12345, "q": 1}]},
+        )
+        assert len(result["products"]) == 1
+
+
+class TestMaxQtyCap:
+    """NEG02: max qty safeguard caps absurd quantities after unit normalization."""
+
+    def test_caps_absurd_qty_at_20(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 30}, {"xml_id": 2, "q": 15}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Орехи", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Мёд", "unit": "шт"},
+            },
+        )
+        assert result["products"][0]["q"] == 20
+        assert result["products"][1]["q"] == 15
+
+    def test_normal_qty_unchanged(self) -> None:
+        result = preprocess_tool_args(
+            "vkusvill_cart_link_create",
+            {"products": [{"xml_id": 1, "q": 6}, {"xml_id": 2, "q": 12}]},
+            product_index={
+                1: {"xml_id": 1, "name": "Рис", "unit": "шт"},
+                2: {"xml_id": 2, "name": "Молоко", "unit": "шт"},
+            },
+        )
+        assert result["products"][0]["q"] == 6
+        assert result["products"][1]["q"] == 12
+
 
 # ── normalize_recipe_search_args ──────────────────────────────────
 
@@ -305,10 +408,10 @@ class TestNormalizeColloquialNumerals:
             ("полтора кило картошки", "1.5 кг картошки"),
             ("полкило моркови", "0.5 кг моркови"),
             ("пару литров молока", "2 литров молока"),
-            ("тройку яблок", "3 яблок"),
-            ("пяток яиц", "5 яиц"),
-            ("десяток яиц", "10 яиц"),
-            ("дюжину булочек", "12 булочек"),
+            ("тройку яблок", "3 шт яблок"),
+            ("пяток яиц", "5 шт яиц"),
+            ("десяток яиц", "10 шт яиц"),
+            ("дюжину булочек", "12 шт булочек"),
             ("четверть кило масла", "0.25 кг масла"),
             ("полтора литра молока", "1.5 л молока"),
             ("без числительных", "без числительных"),
@@ -318,3 +421,23 @@ class TestNormalizeColloquialNumerals:
         from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
 
         assert normalize_colloquial_numerals(text) == expected
+
+
+class TestNormalizeMultilingualGroceryText:
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            (
+                "I need milk, bread, eggs and cheese please",
+                "молоко, хлеб, яйца и сыр",
+            ),
+            ("moloko 2 litra, hleb, maslo", "молоко 2 литра, хлеб, масло"),
+            ("сыр и хлеб", "сыр и хлеб"),
+        ],
+    )
+    def test_normalize(self, text: str, expected: str) -> None:
+        from vkuswill_bot.services.tool_input_normalizers import (
+            normalize_multilingual_grocery_text,
+        )
+
+        assert normalize_multilingual_grocery_text(text) == expected

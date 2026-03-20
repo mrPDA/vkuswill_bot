@@ -181,6 +181,8 @@ async def execute_tool_calls(
         state.tools_called_this_turn = True
         if tool_name in {"recipe_ingredients", "recipe_search"}:
             state.recipe_flow_started_this_turn = True
+        if tool_name == "recipe_ingredients":
+            state.recipe_calls_this_turn += 1
 
         cart_data = _extract_cart_data_from_result(tool_name=tool_name, tool_result=tool_result)
         if cart_data is not None:

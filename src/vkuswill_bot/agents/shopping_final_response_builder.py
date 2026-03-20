@@ -311,3 +311,37 @@ class DefaultFinalResponseBuilder:
                 )
         logger.info("Recovered cart from recipe data after LLM error for user %d", user_id)
         return final_text
+
+
+def try_status_cart_shortcircuit(
+    *,
+    agent: Any,
+    state: Any,
+    user_id: int,
+    previous_cart_snapshot: dict[str, Any] | None,
+    trace: Any | None,
+) -> str | None:
+    """Return rendered cart when status profile + cart_intent + snapshot exists."""
+    if (
+        state.prompt_profile != "status"
+        or not state.cart_intent
+        or not isinstance(previous_cart_snapshot, dict)
+        or not previous_cart_snapshot.get("link")
+    ):
+        return None
+
+    agent._ensure_cart_price_summary(
+        cart_data=previous_cart_snapshot,
+        product_index=state.product_index_this_turn,
+    )
+    cart_text = render_stable_cart_output(previous_cart_snapshot, include_intro=True)
+    agent._history[user_id] = agent._trim_history(
+        [*state.history, assistant_msg(cart_text)]
+    )
+    if trace is not None:
+        with contextlib.suppress(Exception):
+            trace.update(
+                output=cart_text[:200],
+                metadata={"status_cart_shortcircuit": True},
+            )
+    return cart_text

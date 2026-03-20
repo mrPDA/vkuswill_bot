@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from dataclasses import dataclass
 from typing import cast
 from typing import Any, Protocol
@@ -15,15 +16,20 @@ from vkuswill_bot.agents.meal_plan_runtime_ops import (
 from vkuswill_bot.agents.meal_plan_runtime_policy import (
     RECIPE_SEARCH_TIMEOUT_SECONDS,
     call_with_timeout_retry,
+    deadline_remaining,
 )
 from vkuswill_bot.agents.recipe_fallback import fallback_recipe_search
 
-_PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 24
+logger = logging.getLogger(__name__)
+
+_PRIMARY_RECIPE_SEARCH_MAX_INGREDIENTS = 32
 _RECIPE_SEARCH_CHUNK_SIZE = 5
 _RECIPE_SEARCH_CHUNK_CONCURRENCY = 3
 _LOCAL_PRODUCTS_SEARCH_LIMIT = 10
-_LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 8.0
-_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY = 6
+_LOCAL_PRODUCTS_SEARCH_TIMEOUT_SECONDS = 12.0
+_MAX_GLOBAL_MCP_SEARCH_CONCURRENCY = 8
+_RETRY_NOT_FOUND_MIN_BUDGET_SECONDS = 5.0
+_RETRY_NOT_FOUND_COOLDOWN_SECONDS = 1.0
 
 
 class MealPlanRecipeSearchAgentProtocol(Protocol):
@@ -58,6 +64,8 @@ class RecipeSearchStats:
     local_fallback_chunk_count: int = 0
     local_fallback_products_count: int = 0
     local_fallback_not_found_count: int = 0
+    retry_attempted: int = 0
+    retry_recovered: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -76,6 +84,8 @@ class RecipeSearchStats:
             "primary_error_message": self.primary_error_message,
             "chunk_failure_count": self.chunk_failure_count,
             "chunk_sample_failures": list(self.chunk_sample_failures or []),
+            "retry_attempted": self.retry_attempted,
+            "retry_recovered": self.retry_recovered,
             "local_fallback_chunk_count": self.local_fallback_chunk_count,
             "local_fallback_products_count": self.local_fallback_products_count,
             "local_fallback_not_found_count": self.local_fallback_not_found_count,
@@ -168,6 +178,8 @@ async def search_products(
         return extract_products_from_recipe_search(fallback_raw)
 
     async def _call_recipe_search(ingredients: list[dict[str, Any]]) -> str:
+        remaining = deadline_remaining(phase2_deadline_at)
+        capped_timeout = min(RECIPE_SEARCH_TIMEOUT_SECONDS, remaining * 0.5)
         return await call_with_timeout_retry(
             operation=lambda: agent._call_mcp_tool(
                 name="recipe_search",
@@ -176,8 +188,9 @@ async def search_products(
                 call_cache=state.mcp_call_cache,
                 user_id=user_id,
             ),
-            timeout_seconds=RECIPE_SEARCH_TIMEOUT_SECONDS,
+            timeout_seconds=max(2.0, capped_timeout),
             hard_deadline_at=phase2_deadline_at,
+            retries=0,
         )
 
     used_chunk_fallback = False
@@ -293,6 +306,26 @@ async def search_products(
                     },
                 )
             chunk_products, chunk_not_found = extract_products_from_recipe_search(chunk_result)
+            if not chunk_products:
+                try:
+                    (
+                        fallback_products,
+                        fallback_not_found,
+                    ) = await _fallback_chunk_with_products_search(chunk)
+                except Exception:
+                    return chunk_products, chunk_not_found, None
+                return (
+                    fallback_products,
+                    fallback_not_found,
+                    {
+                        "fallback_used": "local_products_search",
+                        "source_error_type": None,
+                        "source_error_message": "recipe_search_empty",
+                        "chunk_size": len(chunk),
+                        "products_count": len(fallback_products),
+                        "not_found_count": len(fallback_not_found),
+                    },
+                )
             return chunk_products, chunk_not_found, None
 
     chunks = [
@@ -325,6 +358,64 @@ async def search_products(
         value = str(item).strip()
         if value and value not in combined_not_found:
             combined_not_found.append(value)
+
+    budget_ok = deadline_remaining(phase2_deadline_at) > _RETRY_NOT_FOUND_MIN_BUDGET_SECONDS
+    if combined_not_found and budget_ok:
+        retry_ingredients = _match_not_found_to_ingredients(
+            combined_not_found, aggregated_ingredients
+        )
+        if retry_ingredients:
+            stats.retry_attempted = len(retry_ingredients)
+            await asyncio.sleep(_RETRY_NOT_FOUND_COOLDOWN_SECONDS)
+            retry_products, retry_still_not_found = await _retry_not_found_search(
+                retry_ingredients,
+                search_fn=_call_products_search,
+                phase2_deadline_at=phase2_deadline_at,
+            )
+            if retry_products:
+                combined_products = merge_products([*combined_products, *retry_products])
+                stats.retry_recovered = len(retry_products)
+            still_not_found_set = set(retry_still_not_found)
+            combined_not_found = [
+                nf for nf in combined_not_found if nf in still_not_found_set
+            ]
+            logger.info(
+                "Retry not_found: attempted=%d, recovered=%d, still_missing=%d",
+                stats.retry_attempted,
+                stats.retry_recovered,
+                len(combined_not_found),
+            )
+
     stats.final_products_count = len(combined_products)
     stats.final_not_found_count = len(combined_not_found)
     return combined_products, combined_not_found, used_chunk_fallback, stats
+
+
+def _match_not_found_to_ingredients(
+    not_found_queries: list[str],
+    aggregated_ingredients: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Match not_found query strings back to their original ingredient dicts."""
+    nf_set = {q.strip().lower() for q in not_found_queries}
+    matched: list[dict[str, Any]] = []
+    for ing in aggregated_ingredients:
+        sq = str(ing.get("search_query", "")).strip().lower()
+        name = str(ing.get("name", "")).strip().lower()
+        if sq in nf_set or name in nf_set:
+            matched.append(ing)
+    return matched
+
+
+async def _retry_not_found_search(
+    ingredients: list[dict[str, Any]],
+    *,
+    search_fn: Any,
+    phase2_deadline_at: float,
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Retry searching for previously not_found ingredients one by one."""
+    retry_result = await fallback_recipe_search(
+        {"ingredients": ingredients},
+        search_fn=search_fn,
+        max_concurrent=2,
+    )
+    return extract_products_from_recipe_search(retry_result)

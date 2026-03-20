@@ -1924,6 +1924,12 @@ def test_extract_structured_ingredient_requests_colloquial_numerals() -> None:
         if "молок" in row["name"].lower():
             assert row["quantity"] == pytest.approx(2.0, abs=0.1)
             assert row["unit"] == "л"
+        if "яблок" in row["name"].lower() or "яблоч" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(3.0, abs=0.1)
+            assert row["unit"] == "шт"
+        if "яиц" in row["name"].lower() or "яйц" in row["name"].lower():
+            assert row["quantity"] == pytest.approx(5.0, abs=0.1)
+            assert row["unit"] == "шт"
 
 
 def test_extract_structured_ingredient_requests_poltora_kilo() -> None:

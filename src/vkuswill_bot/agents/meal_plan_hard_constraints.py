@@ -7,7 +7,9 @@ from typing import Any
 
 from vkuswill_bot.agents.meal_plan_types import MealPlanDish, MealPlanRequest
 
-_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-Я0-9_]+")
+_TOKEN_RE = re.compile(r"[a-zA-Zа-яА-ЯёЁ0-9_]+")
+_BEZ_PHRASE_RE = re.compile(r"\bбез\s+\w+(?:\s+и\s+\w+)*", re.IGNORECASE)
+_BEZ_COMPOUND_RE = re.compile(r"\bбез[а-яёА-ЯЁ]{3,}\w*", re.IGNORECASE)
 _DIET_MARKERS: dict[str, tuple[str, ...]] = {
     "vegan": ("vegan", "веган", "plant based", "plant-based", "plant_based"),
     "vegetarian": ("vegetarian", "вегетариан", "без мяса"),
@@ -66,6 +68,7 @@ _ALLERGEN_ALIASES: dict[str, set[str]] = {
     "nuts": _NUT_MARKERS,
     "орехи": _NUT_MARKERS,
     "lactose": _DAIRY_MARKERS,
+    "лактоза": _DAIRY_MARKERS,
     "молоко": _DAIRY_MARKERS,
     "молочные": _DAIRY_MARKERS,
     "молочное": _DAIRY_MARKERS,
@@ -92,8 +95,16 @@ def _normalized_values(raw: object) -> set[str]:
     return {str(item).strip().lower() for item in raw if str(item).strip()}
 
 
+def _strip_negations(text: str) -> str:
+    """Remove 'без X' phrases and 'безX...' compounds to avoid false positives."""
+    text = _BEZ_PHRASE_RE.sub("", text)
+    text = _BEZ_COMPOUND_RE.sub("", text)
+    return text
+
+
 def _dish_terms(dish: MealPlanDish) -> set[str]:
     merged = " ".join([dish.name, *dish.cuisine_tags]).lower()
+    merged = _strip_negations(merged)
     return {token for token in _TOKEN_RE.findall(merged) if token}
 
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
@@ -18,7 +19,7 @@ FilterPantryFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 AggregateIngredientsFn = Callable[[list[dict[str, Any]]], list[dict[str, Any]]]
 PrioritizeIngredientsFn = Callable[..., tuple[list[dict[str, Any]], list[str]]]
 
-_DAY_SEARCH_CONCURRENCY = 2
+_DAY_SEARCH_CONCURRENCY = 3
 
 
 @dataclass(slots=True)
@@ -139,14 +140,24 @@ async def search_products_day_by_day(
     global_mcp_semaphore = create_global_mcp_search_semaphore()
 
     day_items = sorted(grouped_days.items())
+    _recipe_search_disabled = False
+    _PROBE_BUDGET_SECONDS = 15.0
 
     async def _run_day(
         day: int,
         day_dishes: list[dict[str, Any]],
         semaphore: asyncio.Semaphore,
+        *,
+        budget_seconds: float | None = None,
     ) -> dict[str, Any]:
         async with semaphore:
-            day_deadline_at = phase2_deadline_at
+            if budget_seconds is not None:
+                day_deadline_at = min(
+                    phase2_deadline_at,
+                    time.monotonic() + budget_seconds,
+                )
+            else:
+                day_deadline_at = phase2_deadline_at
             day_flat_ingredients = _ingredients_for_day(
                 day_dishes=day_dishes,
                 ingredients_by_dish=ingredients_by_dish,
@@ -219,7 +230,7 @@ async def search_products_day_by_day(
                 llm_provider=llm_provider,
                 aggregated_ingredients=prioritized,
                 phase2_deadline_at=day_deadline_at,
-                prefer_local_only=True,
+                prefer_local_only=_recipe_search_disabled,
                 global_mcp_semaphore=global_mcp_semaphore,
             )
             finish_search_span(
@@ -255,8 +266,17 @@ async def search_products_day_by_day(
             }
 
     semaphore = asyncio.Semaphore(_DAY_SEARCH_CONCURRENCY)
+    _recipe_search_disabled = True
+
+    total_budget = max(0.0, phase2_deadline_at - time.monotonic())
+    num_rounds = max(1, (len(day_items) + _DAY_SEARCH_CONCURRENCY - 1) // _DAY_SEARCH_CONCURRENCY)
+    per_day_budget = total_budget / num_rounds
+
     day_results = await asyncio.gather(
-        *[_run_day(day, day_dishes, semaphore) for day, day_dishes in day_items]
+        *[
+            _run_day(day, day_dishes, semaphore, budget_seconds=per_day_budget)
+            for day, day_dishes in day_items
+        ]
     )
 
     products_by_day: dict[int, list[dict[str, Any]]] = {}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from vkuswill_bot.agents.response_analysis import (
+    count_expected_recipe_courses,
     is_additive_cart_intent,
     is_cart_intent,
     looks_like_partial_recipe_reply,
@@ -57,6 +58,8 @@ class TestIsCartIntent:
             "закажи продукты",
             "добавь молоко",
             "купить хлеб",
+            "молоко, хлеб, яйца и сыр",
+            "лук 100 г, чеснок 50 г, имбирь 30 г",
             "ингредиенты для пирога",
             "рецепт борща",
             "приготовь салат",
@@ -78,6 +81,7 @@ class TestIsCartIntent:
         [
             "привет",
             "как дела",
+            "привет, как дела",
             "",
             "расскажи анекдот",
         ],
@@ -229,3 +233,27 @@ class TestShouldStartFreshContext:
     def test_delete_markers_prevent_fresh(self):
         history = _history_with_cart()
         assert should_start_fresh_context(text="убери сыр из корзины", history=history) is False
+
+
+class TestCountExpectedRecipeCourses:
+    def test_single_dish(self):
+        assert count_expected_recipe_courses("приготовь борщ") == 1
+
+    def test_multi_course_meal_types(self):
+        assert count_expected_recipe_courses("завтрак, обед, ужин и десерт") >= 3
+
+    def test_multi_dish_names(self):
+        assert count_expected_recipe_courses("борщ, стейк и чизкейк") == 3
+
+    def test_meal_types_with_dishes(self):
+        text = (
+            "Собери продукты для завтрака (омлет), обеда (борщ),"
+            " ужина (стейк) и десерта (чизкейк)"
+        )
+        assert count_expected_recipe_courses(text) >= 4
+
+    def test_no_dishes(self):
+        assert count_expected_recipe_courses("купи молоко") == 0
+
+    def test_two_dishes(self):
+        assert count_expected_recipe_courses("паста и салат") == 2

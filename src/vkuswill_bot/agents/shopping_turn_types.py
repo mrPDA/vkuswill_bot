@@ -14,8 +14,12 @@ from vkuswill_bot.agents.recipe_pantry import (
     extract_explicit_pantry_requests,
     has_explicit_egg_pack_request,
 )
+from vkuswill_bot.services.tool_input_normalizers import (
+    normalize_colloquial_numerals,
+    normalize_multilingual_grocery_text,
+)
 from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
-from vkuswill_bot.agents.response_analysis import is_cart_intent
+from vkuswill_bot.agents.response_analysis import count_expected_recipe_courses, is_cart_intent
 from vkuswill_bot.services.prompts import PromptProfile
 
 
@@ -153,9 +157,12 @@ class TurnState:
     recipe_to_cart_recovery_used: bool = False
     textual_tool_call_recovery_used: bool = False
     step_budget_warning_used: bool = False
+    multi_course_recovery_count: int = 0
     single_search_steps_streak: int = 0
     tools_called_this_turn: bool = False
     recipe_flow_started_this_turn: bool = False
+    recipe_calls_this_turn: int = 0
+    multi_course_expected: int = 0
     total_llm_input_chars: int = 0
     mcp_call_cache: dict[str, str] = field(default_factory=dict)
     search_query_by_xml_id_this_turn: dict[int, str] = field(default_factory=dict)
@@ -191,6 +198,7 @@ async def build_turn_state(
     text: str,
     trace: Any | None = None,
 ) -> TurnState:
+    normalized_text = normalize_multilingual_grocery_text(normalize_colloquial_numerals(text))
     history = agent._history.get(user_id)
     previous_cart_snapshot = agent._last_cart_snapshot.get(user_id)
     previous_cart_products = (
@@ -199,14 +207,14 @@ async def build_turn_state(
         and isinstance(previous_cart_snapshot.get("products"), list)
         else []
     )
-    if agent._should_start_fresh_context(text=text, history=history):
+    if agent._should_start_fresh_context(text=normalized_text, history=history):
         history = None
 
     # LLM-классификация и загрузка preferences — независимы, запускаем параллельно.
     if trace is None:
-        classify_task = asyncio.create_task(agent._classify_intent(text))
+        classify_task = asyncio.create_task(agent._classify_intent(normalized_text))
     else:
-        classify_task = asyncio.create_task(agent._classify_intent(text, trace=trace))
+        classify_task = asyncio.create_task(agent._classify_intent(normalized_text, trace=trace))
     bundle_loader = getattr(type(agent), "_load_user_preferences_bundle", None)
     if callable(bundle_loader):
         prefs_bundle_task = asyncio.create_task(agent._load_user_preferences_bundle(user_id))
@@ -221,7 +229,7 @@ async def build_turn_state(
     with contextlib.suppress(Exception):
         llm_profile, llm_confidence, llm_reason = _normalize_llm_classification(await classify_task)
 
-    heuristic_profile = resolve_prompt_profile(text=text, history=history)
+    heuristic_profile = resolve_prompt_profile(text=normalized_text, history=history)
     prompt_profile = llm_profile or heuristic_profile
     route_override_applied = False
     route_override_from: PromptProfile | None = None
@@ -232,12 +240,22 @@ async def build_turn_state(
         heuristic_profile=heuristic_profile,
         llm_confidence=llm_confidence,
     )
-    if prompt_profile == "meal_plan" and not getattr(
+    if (
+        heuristic_profile == "meal_plan"
+        and prompt_profile != "meal_plan"
+        and intent_conflict_severity is not None
+    ):
+        route_override_applied = True
+        route_override_from = prompt_profile
+        prompt_profile = "meal_plan"
+        route_override_to = prompt_profile
+        route_override_reason = "heuristic_meal_plan_override"
+    elif prompt_profile == "meal_plan" and not getattr(
         agent, "_meal_plan_intent_routing_enabled", True
     ):
         route_override_applied = True
         route_override_from = prompt_profile
-        prompt_profile = "cart" if is_cart_intent(text) else "recipe"
+        prompt_profile = "cart" if is_cart_intent(normalized_text) else "recipe"
         route_override_to = prompt_profile
         route_override_reason = "meal_plan_intent_routing_disabled"
     history = ensure_system_prompt(
@@ -248,7 +266,25 @@ async def build_turn_state(
     )
 
     product_index_this_turn: dict[int, dict[str, Any]] = build_product_index_from_history(history)
-    history.append({"role": "user", "content": text})
+    history.append({"role": "user", "content": normalized_text})
+
+    multi_course_expected = 0
+    if prompt_profile in ("recipe", "cart"):
+        multi_course_expected = count_expected_recipe_courses(normalized_text)
+
+    if multi_course_expected >= 2:
+        history.append({
+            "role": "system",
+            "content": (
+                f"[Мульти-курс: {multi_course_expected} блюд] "
+                "Обработай ВСЕ блюда по порядку. Алгоритм: "
+                "1) вызови recipe_ingredients для КАЖДОГО блюда; "
+                "2) для каждого результата найди товары; "
+                "3) создай ОДНУ корзину со ВСЕМИ продуктами от ВСЕХ блюд. "
+                "НЕ создавай корзину, пока не обработаны ВСЕ блюда!"
+            ),
+        })
+
     normalized_history = agent._normalize_history(history)
 
     user_preferences: dict[str, str] = {}
@@ -265,7 +301,11 @@ async def build_turn_state(
     elif prefs_task is not None:
         user_preferences = await prefs_task
 
-    cart_intent = is_cart_intent(text) or prompt_profile in ("cart", "recipe", "meal_plan")
+    cart_intent = is_cart_intent(normalized_text) or prompt_profile in (
+        "cart",
+        "recipe",
+        "meal_plan",
+    )
 
     return TurnState(
         history=normalized_history,
@@ -273,9 +313,9 @@ async def build_turn_state(
         prompt_profile=prompt_profile,
         product_index_this_turn=product_index_this_turn,
         cart_intent=cart_intent,
-        explicit_pantry_requests=extract_explicit_pantry_requests(text),
-        explicit_egg_pack_request=has_explicit_egg_pack_request(text),
-        requested_ingredients=extract_structured_ingredient_requests(text),
+        explicit_pantry_requests=extract_explicit_pantry_requests(normalized_text),
+        explicit_egg_pack_request=has_explicit_egg_pack_request(normalized_text),
+        requested_ingredients=extract_structured_ingredient_requests(normalized_text),
         user_preferences=user_preferences,
         user_preference_profile=user_preference_profile,
         llm_prompt_profile=llm_profile,
@@ -288,4 +328,5 @@ async def build_turn_state(
         route_override_from=route_override_from,
         route_override_to=route_override_to,
         route_override_reason=route_override_reason,
+        multi_course_expected=multi_course_expected,
     )

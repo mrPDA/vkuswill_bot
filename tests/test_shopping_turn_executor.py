@@ -82,6 +82,7 @@ class _TraceSpy:
 class _AgentStub:
     def __init__(self, metrics_sink: _MetricsSinkSpy) -> None:
         self._history: dict[int, list[dict[str, Any]]] = {}
+        self._last_cart_snapshot: dict[int, dict[str, Any]] = {}
         self._last_trace_id: dict[int, str] = {}
         self._meal_plan_shadow_mode_enabled = False
         self._meal_plan_rollout_percent = 100
@@ -135,6 +136,11 @@ class _AgentStub:
 
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]:
         return history
+
+    def _ensure_cart_price_summary(
+        self, *, cart_data: dict[str, Any], product_index: dict[int, dict[str, Any]]
+    ) -> None:
+        pass
 
     def _resolve_model_for_provider(self, llm_provider: str) -> str:
         _ = llm_provider
@@ -447,3 +453,84 @@ async def test_run_locked_turn_blocks_expired_non_prod_rollout_bypass(
     assert len(metrics.routing_calls) == 1
     assert metrics.routing_calls[0].executed_via_executor is False
     assert metrics.routing_calls[0].rollout_bypass.get("blocked_by") == "expired"
+
+
+@pytest.mark.asyncio
+async def test_status_cart_shortcircuit_renders_previous_cart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When status + cart_intent + previous snapshot exists, return rendered cart directly."""
+    metrics = _MetricsSinkSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    agent._last_cart_snapshot[42] = {
+        "link": "https://vkusvill.ru/cart/abc123",
+        "products": [{"name": "Молоко", "price": 89}],
+        "price_summary": {
+            "items": ["Молоко 3.2% — 89 ₽"],
+            "total": 89.0,
+        },
+    }
+    text = "покажи итоговую корзину"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        state = _state_for_profile("status", text=text)
+        state.cart_intent = True
+        return state
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent,
+        user_id=42,
+        text=text,
+        on_progress=None,
+        llm_provider="qwen_openai",
+    )
+
+    assert "vkusvill.ru/cart/abc123" in result
+    assert "Молоко" in result
+    diag = agent._last_turn_diagnostics.get(42, {})
+    assert diag.get("execution_path") == "status_cart_shortcircuit"
+
+
+@pytest.mark.asyncio
+async def test_status_cart_shortcircuit_skipped_when_no_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without previous snapshot, status+cart_intent falls through to standard turn."""
+    metrics = _MetricsSinkSpy()
+    agent = _AgentStub(metrics_sink=metrics)
+    text = "покажи корзину"
+
+    async def _fake_build_turn_state(
+        *,
+        agent: Any,
+        user_id: int,
+        text: str,
+        trace: Any | None = None,
+    ) -> TurnState:
+        _ = agent, user_id, trace
+        state = _state_for_profile("status", text=text)
+        state.cart_intent = True
+        return state
+
+    monkeypatch.setattr(executor_mod, "build_turn_state", _fake_build_turn_state)
+
+    result = await executor_mod.run_locked_turn(
+        agent=agent,
+        user_id=42,
+        text=text,
+        on_progress=None,
+        llm_provider="qwen_openai",
+    )
+
+    assert result
+    diag = agent._last_turn_diagnostics.get(42, {})
+    assert diag.get("execution_path") == "standard_turn"

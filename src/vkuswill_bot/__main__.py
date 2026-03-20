@@ -17,6 +17,7 @@ import contextlib
 import json
 import logging
 import signal
+import ssl
 import sys
 from collections import OrderedDict
 from typing import Any
@@ -24,6 +25,7 @@ import asyncpg
 from aiohttp import web
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -230,11 +232,20 @@ def _flush_s3_handlers() -> None:
 
 async def main() -> None:
     """Инициализация сервисов и запуск бота."""
-    # Telegram-бот
-    bot = Bot(
-        token=config.bot_token,
-        default=DefaultBotProperties(parse_mode=ParseMode.HTML),
-    )
+    # Telegram-бот (опционально через прокси до api.telegram.org)
+    _proxy = config.telegram_http_proxy.strip()
+    if _proxy:
+        logger.info("Telegram Bot API: используется HTTP-прокси")
+        bot = Bot(
+            token=config.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+            session=AiohttpSession(proxy=_proxy),
+        )
+    else:
+        bot = Bot(
+            token=config.bot_token,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
     dp = Dispatcher()
     dp.include_router(admin_router)
     dp.include_router(router)
@@ -465,6 +476,9 @@ async def _run_polling(
     signal.signal(signal.SIGINT, _signal_handler)
 
     logger.info("Бот запускается (polling)...")
+    # Иначе TelegramConflictError, если ранее включали webhook для этого бота
+    await bot.delete_webhook(drop_pending_updates=False)
+    logger.info("Webhook у Telegram сброшен (совместимость с long polling)")
     try:
         polling_task = asyncio.create_task(dp.start_polling(bot))
         shutdown_task = asyncio.create_task(shutdown_event.wait())
@@ -553,18 +567,45 @@ async def _run_webhook(
         else:
             logger.warning("Сертификат не найден: %s", cert_path)
 
+    # Сначала слушаем порт: Telegram при set_webhook проверяет доступность URL
+    runner = web.AppRunner(app)
+    await runner.setup()
+    ssl_ctx: ssl.SSLContext | None = None
+    key_p = config.webhook_key_path.strip()
+    cert_p = config.webhook_cert_path.strip()
+    if key_p and cert_p:
+        from pathlib import Path
+
+        kp = Path(key_p)
+        cp = Path(cert_p)
+        if kp.is_file() and cp.is_file():
+            ssl_ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+            ssl_ctx.load_cert_chain(certfile=str(cp), keyfile=str(kp))
+            logger.info("Webhook-сервер: TLS (сертификат %s)", cp)
+        else:
+            logger.warning(
+                "WEBHOOK_KEY_PATH / WEBHOOK_CERT_PATH заданы, но файлы не найдены — слушаем без TLS"
+            )
+
+    site = web.TCPSite(
+        runner,
+        "0.0.0.0",  # nosec B104
+        config.webhook_port,
+        ssl_context=ssl_ctx,
+    )
+    await site.start()
+    logger.info(
+        "Webhook-сервер слушает 0.0.0.0:%d (%s)",
+        config.webhook_port,
+        "HTTPS" if ssl_ctx else "HTTP",
+    )
+
     await bot.set_webhook(
         url=webhook_url,
         certificate=certificate,
         drop_pending_updates=True,
     )
     logger.info("Telegram webhook установлен: %s", webhook_url)
-
-    # Запуск HTTP-сервера
-    runner = web.AppRunner(app)
-    await runner.setup()
-    site = web.TCPSite(runner, "0.0.0.0", config.webhook_port)  # nosec B104
-    await site.start()
 
     # Ожидание сигнала завершения
     shutdown_event = asyncio.Event()
@@ -577,10 +618,7 @@ async def _run_webhook(
     signal.signal(signal.SIGTERM, _signal_handler)
     signal.signal(signal.SIGINT, _signal_handler)
 
-    logger.info(
-        "Webhook-сервер запущен на 0.0.0.0:%d. Ожидание...",
-        config.webhook_port,
-    )
+    logger.info("Ожидание сигнала завершения (webhook активен)...")
     try:
         await shutdown_event.wait()
     finally:

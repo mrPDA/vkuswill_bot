@@ -4,11 +4,15 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import logging
 import math
 from typing import Any
 
 from vkuswill_bot.agents.quantity_utils import DISCRETE_UNITS, round_kilogram_quantity
 from vkuswill_bot.services.cart_processor import CartProcessor
+from vkuswill_bot.services.tool_input_normalizers import MAX_ITEM_QTY
+
+logger = logging.getLogger(__name__)
 
 _EGG_PACK_SIZE = 10
 _ADDITIVE_CART_MARKERS = (
@@ -78,6 +82,35 @@ def preprocess_cart_link_args(
             continue
         if unit in {"кг", "kg"}:
             item["q"] = round_kilogram_quantity(q)
+
+    for item in products:
+        if isinstance(item, dict):
+            q = _safe_float(item.get("q"), default=1.0)
+            if q > MAX_ITEM_QTY:
+                item["q"] = MAX_ITEM_QTY
+
+    if product_lookup:
+        valid_products: list[dict[str, Any]] = []
+        dropped = 0
+        for item in products:
+            if not isinstance(item, dict):
+                continue
+            xid_raw = item.get("xml_id")
+            try:
+                xid = int(xid_raw)
+            except (TypeError, ValueError):
+                continue
+            if xid in product_lookup:
+                valid_products.append(item)
+            else:
+                dropped += 1
+        if dropped:
+            logger.warning(
+                "Dropped %d product(s) with unknown xml_id (hallucinated by LLM)",
+                dropped,
+            )
+            normalized["products"] = valid_products
+
     return normalized
 
 
@@ -187,12 +220,16 @@ def restore_previous_quantities_for_additive_update(
         if current_q <= 0:
             current_q = 1.0
         previous_q = prev_by_xml_id[xml_id]
-        if abs(current_q - 1.0) > 1e-9:
+        if abs(current_q - previous_q) < 0.01:
             continue
-        if abs(previous_q - 1.0) <= 1e-9:
+        if abs(current_q - 1.0) <= 1e-9:
+            if abs(previous_q - 1.0) > 1e-9:
+                row["q"] = previous_q
+                updated = True
             continue
-        row["q"] = previous_q
-        updated = True
+        if previous_q > 0 and current_q > previous_q * 3 and current_q > 2:
+            row["q"] = previous_q
+            updated = True
 
     if updated:
         return CartProcessor.fix_cart_args({"products": products})

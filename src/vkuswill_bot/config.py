@@ -19,6 +19,8 @@ class Config(BaseSettings):
 
     # Telegram
     bot_token: str
+    # HTTP(S) прокси для Bot API (CONNECT), если api.telegram.org недоступен с хоста/Pi
+    telegram_http_proxy: str = ""
 
     # Chat engine runtime selection (ADR-006: legacy removed)
     chat_engine: str = "shopping_agent"
@@ -29,7 +31,12 @@ class Config(BaseSettings):
     llm_routing_strategy: str = "single_provider"
     llm_base_url: str = "https://llm.api.cloud.yandex.net/v1"
     llm_api_key: str = ""
-    llm_model: str = ""
+    llm_model: str = Field(
+        default="",
+        description=(
+            "Yandex Cloud AI Studio: gpt://<folder_id>/qwen3-235b-a22b-fp8/latest (см. ADR-004)"
+        ),
+    )
     llm_max_concurrent: int = 10
     llm_queue_timeout_seconds: float = Field(
         default=15.0,
@@ -166,6 +173,25 @@ class Config(BaseSettings):
             raise ValueError("llm_routing_strategy must be single_provider")
         return self
 
+    @model_validator(mode="after")
+    def _validate_webhook_host_when_enabled(self) -> Config:
+        if self.use_webhook and not self.webhook_host.strip():
+            raise ValueError(
+                "USE_WEBHOOK=true requires non-empty WEBHOOK_HOST "
+                "(public HTTPS origin without path, e.g. https://bot.example.com)"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_webhook_tls_key_pair(self) -> Config:
+        k = self.webhook_key_path.strip()
+        c = self.webhook_cert_path.strip()
+        if k and not c:
+            raise ValueError(
+                "WEBHOOK_KEY_PATH requires WEBHOOK_CERT_PATH (TLS + Telegram setWebhook)"
+            )
+        return self
+
     @field_validator("mcp_server_api_keys", mode="before")
     @classmethod
     def _parse_mcp_server_api_keys(cls, v: object) -> dict[str, str]:
@@ -213,7 +239,8 @@ class Config(BaseSettings):
     webhook_host: str = ""
     webhook_path: str = "/webhook"
     webhook_port: int = 8080
-    webhook_cert_path: str = ""  # путь к самоподписанному SSL-сертификату для Telegram
+    webhook_cert_path: str = ""  # публичный PEM для setWebhook (самоподпись) и/или TLS
+    webhook_key_path: str = ""  # приватный ключ: если задан вместе с cert — aiohttp слушает HTTPS
 
     # S3 логирование (Yandex Object Storage)
     s3_log_enabled: bool = False

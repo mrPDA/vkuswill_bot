@@ -30,7 +30,7 @@ from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt_with_m
 logger = logging.getLogger(__name__)
 
 _MEAL_TYPES = frozenset({"breakfast", "lunch", "dinner", "snack_1", "snack_2", "snack_3"})
-_MEAL_PLAN_GENERATION_MAX_TOKENS = 1200
+_MEAL_PLAN_GENERATION_MAX_TOKENS = 2400
 
 
 class MealPlanGeneratorAgentProtocol(Protocol):
@@ -85,7 +85,7 @@ def _validate_meal_plan_payload(
     dishes_raw = payload.get("dishes")
     if not isinstance(dishes_raw, list):
         return None, "dishes должен быть списком"
-    min_dishes, max_dishes = dish_count_range(request.days)
+    min_dishes, max_dishes = dish_count_range(request.days, request.meals_per_day)
     if not (min_dishes <= len(dishes_raw) <= max_dishes):
         return None, f"dishes должен содержать {min_dishes}..{max_dishes} блюд"
 
@@ -155,14 +155,42 @@ def _validate_meal_plan_payload(
         if missing_days:
             return None, f"не все дни покрыты: отсутствуют дни {sorted(missing_days)}"
 
+    effective_meal_types = request.requested_meal_types
+    if not effective_meal_types and request.days >= 3:
+        effective_meal_types = ["breakfast", "lunch", "dinner"]
+    total_slots = request.days * len(effective_meal_types) if effective_meal_types else 0
+    can_enforce_full_coverage = len(result_dishes) >= total_slots
+    if effective_meal_types and request.days >= 3 and can_enforce_full_coverage:
+        by_day: dict[int, set[str]] = {}
+        for dish in result_dishes:
+            by_day.setdefault(dish.day, set()).add(dish.meal_type)
+        gaps: list[str] = []
+        for day_num in range(1, request.days + 1):
+            day_types = by_day.get(day_num, set())
+            for mt in effective_meal_types:
+                if mt == "snack":
+                    has_snack = any(dt.startswith("snack") for dt in day_types)
+                    if not has_snack:
+                        gaps.append(f"день {day_num} без {mt}")
+                elif mt not in day_types:
+                    gaps.append(f"день {day_num} без {mt}")
+        if gaps:
+            sample = "; ".join(gaps[:5])
+            return None, f"не все приёмы пищи покрыты: {sample}"
+
     meal_plan = MealPlan(schema_version=1, dishes=result_dishes)
     hard_violations, phase1_trace = validate_hard_constraints_with_trace(
         request=request,
         dishes=meal_plan.dishes,
     )
-    if hard_violations:
-        details = "; ".join(hard_violations[:3])
-        return None, f"hard_constraints violated: {details}"
+    allergen_violations = [v for v in hard_violations if "аллерген" in v]
+    if allergen_violations:
+        details = "; ".join(allergen_violations[:5])
+        return None, f"блюда нарушают диетические ограничения: {details}"
+    non_allergen_violations = [v for v in hard_violations if "аллерген" not in v]
+    if non_allergen_violations:
+        details = "; ".join(non_allergen_violations[:3])
+        logger.warning("phase1 dish-name heuristic (non-blocking): %s", details)
     coverage = calculate_soft_coverage(request=request, dishes=meal_plan.dishes)
     low_groups = low_soft_coverage_groups(coverage_by_group=coverage)
     if low_groups:
