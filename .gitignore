@@ -26,6 +26,12 @@ coverage.xml
 *.log
 .bot.pid
 
+# Локальные ключи webhook (самоподпись на Pi)
+ssl/
+
+# AmneziaWG (ключи, не в git)
+deploy/amnezia-wg0.conf
+
 # Данные (SQLite)
 data/
 *.db
@@ -44,6 +50,9 @@ Archive/
 
 # Cursor IDE
 .cursor/
+
+# Workbench — только локальное состояние сессии
+.workbench/session-state.json
 
 # Нагрузочное тестирование (сессии Telethon содержат токены)
 loadtests/sessions/

@@ -1,0 +1,6 @@
+# Публичный HTTPS → бот (aiohttp на bot:8080).
+# Переменная WEBHOOK_DOMAIN задаётся в docker-compose (домен с A/AAAA на эту сеть).
+{$WEBHOOK_DOMAIN} {
+	encode gzip
+	reverse_proxy bot:8080
+}

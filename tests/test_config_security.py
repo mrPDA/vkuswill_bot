@@ -52,6 +52,12 @@ class TestRequiredFields:
             field_names = [e["loc"][0] for e in errors]
             assert "bot_token" in field_names
 
+    def test_telegram_http_proxy_default_empty(self):
+        """TELEGRAM_HTTP_PROXY по умолчанию пустой."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.telegram_http_proxy == ""
+
     def test_config_loads_with_shopping_agent_env(self):
         """Config создаётся с минимальным набором для shopping_agent."""
         env = {
@@ -351,6 +357,7 @@ class TestDefaultValues:
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.webhook_cert_path == ""
+        assert cfg.webhook_key_path == ""
 
     # --- S3 Log ---
 
@@ -621,6 +628,28 @@ class TestSecretProtection:
         assert cfg.webhook_host == "https://bot.example.com"
         assert cfg.webhook_path == "/webhook-stg"
         assert cfg.webhook_port == 443
+
+    def test_webhook_requires_host_when_enabled(self):
+        """При USE_WEBHOOK=true WEBHOOK_HOST обязателен."""
+        custom_env = {**MINIMAL_ENV, "USE_WEBHOOK": "true"}
+        with patch.dict(os.environ, custom_env, clear=True):
+            with pytest.raises(ValidationError) as exc_info:
+                Config(_env_file=None)  # type: ignore[call-arg]
+        err = str(exc_info.value).lower()
+        assert "webhook_host" in err or "webhook" in err
+
+    def test_webhook_key_requires_cert(self):
+        """WEBHOOK_KEY_PATH без WEBHOOK_CERT_PATH запрещён."""
+        custom_env = {
+            **MINIMAL_ENV,
+            "USE_WEBHOOK": "true",
+            "WEBHOOK_HOST": "https://1.2.3.4",
+            "WEBHOOK_KEY_PATH": "/tmp/key.pem",
+        }
+        with patch.dict(os.environ, custom_env, clear=True):
+            with pytest.raises(ValidationError) as exc_info:
+                Config(_env_file=None)  # type: ignore[call-arg]
+        assert "WEBHOOK_CERT_PATH" in str(exc_info.value) or "webhook" in str(exc_info.value).lower()
 
     def test_webhook_path_without_leading_slash_is_normalized(self):
         """WEBHOOK_PATH без префикса / нормализуется."""

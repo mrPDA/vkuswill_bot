@@ -11,6 +11,12 @@ WORKDIR /app
 # Установить uv для быстрой установки зависимостей
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
+# Индекс PyPI (для Pi/регионов без доступа к pypi.org передайте build-arg из compose)
+ARG UV_INDEX_URL=https://pypi.org/simple
+ENV UV_INDEX_URL=${UV_INDEX_URL}
+# Медленные каналы — дольше ждём ответ
+ENV UV_HTTP_TIMEOUT=300
+
 # Копировать файлы зависимостей
 COPY pyproject.toml uv.lock ./
 
@@ -58,9 +64,9 @@ ENV PYTHONUNBUFFERED=1 \
 # Порт для webhook-режима
 EXPOSE 8080
 
-# Health check: в webhook-режиме проверяем /health, иначе — процесс жив
-HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD python -c "import os, urllib.request; urllib.request.urlopen(f'http://localhost:{os.environ.get(\"WEBHOOK_PORT\", 8080)}/health')" 2>/dev/null || python -c "import sys; sys.exit(0)"
+# Health check: webhook → /health (HTTP или HTTPS при WEBHOOK_KEY_PATH); polling → OK
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD python /app/scripts/webhook_healthcheck.py
 
 # Запуск бота
 CMD ["python", "-m", "vkuswill_bot"]

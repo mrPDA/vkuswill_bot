@@ -1,5 +1,6 @@
-.PHONY: help install test test-cov test-security secret-scan lint format run run-debug clean \
-       docker-build docker-up docker-down docker-logs docker-ps \
+.PHONY: help install test test-cov test-security secret-scan lint format run run-debug verify-llm clean \
+       docker-build docker-up docker-down docker-up-pi docker-up-pi-caddy docker-up-pi-tunnel \
+       docker-down-pi docker-logs-pi docker-logs docker-ps \
        tf-init tf-plan tf-apply tf-destroy build-alice-zip
 
 # Цвета
@@ -58,6 +59,9 @@ setup-hooks: ## Настроить git hooks
 	git config core.hooksPath .githooks
 	@echo "$(GREEN)Git hooks настроены (.githooks/)$(RESET)"
 
+verify-llm: ## Проверить LLM (Yandex AI Studio) по переменным из .env; таймаут до 120 с
+	python3 scripts/verify_llm_yandex.py
+
 # ─── Docker ──────────────────────────────────────────────────────────────────
 
 docker-build: ## Собрать Docker-образ
@@ -71,6 +75,25 @@ docker-up: ## Запустить бота + Redis + PostgreSQL (docker compose)
 docker-down: ## Остановить все контейнеры
 	docker compose down
 	@echo "$(YELLOW)Сервисы остановлены.$(RESET)"
+
+docker-up-pi: ## Pi: Postgres + бот (по умолчанию polling из .env; webhook — см. docker-compose.pi.yml)
+	docker compose -f docker-compose.pi.yml up -d --build
+	@echo "$(GREEN)Pi-стек запущен. Логи: make docker-logs-pi$(RESET)"
+
+docker-up-pi-caddy: ## Pi + Caddy (Let's Encrypt): задай WEBHOOK_DOMAIN и WEBHOOK_HOST в .env
+	docker compose -f docker-compose.pi.yml --profile caddy up -d --build
+	@echo "$(GREEN)Pi + Caddy. Логи бота: make docker-logs-pi$(RESET)"
+
+docker-up-pi-tunnel: ## Pi + Cloudflare Tunnel: задай CLOUDFLARE_TUNNEL_TOKEN и WEBHOOK_HOST в .env
+	docker compose -f docker-compose.pi.yml --profile cf-tunnel up -d --build
+	@echo "$(GREEN)Pi + cloudflared. Логи: docker compose -f docker-compose.pi.yml logs -f cloudflared$(RESET)"
+
+docker-down-pi: ## Остановить Pi-стек (включая AmneziaWG, caddy, cf-tunnel)
+	docker compose -f docker-compose.pi.yml --profile caddy --profile cf-tunnel down --remove-orphans
+	@echo "$(YELLOW)Pi-стек остановлен.$(RESET)"
+
+docker-logs-pi: ## Логи Pi-стека
+	docker compose -f docker-compose.pi.yml logs -f --tail=100
 
 docker-logs: ## Показать логи всех контейнеров
 	docker compose logs -f --tail=100
