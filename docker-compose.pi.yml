@@ -1,5 +1,5 @@
-# docker-compose.pi.yml — Raspberry Pi / low-RAM: Redis + PostgreSQL + бот
-# Без Langfuse, Metabase (Langfuse — облако, ключи в .env).
+# docker-compose.pi.yml — Raspberry Pi / low-RAM: PostgreSQL + Langfuse + бот (+ AmneziaWG).
+# Metabase не включён (тяжёлый для 4 GB RAM).
 #
 # Webhook: Telegram требует HTTPS. Варианты:
 #   1) Свой домен → профиль caddy (Let's Encrypt): см. .env.pi.example
@@ -63,13 +63,57 @@ services:
       retries: 3
     restart: unless-stopped
 
+  # Одноразовая подготовка БД langfuse (idempotent). Нужна, т.к. initdb.d на Pi отключён.
+  langfuse-db-prep:
+    image: postgres:16-alpine
+    restart: "no"
+    environment:
+      PGPASSWORD: vkuswill_dev
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until pg_isready -h postgres -U vkuswill; do sleep 2; done
+        if psql -h postgres -U vkuswill -d postgres -tc "SELECT 1 FROM pg_database WHERE datname = 'langfuse'" | grep -q 1; then
+          echo "[langfuse-db-prep] database langfuse already exists"
+        else
+          psql -h postgres -U vkuswill -d postgres -c "CREATE DATABASE langfuse;"
+          echo "[langfuse-db-prep] created database langfuse"
+        fi
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Langfuse v2: UI :3000, промпты и трейсы. Ключи API — в UI после регистрации.
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: vkuswill-langfuse
+    ports:
+      - "${LANGFUSE_PORT:-3000}:3000"
+    environment:
+      DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/langfuse
+      NEXTAUTH_URL: ${LANGFUSE_NEXTAUTH_URL:-http://localhost:3000}
+      NEXTAUTH_SECRET: ${LANGFUSE_NEXTAUTH_SECRET:-change-me-generate-with-openssl-rand-hex-32}
+      SALT: ${LANGFUSE_SALT:-change-me-generate-with-openssl-rand-hex-16}
+      TELEMETRY_ENABLED: "false"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      langfuse-db-prep:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+    restart: unless-stopped
+
   bot:
     build:
       context: .
       dockerfile: Dockerfile
       args:
         # У многих провайдеров pypi.org с Pi недоступен; зеркало обходится без VPN
-        UV_INDEX_URL: https://pypi.tuna.tsinghua.edu.cn/simple
+        # При недоступности pypi.org задайте в compose другой UV_INDEX_URL (например зеркало Tsinghua).
+        UV_INDEX_URL: https://pypi.org/simple
     container_name: vkuswill-bot
     env_file:
       - .env
@@ -77,19 +121,23 @@ services:
       DATABASE_URL: postgresql://vkuswill:vkuswill_dev@postgres:5432/vkuswill
       # Диалоги в Telegram пока только memory (см. config.storage_backend)
       STORAGE_BACKEND: memory
-      # Облачный Langfuse; LANGFUSE_ENABLED / ключи — из .env
-      LANGFUSE_HOST: https://cloud.langfuse.com
+      # Self-hosted Langfuse в этой же сети compose (ключи и LANGFUSE_ENABLED — из .env)
+      LANGFUSE_HOST: http://langfuse:3000
       # USE_WEBHOOK из .env: false = long polling (работает без публичного HTTPS);
       # true только вместе с WEBHOOK_HOST (+ Caddy / Tunnel / самоподпись).
     ports:
       - "${WEBHOOK_PORT:-8080}:${WEBHOOK_PORT:-8080}"
     volumes:
       - ./ssl:/app/ssl:ro
+      # Полные тексты промптов с хоста (ADR-007 tier «file»), если Langfuse ещё без ключей
+      - ./prompts:/app/prompts:ro
     depends_on:
       postgres:
         condition: service_healthy
       amnezia-vpn:
         condition: service_healthy
+      langfuse:
+        condition: service_started
     restart: unless-stopped
 
   # HTTPS для webhook (домен должен указывать на Pi, порты 80/443 доступны с интернета)

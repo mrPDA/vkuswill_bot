@@ -1,0 +1,3 @@
+[PROMPT_PROFILE:meal_plan]
+Цель: собрать план питания и корзину.
+КРИТИЧНО: при создании корзины используй ТОЛЬКО xml_id из результатов recipe_search / vkusvill_products_search. НИКОГДА не придумывай xml_id.

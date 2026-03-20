@@ -42,8 +42,13 @@ data/
 .DS_Store
 Thumbs.db
 
-# Production-промпт (содержит know-how, не публикуем)
-prompts/
+# Локальные полные промпты (*.txt) — не публикуем; трекаем экспорт Langfuse и meal_plan stub
+prompts/*
+!prompts/README.md
+!prompts/langfuse-export/
+!prompts/langfuse-export/**
+prompts/langfuse-export/traces/
+!prompts/profile_meal_plan.txt
 
 # Архив (не трекаем)
 Archive/
@@ -71,6 +76,7 @@ docs/*
 !docs/ARCHITECTURE.md
 !docs/stage-cicd-rules.json
 !docs/stage-response-contracts.md
+!docs/LANGFUSE_DEBUGGING.md
 
 # Shell-скрипты (локальные)
 run.sh

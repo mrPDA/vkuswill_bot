@@ -59,6 +59,7 @@ PROMPT_FILES: dict[str, str] = {
     "profile-general": "profile_general.txt",
     "profile-cart": "profile_cart.txt",
     "profile-recipe": "profile_recipe.txt",
+    "profile-meal_plan": "profile_meal_plan.txt",
     "profile-status": "profile_status.txt",
     "profile-linking": "profile_linking.txt",
     "mode-start": "mode_start.txt",

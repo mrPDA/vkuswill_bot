@@ -20,6 +20,10 @@ ENV UV_HTTP_TIMEOUT=300
 # Копировать файлы зависимостей
 COPY pyproject.toml uv.lock ./
 
+# uv.lock может ссылаться на зеркало (например Tsinghua); на Pi/VPN оно часто недоступно.
+RUN sed -i 's|https://pypi.tuna.tsinghua.edu.cn/packages|https://files.pythonhosted.org/packages|g' uv.lock \
+    && sed -i 's|https://pypi.tuna.tsinghua.edu.cn/simple|https://pypi.org/simple|g' uv.lock
+
 # Установить зависимости (без dev/test/loadtest)
 RUN uv sync --frozen --no-dev --no-editable
 
@@ -27,6 +31,9 @@ RUN uv sync --frozen --no-dev --no-editable
 COPY src/ src/
 COPY migrations/ migrations/
 COPY scripts/ scripts/
+# Промпты для скриптов Langfuse (import/migrate) в контейнере; без секретных *.txt из корня prompts/
+COPY prompts/langfuse-export/ prompts/langfuse-export/
+COPY prompts/profile_meal_plan.txt prompts/profile_meal_plan.txt
 
 # --- Stage 2: Runtime ---
 FROM python:3.12-slim AS runtime
@@ -45,6 +52,7 @@ COPY --from=builder /app/.venv /app/.venv
 COPY --from=builder /app/src /app/src
 COPY --from=builder /app/migrations /app/migrations
 COPY --from=builder /app/scripts /app/scripts
+COPY --from=builder /app/prompts /app/prompts
 
 # CA-сертификаты НУЦ Минцифры (для SSL-верификации GigaChat)
 COPY certs/ /app/certs/

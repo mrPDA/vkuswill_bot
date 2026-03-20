@@ -1,6 +1,6 @@
 .PHONY: help install test test-cov test-security secret-scan lint format run run-debug verify-llm clean \
        docker-build docker-up docker-down docker-up-pi docker-up-pi-caddy docker-up-pi-tunnel \
-       docker-down-pi docker-logs-pi docker-logs docker-ps \
+       docker-down-pi docker-logs-pi docker-pi-langfuse-import-prompts docker-logs docker-ps \
        tf-init tf-plan tf-apply tf-destroy build-alice-zip
 
 # Цвета
@@ -76,7 +76,7 @@ docker-down: ## Остановить все контейнеры
 	docker compose down
 	@echo "$(YELLOW)Сервисы остановлены.$(RESET)"
 
-docker-up-pi: ## Pi: Postgres + бот (по умолчанию polling из .env; webhook — см. docker-compose.pi.yml)
+docker-up-pi: ## Pi: Postgres + Langfuse + бот + AmneziaWG (см. .env.pi.example, импорт промптов: make docker-pi-langfuse-import-prompts)
 	docker compose -f docker-compose.pi.yml up -d --build
 	@echo "$(GREEN)Pi-стек запущен. Логи: make docker-logs-pi$(RESET)"
 
@@ -94,6 +94,10 @@ docker-down-pi: ## Остановить Pi-стек (включая AmneziaWG, c
 
 docker-logs-pi: ## Логи Pi-стека
 	docker compose -f docker-compose.pi.yml logs -f --tail=100
+
+docker-pi-langfuse-import-prompts: ## Pi: залить промпты из prompts/langfuse-export в self-hosted Langfuse
+	docker compose -f docker-compose.pi.yml exec bot uv run python scripts/import_prompts_from_langfuse_export.py --label production
+	@echo "$(GREEN)При необходимости: docker compose -f docker-compose.pi.yml exec bot uv run python scripts/migrate_prompts_to_langfuse.py --label production$(RESET)"
 
 docker-logs: ## Показать логи всех контейнеров
 	docker compose logs -f --tail=100
