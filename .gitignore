@@ -77,6 +77,7 @@ docs/*
 !docs/stage-cicd-rules.json
 !docs/stage-response-contracts.md
 !docs/LANGFUSE_DEBUGGING.md
+!docs/deploy-pi-self-hosted-runner.md
 
 # Shell-скрипты (локальные)
 run.sh

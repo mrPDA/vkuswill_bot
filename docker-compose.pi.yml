@@ -1,4 +1,6 @@
 # docker-compose.pi.yml — Raspberry Pi / low-RAM: PostgreSQL + Langfuse + бот (+ AmneziaWG).
+# CI/CD: workflow «CD Raspberry Pi» — тесты в GitHub-hosted, деплой на self-hosted runner (метка vkuswill-pi),
+# см. docs/deploy-pi-self-hosted-runner.md; скрипт deploy/deploy-pi.sh (git checkout + compose up --build).
 # Metabase не включён (тяжёлый для 4 GB RAM).
 #
 # Webhook: Telegram требует HTTPS. Варианты:
@@ -123,6 +125,8 @@ services:
       STORAGE_BACKEND: memory
       # Self-hosted Langfuse в этой же сети compose (ключи и LANGFUSE_ENABLED — из .env)
       LANGFUSE_HOST: http://langfuse:3000
+      # Иначе при пустой статистике в PostgreSQL rollout=0% и executor meal-plan отключён
+      MEAL_PLAN_ROLLOUT_KPI_GATES_ENABLED: ${MEAL_PLAN_ROLLOUT_KPI_GATES_ENABLED:-false}
       # USE_WEBHOOK из .env: false = long polling (работает без публичного HTTPS);
       # true только вместе с WEBHOOK_HOST (+ Caddy / Tunnel / самоподпись).
     ports:

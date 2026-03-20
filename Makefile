@@ -1,6 +1,7 @@
 .PHONY: help install test test-cov test-security secret-scan lint format run run-debug verify-llm clean \
        docker-build docker-up docker-down docker-up-pi docker-up-pi-caddy docker-up-pi-tunnel \
        docker-down-pi docker-logs-pi docker-pi-langfuse-import-prompts docker-logs docker-ps \
+       pi-install-github-runner sync-cd-pi \
        tf-init tf-plan tf-apply tf-destroy build-alice-zip
 
 # Цвета
@@ -98,6 +99,12 @@ docker-logs-pi: ## Логи Pi-стека
 docker-pi-langfuse-import-prompts: ## Pi: залить промпты из prompts/langfuse-export в self-hosted Langfuse
 	docker compose -f docker-compose.pi.yml exec bot python /app/scripts/import_prompts_from_langfuse_export.py --label production
 	@echo "$(GREEN)При необходимости: docker compose -f docker-compose.pi.yml exec bot python /app/scripts/migrate_prompts_to_langfuse.py --label production$(RESET)"
+
+pi-install-github-runner: ## Pi: скачать и распаковать GitHub Actions runner (метка vkuswill-pi); см. docs/deploy-pi-self-hosted-runner.md
+	bash scripts/pi-install-github-runner.sh
+
+sync-cd-pi: ## Скопировать CD/runner файлы на Pi по SSH (PI_SSH_HOST=vkbot по умолчанию)
+	bash scripts/sync_cd_files_to_pi.sh
 
 docker-logs: ## Показать логи всех контейнеров
 	docker compose logs -f --tail=100

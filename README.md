@@ -132,6 +132,14 @@ uv run python -m vkuswill_bot
 docker compose up -d
 ```
 
+### Raspberry Pi и автодеплой
+
+Стек без Metabase: `docker compose -f docker-compose.pi.yml` (см. комментарии в файле). Первичная подготовка ОС: `scripts/pi-bootstrap.sh`.
+
+GitHub Actions **CD Raspberry Pi** (`.github/workflows/cd-pi.yml`): **pytest на `ubuntu-latest`**, деплой на **[self-hosted runner](docs/deploy-pi-self-hosted-runner.md)** на Pi (метка **`vkuswill-pi`**, исходящий трафик к GitHub, без проброса SSH с интернета). Установка агента на Pi: **`scripts/pi-install-github-runner.sh`** или **`make pi-install-github-runner`**. Скрипт деплоя: `deploy/deploy-pi.sh` в постоянном клоне (`PI_DEPLOY_PATH` или `~/vkuswill_bot`). Variables: **`PI_DEPLOY_PATH`**, **`PI_COMPOSE_PROFILES`** (опционально).
+
+Автодеплой в Yandex по тому же тегу выключен, пока в настройках репозитория не задана variable **`ENABLE_YANDEX_CD=true`** (см. `.github/workflows/cd.yml`).
+
 ---
 
 ## Структура проекта

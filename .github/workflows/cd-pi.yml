@@ -1,0 +1,100 @@
+# ============================================================
+# CD → Raspberry Pi через self-hosted runner (только деплой с Pi)
+# Тесты: job на ubuntu-latest. Деплой: job на runner с меткой vkuswill-pi.
+#
+# На Pi: установить GitHub Actions Runner (linux arm64), метка vkuswill-pi,
+# пользователь в группе docker. Постоянный клон с .env — variable PI_DEPLOY_PATH
+# (иначе ~/vkuswill_bot).
+#
+# Триггеры: push тега v*.*.* или workflow_dispatch
+# Variables (optional): PI_DEPLOY_PATH, PI_COMPOSE_PROFILES
+# ============================================================
+
+name: CD Raspberry Pi
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Ветка, тег или SHA (например main, v1.2.0)"
+        required: true
+        default: "main"
+      skip_tests:
+        description: "Пропустить pytest перед деплоем"
+        required: false
+        type: boolean
+        default: false
+      compose_profiles:
+        description: "Профили compose через запятую (caddy,cf-tunnel) или пусто"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-pi-${{ github.repository }}
+  cancel-in-progress: false
+
+jobs:
+  test:
+    name: Tests (GitHub-hosted)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
+      - name: Install uv
+        if: ${{ github.event_name != 'workflow_dispatch' || !contains(toJSON(github.event.inputs.skip_tests || false), 'true') }}
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+
+      - name: Run tests
+        if: ${{ github.event_name != 'workflow_dispatch' || !contains(toJSON(github.event.inputs.skip_tests || false), 'true') }}
+        run: |
+          uv python install 3.12
+          uv sync --all-extras
+          uv run pytest -x -q --tb=short
+
+  deploy-pi:
+    name: Deploy (Pi self-hosted)
+    needs: test
+    runs-on:
+      - self-hosted
+      - Linux
+      - ARM64
+      - vkuswill-pi
+    env:
+      REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref_name }}
+      PI_DEPLOY_PATH: ${{ vars.PI_DEPLOY_PATH }}
+      PI_COMPOSE_PROFILES: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.compose_profiles || vars.PI_COMPOSE_PROFILES }}
+
+    steps:
+      - name: Checkout (скрипт деплоя под выбранный ref)
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.ref || github.ref }}
+
+      - name: Деплой в постоянный клон на Pi
+        run: |
+          set -euo pipefail
+          ROOT="${PI_DEPLOY_PATH:-${HOME}/vkuswill_bot}"
+          if [[ ! -d "${ROOT}/.git" ]]; then
+            echo "::error::Нет git-клона в ${ROOT}. Задайте variable PI_DEPLOY_PATH или создайте клон в ~/vkuswill_bot"
+            exit 1
+          fi
+          export GIT_TERMINAL_PROMPT=0
+          chmod +x deploy/deploy-pi.sh
+          bash deploy/deploy-pi.sh --root "${ROOT}" --ref "${REF}"
+
+      - name: Статус контейнеров
+        if: always()
+        run: docker ps -a --filter name=vkuswill --format 'table {{.Names}}\t{{.Status}}' || true

@@ -1,7 +1,9 @@
 # ============================================================
 # CD Pipeline — Deploy to Yandex Cloud
 # ============================================================
-# Триггер: push тега v*.*.* (после успешного CI)
+# Триггер: push тега v*.*.* (опционально) или workflow_dispatch
+# Автодеплой в Yandex по тегу ВКЛЮЧАЕТСЯ переменной репозитория ENABLE_YANDEX_CD=true
+# (иначе при релизе достаточно CD Raspberry Pi — см. cd-pi.yml).
 # Пайплайн: Build → Push to Yandex CR → SSH Deploy → Health Check → Notify
 # ============================================================
 
@@ -30,6 +32,7 @@ jobs:
   # ─── 1. Тесты (быстрая проверка перед деплоем) ────────────────
   test:
     name: Pre-deploy tests
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_YANDEX_CD == 'true' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -48,6 +51,7 @@ jobs:
   # ─── 2. Сборка и push Docker-образа ───────────────────────────
   build-and-push:
     name: Build & Push to Yandex CR
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_YANDEX_CD == 'true' }}
     runs-on: ubuntu-latest
     needs: test
     outputs:
@@ -91,6 +95,7 @@ jobs:
   # ─── 3. Деплой на VM через SSH ────────────────────────────────
   deploy:
     name: Deploy to VM
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_YANDEX_CD == 'true' }}
     runs-on: ubuntu-latest
     needs: build-and-push
     environment: production

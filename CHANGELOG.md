@@ -5,6 +5,18 @@
 Формат основан на [Keep a Changelog](https://keepachangelog.com/),
 версионирование следует [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Добавлено
+
+- **CD Raspberry Pi** — GitHub Actions `.github/workflows/cd-pi.yml`: pytest на `ubuntu-latest`, деплой на **self-hosted runner** на Pi (метка `vkuswill-pi`); скрипт `deploy/deploy-pi.sh`; гайд `docs/deploy-pi-self-hosted-runner.md`
+- **`scripts/pi-install-github-runner.sh`** + `make pi-install-github-runner` — установка runner на Pi (ARM64), опционально unattended через `RUNNER_REGISTRATION_TOKEN` / `RUNNER_REPO_URL`
+- **`scripts/sync_cd_files_to_pi.sh`** + `make sync-cd-pi` — копирование CD/runner файлов на Pi по SSH (по умолчанию хост `vkbot`)
+
+### Изменено
+
+- **CD Yandex** — автозапуск по тегу `v*.*.*` только при variable репозитория `ENABLE_YANDEX_CD=true`; иначе достаточно CD Raspberry Pi без секретов Yandex Cloud
+
 ## [0.21.1] — 2026-03-03
 
 ### Исправлено
