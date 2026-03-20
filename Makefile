@@ -96,8 +96,8 @@ docker-logs-pi: ## Логи Pi-стека
 	docker compose -f docker-compose.pi.yml logs -f --tail=100
 
 docker-pi-langfuse-import-prompts: ## Pi: залить промпты из prompts/langfuse-export в self-hosted Langfuse
-	docker compose -f docker-compose.pi.yml exec bot uv run python scripts/import_prompts_from_langfuse_export.py --label production
-	@echo "$(GREEN)При необходимости: docker compose -f docker-compose.pi.yml exec bot uv run python scripts/migrate_prompts_to_langfuse.py --label production$(RESET)"
+	docker compose -f docker-compose.pi.yml exec bot python /app/scripts/import_prompts_from_langfuse_export.py --label production
+	@echo "$(GREEN)При необходимости: docker compose -f docker-compose.pi.yml exec bot python /app/scripts/migrate_prompts_to_langfuse.py --label production$(RESET)"
 
 docker-logs: ## Показать логи всех контейнеров
 	docker compose logs -f --tail=100
