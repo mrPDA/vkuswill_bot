@@ -52,7 +52,11 @@ if [[ "$(git rev-parse --is-shallow-repository 2>/dev/null)" == "true" ]]; then
   git fetch origin --unshallow 2>/dev/null || git fetch origin --depth=500 2>/dev/null || true
 fi
 
-if ! git checkout -f "${REF}"; then
+# Ветка на Pi могла отстать от origin после fetch: сначала origin/<ref>, если есть.
+if git rev-parse --verify -q "refs/remotes/origin/${REF}" >/dev/null 2>&1; then
+  log "checkout origin/${REF} (tip с remote)"
+  git checkout -f "origin/${REF}"
+elif ! git checkout -f "${REF}"; then
   log "повтор как тег refs/tags/${REF#refs/tags/}"
   if ! git checkout -f "refs/tags/${REF#refs/tags/}"; then
     log "повтор как origin/${REF}"
