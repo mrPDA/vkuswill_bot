@@ -34,3 +34,37 @@ paths = [
   '''^certs/.*''',
   '''^docs/cert/.*''',
 ]
+
+[[allowlists]]
+description = "Placeholder curl examples in docs"
+regexes = [
+  '''pk-lf-\.\.\.:sk-lf-\.\.\.''',
+  '''pk-lf-YOUR_PUBLIC_KEY:sk-lf-YOUR_SECRET_KEY''',
+  '''pk-lf-PUBLIC:sk-lf-SECRET''',
+  '''pk-lf-REDACTED:sk-lf-REDACTED''',
+  '''PUBLIC_KEY:SECRET_KEY''',
+]
+
+# Кастомные правила для обнаружения Langfuse API-ключей (self-hosted и cloud)
+[[rules]]
+id = "langfuse-public-key"
+description = "Langfuse Public API Key"
+regex = '''pk-lf-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+tags = ["api-key", "langfuse"]
+
+[[rules]]
+id = "langfuse-secret-key"
+description = "Langfuse Secret API Key"
+regex = '''sk-lf-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'''
+tags = ["api-key", "langfuse"]
+
+[[rules.allowlists]]
+description = "Redacted placeholders are safe"
+regexes = [
+  '''pk-lf-REDACTED''',
+  '''sk-lf-REDACTED''',
+  '''pk-lf-PUBLIC''',
+  '''sk-lf-SECRET''',
+  '''pk-lf-YOUR_PUBLIC_KEY''',
+  '''sk-lf-YOUR_SECRET_KEY''',
+]

@@ -20,3 +20,17 @@ if [ $EXIT_CODE -ne 0 ]; then
 fi
 
 echo "✅ Все тесты пройдены. Push разрешён."
+
+# Сканирование секретов (gitleaks) — только если установлен
+if command -v gitleaks &> /dev/null; then
+    echo "🔐 Сканирование секретов (gitleaks)..."
+    gitleaks git --config .gitleaks.toml --no-banner 2>&1
+    GITLEAKS_CODE=$?
+    if [ $GITLEAKS_CODE -ne 0 ]; then
+        echo ""
+        echo "❌ Gitleaks обнаружил секреты в коммитах! Push отменён."
+        echo "Используйте 'make secret-scan' для деталей."
+        exit 1
+    fi
+    echo "✅ Секреты не обнаружены."
+fi

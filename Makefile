@@ -31,8 +31,11 @@ test-cov: ## Тесты с покрытием
 test-security: ## Тесты безопасности
 	uv run pytest tests/test_security_sast.py tests/test_config_security.py tests/test_ai_safety.py -v
 
-secret-scan: ## Поиск утечек секретов (требует gitleaks)
+secret-scan: ## Поиск утечек секретов в рабочем дереве (требует gitleaks)
 	gitleaks detect --source . --no-banner --redact --config .gitleaks.toml
+
+secret-scan-history: ## Поиск утечек секретов в git истории (требует gitleaks)
+	gitleaks git --no-banner --redact --config .gitleaks.toml
 
 lint: ## Проверка линтером (ruff)
 	uv run ruff check src/ tests/
