@@ -56,6 +56,10 @@ fi
 if git rev-parse --verify -q "refs/remotes/origin/${REF}" >/dev/null 2>&1; then
   log "checkout origin/${REF} (tip с remote)"
   git checkout -f "origin/${REF}"
+  # Иначе после деплоя остаётся detached HEAD; локальная ветка с тем же именем = этот коммит.
+  log "ветка ${REF} обновлена до HEAD"
+  git branch -f "${REF}" HEAD
+  git checkout -f "${REF}"
 elif ! git checkout -f "${REF}"; then
   log "повтор как тег refs/tags/${REF#refs/tags/}"
   if ! git checkout -f "refs/tags/${REF#refs/tags/}"; then

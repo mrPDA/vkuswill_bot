@@ -38,7 +38,9 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
     CART_CREATE_TIMEOUT_SECONDS,
     CART_CREATE_RESERVE_SECONDS,
     MIN_SEARCH_BUDGET_SECONDS,
+    PHASE2_DEADLINE_SECONDS,  # noqa: F401  (used via monkeypatch in tests)
     RECIPE_INGREDIENTS_TIMEOUT_SECONDS,
+    TURN_DEADLINE_SECONDS,  # noqa: F401  (used via monkeypatch in tests)
     adaptive_deadlines,
     bounded_deadline,
     deadline_after,
