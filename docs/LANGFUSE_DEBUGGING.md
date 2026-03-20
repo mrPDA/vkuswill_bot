@@ -1,6 +1,7 @@
 # Отладка ошибок бота через Langfuse API
 
-> **Дата создания:** 14.02.2026
+> **Дата создания:** 14.02.2026  
+> **Обновлено:** 20.03.2026 — актуализация под Qwen/Yandex OpenAI-compatible, Raspberry Pi, self-hosted Langfuse.
 >
 > **Автор:** Бен Ганн (doc-writer)
 
@@ -8,24 +9,24 @@
 
 ## Общая информация
 
-Langfuse — система LLM-observability, в которой сохраняются трейсы всех взаимодействий бота с GigaChat. Каждое сообщение пользователя создаёт **trace**, каждый вызов LLM — **generation**, каждый вызов инструмента — **span**.
+Langfuse — система LLM-observability: трейсы взаимодействий бота с **OpenAI-compatible** провайдером (в production чаще **Yandex Cloud AI Studio / Qwen** по `LLM_MODEL`, см. ADR-004). Каждое сообщение пользователя создаёт **trace**, каждый вызов LLM — **generation**, каждый вызов инструмента — **span**.
 
-### Структура трейса
+### Структура трейса (shopping_agent / Telegram)
 
 ```
 Trace (chat)
-├── input: текст пользователя (с маскировкой PII)
+├── input: текст пользователя (с маскировкой PII при LANGFUSE_ANONYMIZE_MESSAGES)
 ├── user_id: анонимизированный (SHA-256, 12 символов)
 ├── session_id: анонимизированный
-├── tags: ["gigachat", "telegram"]
+├── tags: например ["env:prod", "shopping_agent", "telegram_or_voice", "qwen_openai", "profile:general"]
 │
-├── Generation (gigachat-1, gigachat-2, …)
-│   ├── model: GigaChat-2-Max
+├── Generation (shopping-agent-1, shopping-agent-2, …)
+│   ├── model: URI/имя из конфига (например gpt://…/qwen…/latest)
 │   ├── input: messages в формате Langfuse
-│   ├── model_parameters: {"function_call": "auto"}
-│   ├── metadata: step, real_calls, consecutive_skips, force_text
-│   ├── output: content или function_call
-│   └── usage_details, cost_details
+│   ├── model_parameters: tools, step, provider, prompt_profile, temperature, max_tokens, …
+│   ├── metadata: prompt (provenance)
+│   ├── output: content или tool_calls
+│   └── usage_details, cost_details (если провайдер/SDK отдают)
 │
 ├── Span (tool:tool_name) — для каждого tool call
 │   ├── input: распарсенные аргументы инструмента
@@ -56,11 +57,16 @@ curl -u "pk-lf-...:sk-lf-..." "http://<LANGFUSE_HOST>/api/public/..."
 
 ### Хост
 
-| Окружение | URL |
-|-----------|-----|
-| Production (VM) | `http://89.169.138.16:3000` |
-| Docker Compose (локально) | `http://localhost:3000` |
-| SaaS (облако) | `https://cloud.langfuse.com` |
+Подставьте в примерах `curl` свой **`LANGFUSE_HOST`** (как доходит **с той машины, где выполняется запрос**):
+
+| Окружение | URL для API/UI из браузера или хоста |
+|-----------|--------------------------------------|
+| Raspberry Pi (LAN) | `http://<IP_малинки>:3000` (порт `LANGFUSE_PORT`, по умолчанию 3000) |
+| Docker Compose (ПК, локально) | `http://localhost:3000` |
+| Legacy VM (если ещё используется) | свой фиксированный URL, например `http://<host>:3000` |
+| SaaS | `https://cloud.langfuse.com` |
+
+**Контейнер бота** в `docker-compose.pi.yml` ходит в Langfuse по **`http://langfuse:3000`** (имя сервиса в сети compose), не по LAN-IP.
 
 ---
 
@@ -93,7 +99,7 @@ curl -s \
   --connect-timeout 5 \
   --max-time 15 \
   -u "pk-lf-YOUR_PUBLIC_KEY:sk-lf-YOUR_SECRET_KEY" \
-  "http://89.169.138.16:3000/api/public/observations?traceId=TRACE_ID&limit=30"
+  "http://HOST:3000/api/public/observations?traceId=TRACE_ID&limit=30"
 ```
 
 ### Шаг 3: Разобрать ответ
@@ -103,7 +109,7 @@ curl -s \
 | Поле | Описание |
 |------|----------|
 | `type` | `GENERATION` (LLM-вызов) или `SPAN` (tool call) |
-| `name` | Имя: `gigachat-1`, `tool:search_products`, `tool:get_cart` и т.д. |
+| `name` | Имя: `shopping-agent-1`, `classify-intent`, `tool:vkusvill_products_search`, … |
 | `input` | Входные данные |
 | `output` | Результат (для spans — ответ инструмента) |
 | `metadata` | Доп. информация: `step`, `call_number`, `full_length` |
@@ -115,29 +121,27 @@ curl -s \
 
 ## Примеры команд
 
-### Найти конкретный tool call (например, cart)
+### Найти конкретный tool call (например, корзина)
 
-Полный пример — запрос observations трейса и поиск span инструмента корзины:
+Пример — запрос observations трейса и поиск span инструмента с `cart` в имени (подставьте **свои** ключи и `HOST`):
 
 ```bash
 curl -s \
   --connect-timeout 5 \
   --max-time 15 \
-  -u "pk-lf-REDACTED:sk-lf-REDACTED" \
-  "http://89.169.138.16:3000/api/public/observations?traceId=3f72823f-3239-4b6c-a4ee-b2e90bbc88ab&limit=30" \
+  -u "pk-lf-PUBLIC:sk-lf-SECRET" \
+  "http://HOST:3000/api/public/observations?traceId=TRACE_ID&limit=30" \
   2>&1 | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
 obs = sorted(data.get('data', []), key=lambda x: x.get('startTime', ''))
-# Ищем span инструмента корзины
 for o in obs:
     name = o.get('name', '')
-    if 'cart' in name and o.get('type') == 'SPAN':
+    if 'cart' in name.lower() and o.get('type') == 'SPAN':
         output = o.get('output', '')
         meta = o.get('metadata', {})
         print(f'name: {name}')
         print(f'full_length: {meta.get(\"full_length\")}')
-        # Полный output
         if isinstance(output, str):
             print(f'OUTPUT ({len(output)} chars):')
             print(output)
@@ -150,7 +154,7 @@ for o in obs:
 ```bash
 curl -s \
   -u "pk-lf-PUBLIC:sk-lf-SECRET" \
-  "http://89.169.138.16:3000/api/public/observations?traceId=TRACE_ID&limit=50" \
+  "http://HOST:3000/api/public/observations?traceId=TRACE_ID&limit=50" \
   | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -172,7 +176,7 @@ for o in obs:
 ```bash
 curl -s \
   -u "pk-lf-PUBLIC:sk-lf-SECRET" \
-  "http://89.169.138.16:3000/api/public/traces?limit=20&orderBy=timestamp.desc" \
+  "http://HOST:3000/api/public/traces?limit=20&orderBy=timestamp.desc" \
   | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -191,7 +195,7 @@ for t in data.get('data', []):
 ```bash
 curl -s \
   -u "pk-lf-PUBLIC:sk-lf-SECRET" \
-  "http://89.169.138.16:3000/api/public/traces/TRACE_ID" \
+  "http://HOST:3000/api/public/traces/TRACE_ID" \
   | python3 -m json.tool
 ```
 
@@ -200,7 +204,7 @@ curl -s \
 ```bash
 curl -s \
   -u "pk-lf-PUBLIC:sk-lf-SECRET" \
-  "http://89.169.138.16:3000/api/public/observations?traceId=TRACE_ID&limit=30" \
+  "http://HOST:3000/api/public/observations?traceId=TRACE_ID&limit=30" \
   | python3 -c "
 import json, sys
 data = json.load(sys.stdin)
@@ -211,7 +215,7 @@ for o in sorted(data.get('data', []), key=lambda x: x.get('startTime', '')):
     usage = o.get('usageDetails', {}) or {}
     cost = o.get('costDetails', {}) or {}
     print(f'{name}: input={usage.get(\"input\",0)} output={usage.get(\"output\",0)} total={usage.get(\"total\",0)} tokens')
-    print(f'  cost: {cost.get(\"total\", 0):.6f} RUB')
+    print(f'  cost: {cost}')
 "
 ```
 
@@ -229,7 +233,7 @@ for o in sorted(data.get('data', []), key=lambda x: x.get('startTime', '')):
 | Стоимость | Dashboard → Cost по дням и моделям |
 | Sessions | Sessions → группировка трейсов по сессии пользователя |
 
-**URL UI:** `http://89.169.138.16:3000` (Production) или `http://localhost:3000` (локально).
+**URL UI:** для Pi — `http://<IP_малинки>:3000`; на ПК с compose — `http://localhost:3000`; для облака — `https://cloud.langfuse.com` (проект в аккаунте).
 
 ---
 
@@ -242,8 +246,11 @@ for o in sorted(data.get('data', []), key=lambda x: x.get('startTime', '')):
 | `LANGFUSE_ENABLED` | Включить трейсинг | `false` |
 | `LANGFUSE_PUBLIC_KEY` | Публичный ключ проекта | `""` |
 | `LANGFUSE_SECRET_KEY` | Секретный ключ проекта | `""` |
-| `LANGFUSE_HOST` | URL Langfuse-сервера | `https://cloud.langfuse.com` |
-| `LANGFUSE_ANONYMIZE_MESSAGES` | Скрывать текст сообщений | `false` |
+| `LANGFUSE_HOST` | URL Langfuse для SDK (бот) | В коде по умолчанию `https://cloud.langfuse.com`; на Pi в compose переопределяется на `http://langfuse:3000` |
+| `LANGFUSE_ANONYMIZE_MESSAGES` | Скрывать текст сообщений (152-ФЗ) | `false` в `.env.example`; на Pi часто `true` |
+| `PROMPT_LABEL` | Метка промптов в Langfuse Prompt Management | `production` |
+| `LANGFUSE_NEXTAUTH_URL` | URL для NextAuth (только self-hosted) | Должен совпадать с тем, как открывают UI в браузере |
+| `LANGFUSE_NEXTAUTH_SECRET` / `LANGFUSE_SALT` | Секреты NextAuth / hashing (self-hosted) | Задать на Pi (`openssl rand -hex …`) |
 
 ---
 
@@ -266,7 +273,10 @@ for o in sorted(data.get('data', []), key=lambda x: x.get('startTime', '')):
 2. `docker compose -f docker-compose.pi.yml up -d --build` — дождитесь healthy у postgres и запуска Langfuse.
 3. Откройте UI на порту `LANGFUSE_PORT` (по умолчанию 3000), зарегистрируйте организацию, создайте проект, скопируйте **Public / Secret key** в `.env` как `LANGFUSE_PUBLIC_KEY` и `LANGFUSE_SECRET_KEY`, включите `LANGFUSE_ENABLED=true`, `PROMPT_LABEL=production`, перезапустите бота.
 4. Загрузите промпты в Langfuse из репозитория:
-   - из экспорта JSON: `make docker-pi-langfuse-import-prompts` (или `docker compose -f docker-compose.pi.yml exec bot uv run python scripts/import_prompts_from_langfuse_export.py --label production`);
-   - добить из текстовых файлов на хосте (если монтируете каталог `prompts/`): `docker compose ... exec bot uv run python scripts/migrate_prompts_to_langfuse.py --label production` — в образе уже есть `prompts/langfuse-export/*.json` и `profile_meal_plan.txt`.
+   - из экспорта JSON: `make docker-pi-langfuse-import-prompts` или  
+     `docker compose -f docker-compose.pi.yml exec -T bot python /app/scripts/import_prompts_from_langfuse_export.py --label production`;
+   - добить из текстовых файлов (каталог `prompts/` смонтирован в бот):  
+     `docker compose -f docker-compose.pi.yml exec -T bot python /app/scripts/migrate_prompts_to_langfuse.py --label production`  
+     (в образе уже есть `prompts/langfuse-export/*.production.json` и `profile_meal_plan.txt`).
 
 Бот обращается к Langfuse по **внутреннему** URL `http://langfuse:3000`; переменная `LANGFUSE_HOST` в контейнере бота задаётся в compose и не должна указывать на облако при использовании локального сервиса.
