@@ -52,7 +52,7 @@ class Config(BaseSettings):
         description="max_tokens для финального ответа при корзине по рецепту",
     )
     llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
-    llm_prompt_profiles_enabled: bool = False
+    llm_prompt_profiles_enabled: bool = True
     llm_compact_followup_prompt_enabled: bool = True
     intent_classification_enabled: bool = True
     intent_classification_timeout: float = 5.0

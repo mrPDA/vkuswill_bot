@@ -133,11 +133,11 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.llm_temperature == 0.2
 
-    def test_llm_prompt_profiles_default_disabled(self):
-        """Профили промптов по умолчанию отключены (безопасный rollout)."""
+    def test_llm_prompt_profiles_default_enabled(self):
+        """Профили промптов включены по умолчанию (как в stage/prod deploy)."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
-        assert cfg.llm_prompt_profiles_enabled is False
+        assert cfg.llm_prompt_profiles_enabled is True
 
     def test_llm_compact_followup_prompt_default_enabled(self):
         """Компактный follow-up промпт включён по умолчанию."""
