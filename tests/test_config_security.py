@@ -169,6 +169,12 @@ class TestDefaultValues:
             cfg = Config(_env_file=None)  # type: ignore[call-arg]
         assert cfg.meal_plan_rollout_percent == 100
 
+    def test_meal_plan_rollout_kpi_gates_default_enabled(self):
+        """KPI-gates rollout по умолчанию включены (облако / зрелая статистика)."""
+        with patch.dict(os.environ, MINIMAL_ENV, clear=True):
+            cfg = Config(_env_file=None)  # type: ignore[call-arg]
+        assert cfg.meal_plan_rollout_kpi_gates_enabled is True
+
     def test_meal_plan_allow_unvalidated_rollout_default_disabled(self):
         """Unsafe rollout override по умолчанию выключен."""
         with patch.dict(os.environ, MINIMAL_ENV, clear=True):
@@ -632,9 +638,11 @@ class TestSecretProtection:
     def test_webhook_requires_host_when_enabled(self):
         """При USE_WEBHOOK=true WEBHOOK_HOST обязателен."""
         custom_env = {**MINIMAL_ENV, "USE_WEBHOOK": "true"}
-        with patch.dict(os.environ, custom_env, clear=True):
-            with pytest.raises(ValidationError) as exc_info:
-                Config(_env_file=None)  # type: ignore[call-arg]
+        with (
+            patch.dict(os.environ, custom_env, clear=True),
+            pytest.raises(ValidationError) as exc_info,
+        ):
+            Config(_env_file=None)  # type: ignore[call-arg]
         err = str(exc_info.value).lower()
         assert "webhook_host" in err or "webhook" in err
 
@@ -644,12 +652,15 @@ class TestSecretProtection:
             **MINIMAL_ENV,
             "USE_WEBHOOK": "true",
             "WEBHOOK_HOST": "https://1.2.3.4",
-            "WEBHOOK_KEY_PATH": "/tmp/key.pem",
+            "WEBHOOK_KEY_PATH": "/tmp/key.pem",  # noqa: S108
         }
-        with patch.dict(os.environ, custom_env, clear=True):
-            with pytest.raises(ValidationError) as exc_info:
-                Config(_env_file=None)  # type: ignore[call-arg]
-        assert "WEBHOOK_CERT_PATH" in str(exc_info.value) or "webhook" in str(exc_info.value).lower()
+        with (
+            patch.dict(os.environ, custom_env, clear=True),
+            pytest.raises(ValidationError) as exc_info,
+        ):
+            Config(_env_file=None)  # type: ignore[call-arg]
+        err = str(exc_info.value)
+        assert "WEBHOOK_CERT_PATH" in err or "webhook" in err.lower()
 
     def test_webhook_path_without_leading_slash_is_normalized(self):
         """WEBHOOK_PATH без префикса / нормализуется."""
@@ -844,6 +855,7 @@ class TestEnvExampleCompleteness:
             "LLM_BASE_URL",
             "MCP_SERVER_URL",
             "DEBUG",
+            "MEAL_PLAN_ROLLOUT_KPI_GATES_ENABLED",
         ]
         for key in optional_keys:
             assert key in content, f"{key} отсутствует в .env.example — важно для документации"
