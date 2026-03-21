@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from vkuswill_bot.agents.meal_plan_request_model import MealPlanRequestExtraction
 from vkuswill_bot.agents.meal_plan_request_profile import (
     build_shared_constraints,
     extract_segmented_adult_preferences,
@@ -142,7 +143,6 @@ class MealPlanRequest:
         if meal_types:
             d["requested_meal_types"] = meal_types
         return d
-
 
 @dataclass(slots=True)
 class MealPlanDish:
@@ -330,11 +330,38 @@ def _merge_unique(left: list[str], right: list[str]) -> list[str]:
     return merged
 
 
-def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPlanRequest:
+def parse_meal_plan_request(
+    text: str,
+    stored_profile: dict[str, Any],
+    *,
+    extracted: MealPlanRequestExtraction | None = None,
+) -> MealPlanRequest:
     """Parse user text + stored profile into a structured MealPlanRequest."""
-    days = _extract_days(text)
-    people_total = _extract_people_total(text)
+    days = (
+        extracted.days
+        if extracted is not None and isinstance(extracted.days, int)
+        else _extract_days(text)
+    )
+    people_total = (
+        extracted.people_total
+        if extracted is not None and isinstance(extracted.people_total, int)
+        else _extract_people_total(text)
+    )
     child_group_id, child_count, child_age = _extract_child_group(text, people_total)
+    if extracted is not None and (
+        isinstance(extracted.child_count, int) or isinstance(extracted.child_age_years, int)
+    ):
+        child_count = (
+            max(1, min(people_total, extracted.child_count))
+            if isinstance(extracted.child_count, int)
+            else child_count
+        )
+        child_age = (
+            max(0, extracted.child_age_years)
+            if isinstance(extracted.child_age_years, int)
+            else child_age
+        )
+        child_group_id = f"child_{child_age}y" if child_age is not None else "child"
     adults_count = max(0, people_total - child_count)
 
     segmented_adults = extract_segmented_adult_preferences(
@@ -344,13 +371,25 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
         cuisine_keywords=_CUISINE_KEYWORDS,
     )
     explicit_allergens = _extract_allergens(text)
+    if extracted is not None and extracted.allergens_excluded is not None:
+        explicit_allergens = _merge_unique(extracted.allergens_excluded, explicit_allergens)
     explicit_diet = (
-        None if any(segment.get("diet") for segment in segmented_adults) else _extract_diet(text)
+        None
+        if any(segment.get("diet") for segment in segmented_adults)
+        else (
+            extracted.diet
+            if extracted is not None and extracted.diet is not None
+            else _extract_diet(text)
+        )
     )
     explicit_cuisines = (
         []
         if any(segment.get("cuisine") for segment in segmented_adults)
-        else _extract_cuisines(text)
+        else (
+            _merge_unique(extracted.cuisines or [], _extract_cuisines(text))
+            if extracted is not None and extracted.cuisines is not None
+            else _extract_cuisines(text)
+        )
     )
     hard, soft, operational, preferences_trace = build_shared_constraints(
         stored_profile=stored_profile,
@@ -434,7 +473,11 @@ def parse_meal_plan_request(text: str, stored_profile: dict[str, Any]) -> MealPl
             )
         )
 
-    requested_meal_types = _extract_requested_meal_types(text)
+    requested_meal_types = (
+        _merge_unique(extracted.requested_meal_types or [], _extract_requested_meal_types(text))
+        if extracted is not None and extracted.requested_meal_types is not None
+        else _extract_requested_meal_types(text)
+    )
 
     return MealPlanRequest(
         people_total=people_total,

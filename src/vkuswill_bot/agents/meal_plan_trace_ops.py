@@ -15,6 +15,7 @@ def finish_parse_span(
     *,
     span: Any | None,
     request: Any | None = None,
+    parser_details: dict[str, Any] | None = None,
     error: Exception | None = None,
 ) -> None:
     if span is None:
@@ -26,13 +27,14 @@ def finish_parse_span(
             status_message="meal_plan_parse_failed",
         )
         return
-    span.end(
-        output={
-            "days": request.days,
-            "people_total": request.people_total,
-            "groups": [group.to_prompt_dict() for group in request.groups],
-        }
-    )
+    output = {
+        "days": request.days,
+        "people_total": request.people_total,
+        "groups": [group.to_prompt_dict() for group in request.groups],
+    }
+    if parser_details:
+        output["parser"] = parser_details
+    span.end(output=output)
 
 
 def finish_ingredient_span(

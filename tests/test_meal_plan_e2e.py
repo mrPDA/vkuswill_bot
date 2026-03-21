@@ -58,6 +58,35 @@ class _FakeLLMClient:
         return None
 
 
+def _meal_plan_parse_response(
+    *,
+    days: int,
+    people_total: int,
+    child_count: int | None = None,
+    child_age_years: int | None = None,
+    allergens_excluded: list[str] | None = None,
+) -> _FakeResponse:
+    return _FakeResponse(
+        _FakeMessage(
+            content=json.dumps(
+                {
+                    "days": days,
+                    "people_total": people_total,
+                    "requested_meal_types": None,
+                    "child_count": child_count,
+                    "child_age_years": child_age_years,
+                    "diet": None,
+                    "cuisines": [],
+                    "allergens_excluded": allergens_excluded or [],
+                    "confidence": 0.99,
+                    "reason": "family weekly meal plan",
+                },
+                ensure_ascii=False,
+            )
+        )
+    )
+
+
 class _MealPlanMCPClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -156,7 +185,16 @@ async def test_meal_plan_e2e_contract_for_family_with_child_and_allergy() -> Non
     ]
     llm_payload = {"schema_version": 1, "dishes": dishes}
     llm_client = _FakeLLMClient(
-        [_FakeResponse(_FakeMessage(content=json.dumps(llm_payload, ensure_ascii=False)))]
+        [
+            _meal_plan_parse_response(
+                days=7,
+                people_total=4,
+                child_count=1,
+                child_age_years=2,
+                allergens_excluded=["орехи"],
+            ),
+            _FakeResponse(_FakeMessage(content=json.dumps(llm_payload, ensure_ascii=False))),
+        ]
     )
 
     agent = ShoppingAgent(

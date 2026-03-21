@@ -136,6 +136,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._intent_classification_timeout = max(1.0, intent_classification_timeout)
         self._meal_plan_intent_routing_enabled = bool(meal_plan_intent_routing_enabled)
         self._meal_plan_executor_enabled = bool(meal_plan_executor_enabled)
+        self._meal_plan_request_extraction_enabled = True
         self._meal_plan_shadow_mode_enabled = bool(meal_plan_shadow_mode_enabled)
         self._meal_plan_rollout_percent = max(0, min(100, int(meal_plan_rollout_percent)))
         self._meal_plan_rollout_kpi_gates_enabled = bool(meal_plan_rollout_kpi_gates_enabled)

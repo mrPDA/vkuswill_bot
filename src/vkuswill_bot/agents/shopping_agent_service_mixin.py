@@ -110,6 +110,8 @@ class ShoppingAgentServiceMixin:
         tools: list[dict[str, Any]],
         llm_provider: str,
         max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
+        tool_choice_override: str | None = None,
     ) -> Any:
         from vkuswill_bot.agents.exceptions import LLMOverloadedError
 
@@ -139,9 +141,13 @@ class ShoppingAgentServiceMixin:
                             model=self._resolve_model_for_provider(llm_provider),
                             messages=messages,
                             tools=tools,
-                            tool_choice="auto",
+                            tool_choice=tool_choice_override or "auto",
                             max_tokens=max_tokens,
-                            temperature=self._llm_temperature,
+                            temperature=(
+                                self._llm_temperature
+                                if temperature_override is None
+                                else temperature_override
+                            ),
                         ),
                         timeout=self._llm_timeout_seconds,
                     )

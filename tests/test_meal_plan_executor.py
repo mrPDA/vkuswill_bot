@@ -60,6 +60,7 @@ class _FakeExecutorAgent:
         mcp_handler: Any,
     ) -> None:
         self._llm_max_tokens_recipe = 1200
+        self._meal_plan_request_extraction_enabled = False
         self._llm_responses = llm_responses
         self._mcp_handler = mcp_handler
         self._history: dict[int, list[dict[str, Any]]] = {}
@@ -78,6 +79,8 @@ class _FakeExecutorAgent:
         tools: list[dict[str, Any]],
         llm_provider: str,
         max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
+        tool_choice_override: str | None = None,
     ) -> dict[str, Any]:
         self.llm_calls.append(
             {
@@ -85,6 +88,8 @@ class _FakeExecutorAgent:
                 "tools": tools,
                 "provider": llm_provider,
                 "max_tokens_override": max_tokens_override,
+                "temperature_override": temperature_override,
+                "tool_choice_override": tool_choice_override,
             }
         )
         if not self._llm_responses:
@@ -256,6 +261,92 @@ async def test_run_meal_plan_turn_happy_path() -> None:
     assert metadata["soft_coverage_min"] >= 0.70
     assert metadata["phase2_deadline_seconds"] >= 100.0
     assert metadata["turn_deadline_seconds"] >= 120.0
+
+
+@pytest.mark.asyncio
+async def test_run_meal_plan_turn_uses_llm_request_extraction_when_enabled() -> None:
+    plan_payload = _build_plan_payload(cuisine="italian", days=2)
+
+    def _mcp(name: str, arguments: dict[str, Any]) -> str:
+        if name == "recipe_ingredients":
+            dish = str(arguments.get("dish", "")).lower().replace(" ", "")
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {
+                            "name": f"ингредиент-{dish}",
+                            "search_query": f"ing-{dish}",
+                            "quantity": 1,
+                            "unit": "шт",
+                        }
+                    ],
+                },
+                ensure_ascii=False,
+            )
+        if name == "vkusvill_products_search":
+            query = str(arguments.get("q", "")).strip()
+            return _products_search_response(query, xml_id=101, name="Товар")
+        if name == "vkusvill_cart_link_create":
+            return json.dumps(
+                {"ok": True, "data": {"link": "https://shop.example/cart/llm-parse"}},
+                ensure_ascii=False,
+            )
+        raise AssertionError(f"Unexpected tool call: {name}")
+
+    agent = _FakeExecutorAgent(
+        llm_responses=[
+            _llm_response(
+                json.dumps(
+                    {
+                        "days": 2,
+                        "people_total": None,
+                        "requested_meal_types": ["lunch"],
+                        "child_count": None,
+                        "child_age_years": None,
+                        "diet": None,
+                        "cuisines": [],
+                        "allergens_excluded": [],
+                        "confidence": 0.97,
+                        "reason": "обеды на два дня",
+                    },
+                    ensure_ascii=False,
+                )
+            ),
+            _llm_response(json.dumps(plan_payload, ensure_ascii=False)),
+        ],
+        mcp_handler=_mcp,
+    )
+    agent._meal_plan_request_extraction_enabled = True
+    trace = _TraceSpy()
+
+    result = await run_meal_plan_turn(
+        agent=agent,
+        state=_State(
+            history=[
+                {
+                    "role": "user",
+                    "content": "собери мне обеды для здорового питания на два дня",
+                }
+            ]
+        ),
+        user_id=1002,
+        text="собери мне обеды для здорового питания на два дня",
+        llm_provider="qwen_openai",
+        trace=trace,
+        on_progress=lambda _msg: _done(),
+    )
+
+    assert "https://shop.example/cart/llm-parse" in result
+    parse_span = next(
+        row for row in trace.spans if row["start"]["name"] == "meal-plan.parse-request"
+    )
+    assert parse_span["end"]["output"]["days"] == 2
+    assert parse_span["end"]["output"]["parser"]["source"] == "llm"
+    assert parse_span["end"]["output"]["parser"]["confidence"] == 0.97
+    extraction_call = agent.llm_calls[0]
+    assert extraction_call["temperature_override"] == 0.0
+    assert extraction_call["tool_choice_override"] == "none"
 
 
 @pytest.mark.asyncio
@@ -1307,11 +1398,11 @@ async def test_run_meal_plan_turn_parse_failure_falls_back_to_standard_turn(
         fallback_reasons.append(reason)
         return f"standard::{reason}"
 
-    def _raise_parse_error(_text: str, _profile: dict[str, Any]) -> Any:
+    async def _raise_parse_error(**_kwargs: Any) -> Any:
         raise ValueError("parse failed")
 
     monkeypatch.setattr(
-        "vkuswill_bot.agents.meal_plan_executor.parse_meal_plan_request",
+        "vkuswill_bot.agents.meal_plan_executor.parse_meal_plan_request_with_llm",
         _raise_parse_error,
     )
 
@@ -1346,11 +1437,11 @@ async def test_run_meal_plan_turn_parse_failure_returns_fail_soft_without_fallba
         mcp_handler=lambda _name, _arguments: "{}",
     )
 
-    def _raise_parse_error(_text: str, _profile: dict[str, Any]) -> Any:
+    async def _raise_parse_error(**_kwargs: Any) -> Any:
         raise RuntimeError("broken parser")
 
     monkeypatch.setattr(
-        "vkuswill_bot.agents.meal_plan_executor.parse_meal_plan_request",
+        "vkuswill_bot.agents.meal_plan_executor.parse_meal_plan_request_with_llm",
         _raise_parse_error,
     )
 

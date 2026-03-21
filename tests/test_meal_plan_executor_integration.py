@@ -101,6 +101,35 @@ class _FakeLLMClient:
         return None
 
 
+def _meal_plan_parse_response(
+    *,
+    days: int,
+    people_total: int,
+    child_count: int | None = None,
+    child_age_years: int | None = None,
+    allergens_excluded: list[str] | None = None,
+) -> _FakeResponse:
+    return _FakeResponse(
+        _FakeMessage(
+            content=json.dumps(
+                {
+                    "days": days,
+                    "people_total": people_total,
+                    "requested_meal_types": None,
+                    "child_count": child_count,
+                    "child_age_years": child_age_years,
+                    "diet": None,
+                    "cuisines": [],
+                    "allergens_excluded": allergens_excluded or [],
+                    "confidence": 0.98,
+                    "reason": "meal plan request",
+                },
+                ensure_ascii=False,
+            )
+        )
+    )
+
+
 class _MealPlanMCPClient:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
@@ -180,7 +209,10 @@ class _BrokenRolloutController:
 async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
     plan_payload = _build_full_week_plan()
     llm_client = _FakeLLMClient(
-        [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
+        [
+            _meal_plan_parse_response(days=7, people_total=2),
+            _FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False))),
+        ]
     )
     mcp = _MealPlanMCPClient()
     agent = ShoppingAgent(
@@ -209,7 +241,7 @@ async def test_shopping_agent_routes_meal_plan_to_dedicated_executor() -> None:
     assert call_names.count("recipe_search") >= 0
     assert call_names.count("vkusvill_cart_link_create") == 1
     assert call_names.count("vkusvill_products_search") >= 7
-    assert len(llm_client.completions.calls) == 1
+    assert len(llm_client.completions.calls) == 2
 
 
 @pytest.mark.asyncio
@@ -240,7 +272,10 @@ async def test_shopping_agent_disables_executor_when_rollout_controller_unavaila
 async def test_shopping_agent_bypasses_kpi_gates_when_disabled() -> None:
     plan_payload = _build_full_week_plan()
     llm_client = _FakeLLMClient(
-        [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
+        [
+            _meal_plan_parse_response(days=7, people_total=2),
+            _FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False))),
+        ]
     )
     mcp = _MealPlanMCPClient()
     agent = ShoppingAgent(
@@ -294,7 +329,10 @@ async def test_shopping_agent_disables_executor_when_rollout_controller_fails() 
 async def test_shopping_agent_allows_explicit_unvalidated_rollout_override() -> None:
     plan_payload = _build_full_week_plan()
     llm_client = _FakeLLMClient(
-        [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
+        [
+            _meal_plan_parse_response(days=7, people_total=2),
+            _FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False))),
+        ]
     )
     mcp = _MealPlanMCPClient()
     agent = ShoppingAgent(
@@ -384,7 +422,10 @@ async def test_shopping_agent_disables_meal_plan_routing_when_feature_flag_off()
 async def test_meal_plan_uses_explicit_constraints_when_preferences_unavailable() -> None:
     plan_payload = _build_full_week_plan(cuisine="russian")
     llm_client = _FakeLLMClient(
-        [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
+        [
+            _meal_plan_parse_response(days=7, people_total=2, allergens_excluded=["орехи"]),
+            _FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False))),
+        ]
     )
     mcp = _MealPlanMCPClient()
     agent = ShoppingAgent(

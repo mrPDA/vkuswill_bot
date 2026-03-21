@@ -43,6 +43,8 @@ class MealPlanGeneratorAgentProtocol(Protocol):
         tools: list[dict[str, Any]],
         llm_provider: str,
         max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
+        tool_choice_override: str | None = None,
     ) -> Any: ...
 
 

@@ -64,6 +64,37 @@ _FALLBACK_MEAL_PLAN_GENERATION_PROMPT = (
     "- servings_total: int >= 1\n- audience_groups: string[]\n- cuisine_tags: string[]"
 )
 
+_FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT = (
+    "Извлеки параметры meal-plan запроса пользователя для бота ВкусВилл.\n"
+    "Верни ТОЛЬКО один JSON-объект без markdown и без пояснений.\n"
+    "Формат ответа:\n"
+    "{{\n"
+    '  "days": 2,\n'
+    '  "people_total": 2,\n'
+    '  "requested_meal_types": ["lunch"],\n'
+    '  "child_count": null,\n'
+    '  "child_age_years": null,\n'
+    '  "diet": null,\n'
+    '  "cuisines": [],\n'
+    '  "allergens_excluded": [],\n'
+    '  "confidence": 0.95,\n'
+    '  "reason": "обеды на два дня"\n'
+    "}}\n\n"
+    "Правила:\n"
+    "- Не выдумывай значения. Если параметр не указан явно, верни null или [].\n"
+    "- days: целое число 1..14. 'на неделю' = 7, 'на рабочую неделю' = 5.\n"
+    "- people_total: целое число 1..20 только если количество людей явно указано.\n"
+    "- requested_meal_types: список только из breakfast, lunch, dinner, snack.\n"
+    "- 'обеды' => ['lunch'], 'завтрак и ужин' => ['breakfast','dinner'].\n"
+    "- diet: только vegan, vegetarian, halal или null.\n"
+    "- cuisines: только italian, asian, georgian, russian, mediterranean.\n"
+    "- allergens_excluded: короткие слова на русском из запроса"
+    " ('орехи', 'глютен', 'лактоза', 'яйца').\n"
+    "- confidence: число от 0 до 1.\n"
+    "- reason: кратко, до 12 слов.\n\n"
+    "Сообщение пользователя:\n{text}"
+)
+
 _FALLBACK_PROFILE_CORE = (
     "Ты — продавец-консультант ВкусВилл в Telegram-боте. "
     "Отвечай только по продуктам, корзине и заказу ВкусВилл."
@@ -286,6 +317,24 @@ def get_meal_plan_generation_prompt_with_metadata(
         "name": "meal-plan-generation",
         "source": "stub",
         "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()[:16],
+    }
+
+
+def get_meal_plan_request_parse_prompt_with_metadata(
+    *,
+    text: str,
+) -> tuple[str, dict[str, Any]]:
+    """Получить prompt для извлечения параметров meal plan."""
+    registry = get_registry()
+    if registry is not None:
+        resolution = registry.resolve("meal-plan-request-parse", text=text)
+        if resolution.text:
+            return resolution.text, resolution.as_dict()
+    prompt = _FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT.format(text=text)
+    return prompt, {
+        "name": "meal-plan-request-parse",
+        "source": "stub",
+        "sha256": hashlib.sha256(prompt.encode("utf-8")).hexdigest()[:16],
     }
 
 

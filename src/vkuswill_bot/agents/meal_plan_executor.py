@@ -19,6 +19,7 @@ from vkuswill_bot.agents.meal_plan_execution_helpers import (
     soft_coverage_for_render,
     update_history,
 )
+from vkuswill_bot.agents.meal_plan_request_extractor import parse_meal_plan_request_with_llm
 from vkuswill_bot.agents.meal_plan_phase2_ops import (
     collect_ingredients_for_dishes,
     enforce_phase2_safety_policy,
@@ -47,7 +48,6 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
     deadline_remaining,
     reserve_deadline,
 )
-from vkuswill_bot.agents.meal_plan_types import parse_meal_plan_request
 from vkuswill_bot.services.meal_plan_trace_metadata import update_success_trace
 
 ProgressReporter = Callable[[str], Awaitable[None]]
@@ -58,6 +58,16 @@ class MealPlanExecutorAgentProtocol(Protocol):
     _history: dict[int, list[dict[str, Any]]]
 
     def _trim_history(self, history: list[dict[str, Any]]) -> list[dict[str, Any]]: ...
+    async def _call_llm(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        llm_provider: str,
+        max_tokens_override: int | None = None,
+        temperature_override: float | None = None,
+        tool_choice_override: str | None = None,
+    ) -> Any: ...
     async def _call_mcp_tool(
         self,
         *,
@@ -104,8 +114,14 @@ async def run_meal_plan_turn(
     await on_progress("🧠 Планирую меню...")
     parse_span = start_span(trace=trace, name="meal-plan.parse-request", input={"text": text})
     try:
-        request = parse_meal_plan_request(text, state.user_preference_profile)
-        finish_parse_span(span=parse_span, request=request)
+        request, parse_debug = await parse_meal_plan_request_with_llm(
+            agent=agent,
+            text=text,
+            stored_profile=state.user_preference_profile,
+            llm_provider=llm_provider,
+            trace=trace,
+        )
+        finish_parse_span(span=parse_span, request=request, parser_details=parse_debug.as_dict())
     except Exception as exc:
         finish_parse_span(span=parse_span, error=exc)
         parse_error = f"Не удалось разобрать meal-plan запрос: {exc}"
