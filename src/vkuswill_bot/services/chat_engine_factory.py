@@ -81,6 +81,7 @@ def create_chat_engine(
         "meal_plan_executor_enabled": cfg.meal_plan_executor_enabled,
         "meal_plan_shadow_mode_enabled": cfg.meal_plan_shadow_mode_enabled,
         "meal_plan_rollout_percent": cfg.meal_plan_rollout_percent,
+        "meal_plan_rollout_kpi_gates_enabled": cfg.meal_plan_rollout_kpi_gates_enabled,
         "meal_plan_allow_unvalidated_rollout": cfg.meal_plan_allow_unvalidated_rollout,
         "meal_plan_unvalidated_rollout_reason": cfg.meal_plan_unvalidated_rollout_reason,
         "meal_plan_unvalidated_rollout_actor": cfg.meal_plan_unvalidated_rollout_actor,

@@ -60,6 +60,7 @@ class Config(BaseSettings):
     meal_plan_executor_enabled: bool = True
     meal_plan_shadow_mode_enabled: bool = False
     meal_plan_rollout_percent: int = Field(default=100, ge=0, le=100)
+    meal_plan_rollout_kpi_gates_enabled: bool = True
     meal_plan_allow_unvalidated_rollout: bool = False
     meal_plan_unvalidated_rollout_reason: str = ""
     meal_plan_unvalidated_rollout_actor: str = ""

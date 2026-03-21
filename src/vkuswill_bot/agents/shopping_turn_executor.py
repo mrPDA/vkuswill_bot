@@ -97,6 +97,7 @@ async def run_locked_turn(
     shadow_mode = bool(getattr(agent, "_meal_plan_shadow_mode_enabled", False))
     rollout_percent = int(getattr(agent, "_meal_plan_rollout_percent", 100))
     controller = getattr(agent, "_meal_plan_rollout_controller", None)
+    kpi_gates_enabled = bool(getattr(agent, "_meal_plan_rollout_kpi_gates_enabled", True))
     bypass = evaluate_non_prod_rollout_bypass(
         enabled=bool(getattr(agent, "_meal_plan_allow_unvalidated_rollout", False)),
         environment=str(getattr(agent, "_deployment_environment", "production")),
@@ -111,6 +112,7 @@ async def run_locked_turn(
         shadow_mode=shadow_mode,
         configured_percent=rollout_percent,
         controller=controller,
+        kpi_gates_enabled=kpi_gates_enabled,
         allow_unvalidated=bypass.allow_unvalidated,
     )
     user_in_rollout = _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)

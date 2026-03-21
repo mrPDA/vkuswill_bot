@@ -122,10 +122,13 @@ async def resolve_rollout_percent(
     shadow_mode: bool,
     configured_percent: int,
     controller: Any,
+    kpi_gates_enabled: bool,
     allow_unvalidated: bool,
 ) -> int:
     rollout_percent = int(configured_percent)
     if shadow_mode:
+        return rollout_percent
+    if not kpi_gates_enabled:
         return rollout_percent
     if allow_unvalidated:
         return rollout_percent

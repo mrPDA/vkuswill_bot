@@ -90,6 +90,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         meal_plan_executor_enabled: bool = True,
         meal_plan_shadow_mode_enabled: bool = False,
         meal_plan_rollout_percent: int = 100,
+        meal_plan_rollout_kpi_gates_enabled: bool = True,
         meal_plan_allow_unvalidated_rollout: bool = False,
         meal_plan_unvalidated_rollout_reason: str = "",
         meal_plan_unvalidated_rollout_actor: str = "",
@@ -137,6 +138,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._meal_plan_executor_enabled = bool(meal_plan_executor_enabled)
         self._meal_plan_shadow_mode_enabled = bool(meal_plan_shadow_mode_enabled)
         self._meal_plan_rollout_percent = max(0, min(100, int(meal_plan_rollout_percent)))
+        self._meal_plan_rollout_kpi_gates_enabled = bool(meal_plan_rollout_kpi_gates_enabled)
         self._meal_plan_allow_unvalidated_rollout = bool(meal_plan_allow_unvalidated_rollout)
         self._meal_plan_unvalidated_rollout_reason = str(
             meal_plan_unvalidated_rollout_reason
@@ -153,7 +155,7 @@ class ShoppingAgent(ShoppingAgentRuntimeMixin, ShoppingAgentServiceMixin):
         self._user_store = user_store
         self._meal_plan_rollout_controller = None
         pool = getattr(self._user_store, "_pool", None)
-        if pool is not None:
+        if pool is not None and self._meal_plan_rollout_kpi_gates_enabled:
             self._meal_plan_rollout_controller = MealPlanRolloutController(
                 metrics_reader=PostgresMealPlanMetricsReader(pool=pool),
             )

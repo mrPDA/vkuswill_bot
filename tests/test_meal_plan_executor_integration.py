@@ -237,6 +237,35 @@ async def test_shopping_agent_disables_executor_when_rollout_controller_unavaila
 
 
 @pytest.mark.asyncio
+async def test_shopping_agent_bypasses_kpi_gates_when_disabled() -> None:
+    plan_payload = _build_full_week_plan()
+    llm_client = _FakeLLMClient(
+        [_FakeResponse(_FakeMessage(content=json.dumps(plan_payload, ensure_ascii=False)))]
+    )
+    mcp = _MealPlanMCPClient()
+    agent = ShoppingAgent(
+        llm_base_url="https://llm.api.cloud.yandex.net/v1",
+        llm_api_key="test-key",
+        llm_model="gpt://folder/model/latest",
+        llm_max_concurrent=2,
+        mcp_client=mcp,  # type: ignore[arg-type]
+        dialog_manager=_FakeDialogManager(),  # type: ignore[arg-type]
+        llm_client=llm_client,
+        prompt_profiles_enabled=True,
+        meal_plan_intent_routing_enabled=True,
+        meal_plan_executor_enabled=True,
+        meal_plan_rollout_kpi_gates_enabled=False,
+    )
+
+    result = await agent.process_message(user_id=341, text="собери меню на неделю для 2 человек")
+
+    assert "🍽 План питания" in result
+    call_names = [name for name, _args in mcp.calls]
+    assert call_names.count("recipe_ingredients") == 21
+    assert call_names.count("vkusvill_cart_link_create") == 1
+
+
+@pytest.mark.asyncio
 async def test_shopping_agent_disables_executor_when_rollout_controller_fails() -> None:
     llm_client = _FakeLLMClient([_FakeResponse(_FakeMessage(content="ok"))])
     mcp = _MealPlanMCPClient()

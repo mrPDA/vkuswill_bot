@@ -77,6 +77,7 @@ async def test_resolve_rollout_percent_returns_zero_when_controller_fails_withou
         shadow_mode=False,
         configured_percent=50,
         controller=_BrokenController(),
+        kpi_gates_enabled=True,
         allow_unvalidated=False,
     )
     assert rollout_percent == 0
@@ -93,6 +94,24 @@ async def test_resolve_rollout_percent_bypasses_controller_when_unvalidated_allo
         shadow_mode=False,
         configured_percent=100,
         controller=_BlockingController(),
+        kpi_gates_enabled=True,
         allow_unvalidated=True,
     )
     assert rollout_percent == 100
+
+
+@pytest.mark.asyncio
+async def test_resolve_rollout_percent_bypasses_controller_when_kpi_gates_disabled() -> None:
+    class _BlockingController:
+        async def resolve_rollout_percent(self, *, configured_percent: int) -> int:
+            _ = configured_percent
+            return 0
+
+    rollout_percent = await resolve_rollout_percent(
+        shadow_mode=False,
+        configured_percent=50,
+        controller=_BlockingController(),
+        kpi_gates_enabled=False,
+        allow_unvalidated=False,
+    )
+    assert rollout_percent == 50

@@ -65,6 +65,9 @@ def build_executor_gate_trace_metadata(
             getattr(agent, "_meal_plan_rollout_percent", 100)
         ),
         "meal_plan_rollout_percent_resolved": rollout_percent,
+        "meal_plan_rollout_kpi_gates_enabled": bool(
+            getattr(agent, "_meal_plan_rollout_kpi_gates_enabled", True)
+        ),
         "meal_plan_rollout_controller_present": controller is not None,
         "meal_plan_rollout_bypass": bypass_audit,
         "meal_plan_executor_enabled": executor_enabled,
