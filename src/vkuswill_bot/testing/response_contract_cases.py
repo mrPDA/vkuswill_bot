@@ -477,8 +477,8 @@ SCENARIOS: list[StageScenario] = [
         ["кето-завтрак на двоих: авокадо, бекон, яйца, сливочный сыр — без хлеба и круп"],
         status="stable",
         contract=_contract(
-            "recipe",
-            expected_profile="recipe",
+            "cart",
+            expected_profile="cart",
             requires_cart_button=True,
             min_items_count=4,
             required_products=["авокад", "бекон", "яйц", "сыр"],

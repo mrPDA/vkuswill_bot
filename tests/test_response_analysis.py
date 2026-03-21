@@ -5,8 +5,10 @@ from __future__ import annotations
 import pytest
 
 from vkuswill_bot.agents.response_analysis import (
+    build_constrained_meal_slot_guidance,
     count_explicit_recipe_courses,
     count_expected_recipe_courses,
+    extract_explicit_dietary_constraints,
     is_additive_cart_intent,
     is_cart_intent,
     looks_like_partial_recipe_reply,
@@ -271,3 +273,29 @@ class TestCountExplicitRecipeCourses:
     def test_single_abstract_meal_request_with_constraints_counts_as_one(self):
         text = "собери на завтрак, но без яиц и без глютена"
         assert count_explicit_recipe_courses(text) == 1
+
+
+class TestExtractExplicitDietaryConstraints:
+    def test_extracts_without_constraints(self):
+        text = "собери на завтрак, но без яиц и без глютена"
+        assert extract_explicit_dietary_constraints(text) == ["яйца", "глютен"]
+
+    def test_extracts_allergy_constraints(self):
+        text = "ужин без сахара, аллергия на орехи и молоко"
+        assert extract_explicit_dietary_constraints(text) == ["орехи", "молоко", "сахар"]
+
+
+class TestBuildConstrainedMealSlotGuidance:
+    def test_builds_guidance_for_abstract_meal_slot_with_constraints(self):
+        guidance = build_constrained_meal_slot_guidance(
+            "собери на завтрак, но без яиц и без глютена"
+        )
+
+        assert guidance is not None
+        assert "[STRICT_MEAL_SLOT_REQUEST]" in guidance
+        assert "завтрак" in guidance
+        assert "яйца" in guidance
+        assert "глютен" in guidance
+
+    def test_returns_none_without_constraints(self):
+        assert build_constrained_meal_slot_guidance("собери мне завтрак и обед") is None

@@ -446,6 +446,49 @@ class TestBuildTurnStateIntegration:
         assert state.prompt_profile == "recipe"
         assert state.route_override_applied is False
         assert state.multi_course_expected == 1
+        assert any(
+            "[STRICT_MEAL_SLOT_REQUEST]" in str(message.get("content", ""))
+            for message in state.history
+            if isinstance(message, dict)
+        )
+
+    async def test_constrained_abstract_meal_request_overrides_cart_to_recipe(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = IntentClassificationResult(
+            profile="cart",
+            confidence=0.72,
+            reason="meal slot shopping request",
+            raw_output='{"profile":"cart","confidence":0.72}',
+        )
+
+        state = await build_turn_state(
+            agent=agent,
+            user_id=1,
+            text="собери на завтрак, но без яиц и без глютена",
+        )
+
+        assert state.prompt_profile == "recipe"
+        assert state.route_override_applied is True
+        assert state.route_override_from == "cart"
+        assert state.route_override_to == "recipe"
+        assert state.route_override_reason == "constrained_meal_slot_recipe_override"
+        assert any(
+            "[STRICT_MEAL_SLOT_REQUEST]" in str(message.get("content", ""))
+            for message in state.history
+            if isinstance(message, dict)
+        )
 
     async def test_explicit_product_list_override_recipe_to_cart(self):
         from vkuswill_bot.agents.shopping_turn_types import build_turn_state

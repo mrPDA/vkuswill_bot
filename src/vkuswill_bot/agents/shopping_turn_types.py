@@ -23,6 +23,7 @@ from vkuswill_bot.services.tool_input_normalizers import (
     normalize_multilingual_grocery_text,
 )
 from vkuswill_bot.agents.response_analysis import (
+    build_constrained_meal_slot_guidance,
     count_expected_recipe_courses,
     count_explicit_recipe_courses,
     is_cart_intent,
@@ -251,6 +252,9 @@ async def build_turn_state(
     )
     mentioned_recipe_courses = count_expected_recipe_courses(normalized_text)
     explicit_recipe_courses = count_explicit_recipe_courses(normalized_text)
+    constrained_meal_slot_guidance: str | None = None
+    if len(direct_cart_requests) < 3:
+        constrained_meal_slot_guidance = build_constrained_meal_slot_guidance(normalized_text)
     if (
         heuristic_profile == "meal_plan"
         and prompt_profile != "meal_plan"
@@ -280,6 +284,12 @@ async def build_turn_state(
         prompt_profile = "cart"
         route_override_to = prompt_profile
         route_override_reason = "abstract_meal_slots_override"
+    elif prompt_profile == "cart" and constrained_meal_slot_guidance is not None:
+        route_override_applied = True
+        route_override_from = prompt_profile
+        prompt_profile = "recipe"
+        route_override_to = prompt_profile
+        route_override_reason = "constrained_meal_slot_recipe_override"
     elif (
         prompt_profile == "recipe"
         and len(direct_cart_requests) >= 3
@@ -299,6 +309,8 @@ async def build_turn_state(
         mode="start",
         prompt_profiles_enabled=agent._prompt_profiles_enabled,
     )
+    if constrained_meal_slot_guidance is not None and prompt_profile == "recipe":
+        history.append({"role": "system", "content": constrained_meal_slot_guidance})
 
     product_index_this_turn: dict[int, dict[str, Any]] = build_product_index_from_history(history)
     history.append({"role": "user", "content": normalized_text})
