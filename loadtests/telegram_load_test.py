@@ -96,13 +96,13 @@ class TelethonReport:
         print(f"  Успешных:        {len(successful)}")
         print(f"  Ошибок:          {len(failed)}")
         if latencies:
-            print(f"\n  Латентность (мс) — время до ответа бота:")
+            print("\n  Латентность (мс) — время до ответа бота:")
             print(f"    min:           {min(latencies):.0f}")
             print(f"    p50:           {sorted(latencies)[len(latencies)//2]:.0f}")
             print(f"    max:           {max(latencies):.0f}")
             print(f"    среднее:       {statistics.mean(latencies):.0f}")
         if failed:
-            print(f"\n  Ошибки:")
+            print("\n  Ошибки:")
             for r in failed:
                 print(f"    [{r.user}] {r.error[:80]}")
         print("=" * 70)

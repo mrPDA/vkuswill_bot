@@ -214,7 +214,9 @@ def _portrait_svg(agent: dict[str, object]) -> str:
 
     beard_svg = ""
     if beard:
-        beard_svg = "<ellipse cx='512' cy='505' rx='120' ry='80' fill='%s' opacity='0.88'/>" % hair
+        beard_svg = (
+            f"<ellipse cx='512' cy='505' rx='120' ry='80' fill='{hair}' opacity='0.88'/>"
+        )
 
     return f"""<svg xmlns='http://www.w3.org/2000/svg' width='1024' height='1024' viewBox='0 0 1024 1024'>
   <defs>

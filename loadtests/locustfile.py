@@ -18,7 +18,6 @@
 
 from __future__ import annotations
 
-import json
 import random
 import time
 
@@ -33,7 +32,7 @@ _UPDATE_COUNTER = 0
 
 def _make_update(user_id: int, text: str) -> dict:
     """Собрать фейковый Telegram Update (Message)."""
-    global _UPDATE_COUNTER  # noqa: PLW0603
+    global _UPDATE_COUNTER
     _UPDATE_COUNTER += 1
 
     return {

@@ -185,10 +185,7 @@ def main() -> None:
 
     # Background: moody cloudy gradient + deck.
     for y in range(H):
-        if y < 860:
-            v = int(112 - (y / 860) * 58)
-        else:
-            v = int(48 - ((y - 860) / 540) * 12)
+        v = int(112 - (y / 860) * 58) if y < 860 else int(48 - ((y - 860) / 540) * 12)
         draw.line((0, y, W, y), fill=max(8, min(255, v)))
 
     draw.rectangle((0, 760, W, H), fill=44)
@@ -196,7 +193,6 @@ def main() -> None:
         draw.line((0, y, W, y), fill=58, width=2)
 
     cols = 6
-    rows = 2
     outer_x = 95
     outer_y_top = 280
     gap_x = 14

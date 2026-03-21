@@ -69,6 +69,14 @@ ignore = [
 "tests/**" = ["S101", "S106"]  # assert и hardcoded passwords в тестах OK
 "__main__.py" = ["S104"]       # bind 0.0.0.0 для webhook OK
 "scripts/webhook_healthcheck.py" = ["S310"]  # локальный healthcheck к 127.0.0.1
+"loadtests/*.py" = ["S311"]  # псевдослучайность в нагрузочных сценариях намеренная
+"scripts/fetch_realistic_team_image.py" = ["S310"]  # сетевой utility-script для загрузки референсов
+"scripts/generate_agents_media.py" = ["E501"]  # длинные SVG/XML шаблоны читаемее как литералы
+"scripts/generate_public_presentation_pptx.py" = ["E501"]  # длинные OOXML шаблоны читаемее как литералы
+"scripts/generate_team_group_photo_noir.py" = ["E501", "S603", "S607"]  # локальный svg/png utility через sips
+"scripts/generate_team_group_photo_realistic.py" = ["S112", "S310", "S311", "S324"]  # намеренные utility-паттерны
+"scripts/generate_team_group_photo_svg.py" = ["E501"]  # длинные SVG path/markup literals
+"scripts/verify_llm_yandex.py" = ["S310"]  # проверочный HTTP utility-script
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

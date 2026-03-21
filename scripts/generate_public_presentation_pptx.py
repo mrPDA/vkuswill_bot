@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 import zipfile
@@ -340,7 +340,7 @@ def _app_xml(slide_count: int) -> str:
 
 
 def _core_xml() -> str:
-    now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    now = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return f"""<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>
 <cp:coreProperties xmlns:cp=\"http://schemas.openxmlformats.org/package/2006/metadata/core-properties\"
     xmlns:dc=\"http://purl.org/dc/elements/1.1/\"

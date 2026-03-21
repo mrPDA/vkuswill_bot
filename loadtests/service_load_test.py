@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import random
 import statistics
-import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -373,10 +373,8 @@ async def run_load_test(
 
     if refiller_task:
         refiller_task.cancel()
-        try:
+        with contextlib.suppress(asyncio.CancelledError):
             await refiller_task
-        except asyncio.CancelledError:
-            pass
 
     # Очистка
     print("\nОчистка ресурсов...")

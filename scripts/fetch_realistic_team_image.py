@@ -9,9 +9,11 @@ OUT_DIR = ROOT / "assets" / "realistic_candidates"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 prompt = (
-    "ultra realistic black and white vintage group photo of twelve pirate crew members on a wooden ship deck, "
-    "hard side lighting, rough weathered faces, cinematic film grain, Soviet adventure mood inspired by Treasure Island 1988 aesthetic, "
-    "historically styled pirate coats and hats, human proportions, no cartoon, no illustration, high detail"
+    "ultra realistic black and white vintage group photo of twelve pirate crew members "
+    "on a wooden ship deck, hard side lighting, rough weathered faces, cinematic film "
+    "grain, Soviet adventure mood inspired by Treasure Island 1988 aesthetic, "
+    "historically styled pirate coats and hats, human proportions, no cartoon, no "
+    "illustration, high detail"
 )
 
 for seed in (101, 202, 303, 404):

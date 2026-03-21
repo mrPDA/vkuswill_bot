@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Декодирование Amnezia `vpn://...` → JSON и/или awg-quick .conf (AmneziaWG).
 
-Формат контейнера: `containers[].awg.last_config` — JSON-строка с полем `config` (WireGuard ini + AmneziaWG поля).
+Формат контейнера: `containers[].awg.last_config` — JSON-строка с полем
+`config` (WireGuard ini + AmneziaWG поля).
 """
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ import zlib
 
 
 def decode_root(path: str) -> dict:
-    raw = open(path, encoding="utf-8").read().strip()
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read().strip()
     if not raw.startswith("vpn://"):
         raise ValueError("Ожидается строка, начинающаяся с vpn://")
     encoded_data = raw.replace("vpn://", "").strip()
@@ -58,7 +60,10 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Amnezia vpn:// → JSON / awg-quick.conf")
     ap.add_argument("vpn_file")
     ap.add_argument("--json-out", help="Полный JSON")
-    ap.add_argument("--awg-out", help="Файл для awg-quick (AmneziaWG), например deploy/amnezia-wg0.conf")
+    ap.add_argument(
+        "--awg-out",
+        help="Файл для awg-quick (AmneziaWG), например deploy/amnezia-wg0.conf",
+    )
     args = ap.parse_args()
     try:
         data = decode_root(args.vpn_file)
@@ -66,9 +71,8 @@ def main() -> int:
         print("Ошибка декодирования:", e, file=sys.stderr)
         return 1
     if args.json_out:
-        open(args.json_out, "w", encoding="utf-8").write(
-            json.dumps(data, indent=2, ensure_ascii=False)
-        )
+        with open(args.json_out, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(data, indent=2, ensure_ascii=False))
         print("JSON:", args.json_out)
     if args.awg_out:
         try:
@@ -76,7 +80,8 @@ def main() -> int:
         except ValueError as e:
             print(e, file=sys.stderr)
             return 2
-        open(args.awg_out, "w", encoding="utf-8").write(wg)
+        with open(args.awg_out, "w", encoding="utf-8") as fh:
+            fh.write(wg)
         print("AmneziaWG:", args.awg_out)
     if not args.json_out and not args.awg_out:
         print(json.dumps(data, indent=2, ensure_ascii=False)[:12000])
