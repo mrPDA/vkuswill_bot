@@ -6,7 +6,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from pathlib import Path
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -27,15 +26,7 @@ from vkuswill_bot.services.prompts import (
     _FALLBACK_RECIPE_PROMPT,
     _FALLBACK_SYSTEM_PROMPT,
 )
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-TESTS_ROOT = REPO_ROOT / "tests"
-if str(TESTS_ROOT) not in sys.path:
-    sys.path.insert(0, str(TESTS_ROOT))
-
-from stage_response_contract_cases import SCENARIOS, StageScenario  # noqa: E402
+from vkuswill_bot.testing.response_contract_cases import SCENARIOS, StageScenario
 
 if TYPE_CHECKING:
     import asyncpg

@@ -14,7 +14,7 @@ import pytest
 
 from vkuswill_bot.bot.telegram_delivery import build_telegram_delivery_preview
 
-from stage_response_contract_cases import SCENARIOS, StageScenario
+from vkuswill_bot.testing.response_contract_cases import SCENARIOS, StageScenario
 
 pytestmark = pytest.mark.stage
 
