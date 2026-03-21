@@ -14,11 +14,14 @@ from vkuswill_bot.agents.recipe_pantry import (
     extract_explicit_pantry_requests,
     has_explicit_egg_pack_request,
 )
+from vkuswill_bot.agents.recipe_parsing import (
+    extract_explicit_cart_requests,
+    extract_structured_ingredient_requests,
+)
 from vkuswill_bot.services.tool_input_normalizers import (
     normalize_colloquial_numerals,
     normalize_multilingual_grocery_text,
 )
-from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
 from vkuswill_bot.agents.response_analysis import (
     count_expected_recipe_courses,
     count_explicit_recipe_courses,
@@ -141,6 +144,7 @@ class TurnState:
     explicit_pantry_requests: set[str]
     explicit_egg_pack_request: bool
     requested_ingredients: list[dict[str, Any]]
+    direct_cart_requests: list[dict[str, Any]]
     user_preferences: dict[str, str]
     user_preference_profile: dict[str, Any] = field(default_factory=dict)
     llm_prompt_profile: PromptProfile | None = None
@@ -235,6 +239,7 @@ async def build_turn_state(
 
     heuristic_profile = resolve_prompt_profile(text=normalized_text, history=history)
     prompt_profile = llm_profile or heuristic_profile
+    direct_cart_requests = extract_explicit_cart_requests(normalized_text)
     route_override_applied = False
     route_override_from: PromptProfile | None = None
     route_override_to: PromptProfile | None = None
@@ -275,6 +280,19 @@ async def build_turn_state(
         prompt_profile = "cart"
         route_override_to = prompt_profile
         route_override_reason = "abstract_meal_slots_override"
+    elif (
+        prompt_profile == "recipe"
+        and len(direct_cart_requests) >= 3
+        and not any(
+            phrase in normalized_text.lower()
+            for phrase in ("что можно приготовить", "что приготовить", "как приготовить", "рецепт")
+        )
+    ):
+        route_override_applied = True
+        route_override_from = prompt_profile
+        prompt_profile = "cart"
+        route_override_to = prompt_profile
+        route_override_reason = "explicit_list_cart_override"
     history = ensure_system_prompt(
         history=history,
         prompt_profile=prompt_profile,
@@ -333,6 +351,7 @@ async def build_turn_state(
         explicit_pantry_requests=extract_explicit_pantry_requests(normalized_text),
         explicit_egg_pack_request=has_explicit_egg_pack_request(normalized_text),
         requested_ingredients=extract_structured_ingredient_requests(normalized_text),
+        direct_cart_requests=direct_cart_requests,
         user_preferences=user_preferences,
         user_preference_profile=user_preference_profile,
         llm_prompt_profile=llm_profile,

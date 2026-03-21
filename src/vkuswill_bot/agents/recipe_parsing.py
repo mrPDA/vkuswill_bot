@@ -35,6 +35,10 @@ _CLEAN_INGREDIENT_PREFIX_RE = (
     re.compile(r"^\s*собери(?:\s+мне)?\s+корзин[ауые]?\s+", flags=re.IGNORECASE),
     re.compile(r"^\s*добав(?:ь|ьте)(?:\s+в\s+корзин[ауые]?)?\s+", flags=re.IGNORECASE),
     re.compile(r"^\s*закаж(?:и|ите)\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*найд(?:и|ите)(?:\s+мне)?\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*хочу(?:\s+купить)?\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*нуж(?:ен|на|но|ны)\s+", flags=re.IGNORECASE),
+    re.compile(r"^\s*подбер(?:и|ите)\s+", flags=re.IGNORECASE),
 )
 _LEADING_AND_RE = re.compile(r"^\s*и\s+", flags=re.IGNORECASE)
 _INLINE_INGREDIENT_RE = re.compile(
@@ -46,6 +50,15 @@ _INLINE_INGREDIENT_RE = re.compile(
 _FALLBACK_QUERY_SPLIT_RE = (
     re.compile(r"\s+или\s+.*$", flags=re.IGNORECASE),
     re.compile(r"\s+для\s+.*$", flags=re.IGNORECASE),
+)
+_ENUMERATED_CART_SEGMENT_SPLIT_RE = re.compile(r"[,;\n]+|\s+и\s+", flags=re.IGNORECASE)
+_EXPLICIT_CART_TRAILING_RESTRICTIONS_RE = re.compile(r"\s*[-–—]\s*без\b.*$", flags=re.IGNORECASE)
+_EXPLICIT_CART_SKIP_PHRASES = (
+    "что можно приготовить",
+    "что приготовить",
+    "как приготовить",
+    "рецепт",
+    "ингредиент",
 )
 
 _FALLBACK_QUERY_REMOVABLE_WORDS = FALLBACK_QUERY_REMOVABLE_WORDS
@@ -266,6 +279,79 @@ def extract_structured_ingredient_requests(user_text: str) -> list[dict[str, Any
         quantity, unit, _fragment = parsed
         _append_row(name_part, quantity, unit)
     return rows[:30]
+
+
+def extract_explicit_cart_requests(user_text: str) -> list[dict[str, Any]]:
+    """Extract explicit product rows for direct cart assembly.
+
+    Unlike extract_structured_ingredient_requests, this also keeps list items
+    without explicit quantities and assigns them q=1 by default.
+    """
+    if not user_text.strip():
+        return []
+
+    rows: list[dict[str, Any]] = []
+    seen_queries: set[str] = set()
+
+    def _append_row(name_raw: str, quantity: float, unit: str) -> None:
+        cleaned_name = clean_structured_ingredient_name(name_raw)
+        if not cleaned_name:
+            return
+        search_query = SearchProcessor.clean_search_query(cleaned_name) or cleaned_name
+        query_key = search_query.lower().strip()
+        if not query_key or query_key in seen_queries:
+            return
+        if len(query_key.split()) > 5:
+            return
+        seen_queries.add(query_key)
+        rows.append(
+            {
+                "name": cleaned_name,
+                "quantity": quantity,
+                "unit": unit,
+                "search_query": search_query,
+            }
+        )
+
+    candidate_text = normalize_colloquial_numerals(user_text).replace("\r", "\n").strip()
+    if ":" in candidate_text:
+        _prefix, _sep, tail = candidate_text.partition(":")
+        candidate_text = tail.strip() or candidate_text
+    candidate_text = _EXPLICIT_CART_TRAILING_RESTRICTIONS_RE.sub("", candidate_text).strip()
+
+    for raw_segment in _ENUMERATED_CART_SEGMENT_SPLIT_RE.split(candidate_text):
+        segment = clean_structured_ingredient_name(raw_segment)
+        if not segment:
+            continue
+        normalized = normalize_text(segment)
+        if normalized.startswith("без "):
+            continue
+        if any(phrase in normalized for phrase in _EXPLICIT_CART_SKIP_PHRASES):
+            continue
+
+        quantity = 1.0
+        unit = "шт"
+        name_part = segment
+        parsed = parse_quantity_hint(segment)
+        if parsed is not None:
+            quantity, unit, fragment = parsed
+            name_part = re.sub(re.escape(fragment), " ", segment, flags=re.IGNORECASE).strip(" ,.-")
+
+        _append_row(name_part, quantity, unit)
+
+    for row in extract_structured_ingredient_requests(candidate_text):
+        if not isinstance(row, dict):
+            continue
+        name = str(row.get("name", "")).strip()
+        query = str(row.get("search_query", "")).strip() or name
+        if not name or not query:
+            continue
+        quantity = _safe_float(row.get("quantity"), default=1.0)
+        if quantity <= 0:
+            quantity = 1.0
+        _append_row(name, quantity, str(row.get("unit", "шт")))
+
+    return rows[:20]
 
 
 def normalize_recipe_ingredient_row(row_raw: Any) -> dict[str, Any]:

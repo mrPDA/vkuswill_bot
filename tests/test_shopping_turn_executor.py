@@ -157,6 +157,7 @@ def _state_for_profile(profile: str, *, text: str) -> TurnState:
         explicit_pantry_requests=set(),
         explicit_egg_pack_request=False,
         requested_ingredients=[],
+        direct_cart_requests=[],
         user_preferences={},
         user_preference_profile={},
     )

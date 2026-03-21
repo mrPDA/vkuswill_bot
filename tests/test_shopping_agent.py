@@ -8,7 +8,10 @@ from typing import Any
 
 import pytest
 
-from vkuswill_bot.agents.recipe_parsing import extract_structured_ingredient_requests
+from vkuswill_bot.agents.recipe_parsing import (
+    extract_explicit_cart_requests,
+    extract_structured_ingredient_requests,
+)
 from vkuswill_bot.agents.shopping_agent import ShoppingAgent
 from vkuswill_bot.agents.shopping_tool_runtime_ops import apply_requested_ingredient_overrides
 from vkuswill_bot.agents.tool_preprocessor import (
@@ -1943,6 +1946,36 @@ def test_extract_structured_ingredient_requests_poltora_kilo() -> None:
         if "морков" in row["name"].lower():
             assert row["quantity"] == pytest.approx(0.5, abs=0.01)
             assert row["unit"] == "кг"
+
+
+def test_extract_explicit_cart_requests_keeps_items_without_quantities() -> None:
+    rows = extract_explicit_cart_requests(
+        "день рождения на 10 человек: "
+        "чипсы, сыр нарезка, колбаса, оливки, виноград, сок 3 литра, торт"
+    )
+
+    assert [row["search_query"] for row in rows[:4]] == [
+        "чипсы",
+        "сыр нарезка",
+        "колбаса",
+        "оливки",
+    ]
+    juice = next(row for row in rows if "сок" in row["search_query"].lower())
+    assert juice["quantity"] == pytest.approx(3.0, abs=0.01)
+    assert juice["unit"] == "л"
+
+
+def test_extract_explicit_cart_requests_trims_trailing_restrictions() -> None:
+    rows = extract_explicit_cart_requests(
+        "кето-завтрак на двоих: авокадо, бекон, яйца, сливочный сыр - без хлеба и круп"
+    )
+
+    assert [row["search_query"] for row in rows] == [
+        "авокадо",
+        "бекон",
+        "яйца",
+        "сливочный сыр",
+    ]
 
 
 def test_preprocess_cart_args_recalculates_quantities_from_structured_request() -> None:

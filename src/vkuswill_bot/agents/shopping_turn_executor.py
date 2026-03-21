@@ -25,6 +25,7 @@ from vkuswill_bot.agents.shopping_final_response_builder import (
     DefaultFinalResponseBuilder,
     try_status_cart_shortcircuit,
 )
+from vkuswill_bot.agents.shopping_direct_cart_executor import try_explicit_cart_fast_path
 from vkuswill_bot.agents.shopping_tool_step_processor import DefaultToolStepProcessor
 from vkuswill_bot.agents.shopping_turn_types import (
     ShoppingTurnAgentProtocol,
@@ -283,6 +284,18 @@ async def run_locked_turn(
     if status_cart_text is not None:
         diagnostics["execution_path"] = "status_cart_shortcircuit"
         return status_cart_text
+
+    explicit_cart_text = await try_explicit_cart_fast_path(
+        agent=agent,
+        state=state,
+        user_id=user_id,
+        text=text,
+        llm_provider=llm_provider,
+        trace=trace,
+    )
+    if explicit_cart_text is not None:
+        diagnostics["execution_path"] = "explicit_cart_fast_path"
+        return explicit_cart_text
 
     tools = await agent._get_tools()
     tool_step_processor: Any = DefaultToolStepProcessor()

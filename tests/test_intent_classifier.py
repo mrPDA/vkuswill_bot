@@ -447,6 +447,45 @@ class TestBuildTurnStateIntegration:
         assert state.route_override_applied is False
         assert state.multi_course_expected == 1
 
+    async def test_explicit_product_list_override_recipe_to_cart(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = IntentClassificationResult(
+            profile="recipe",
+            confidence=0.94,
+            reason="meal-themed request",
+            raw_output='{"profile":"recipe","confidence":0.94}',
+        )
+
+        state = await build_turn_state(
+            agent=agent,
+            user_id=1,
+            text="кето-завтрак на двоих: авокадо, бекон, яйца, сливочный сыр",
+        )
+
+        assert state.prompt_profile == "cart"
+        assert state.route_override_applied is True
+        assert state.route_override_from == "recipe"
+        assert state.route_override_to == "cart"
+        assert state.route_override_reason == "explicit_list_cart_override"
+        assert [row["search_query"] for row in state.direct_cart_requests] == [
+            "авокадо",
+            "бекон",
+            "яйца",
+            "сливочный сыр",
+        ]
+
 
 class TestShoppingAgentClassifyIntent:
     """Verify ShoppingAgent._classify_intent respects feature flag."""

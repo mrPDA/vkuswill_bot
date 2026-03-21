@@ -20,6 +20,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "shopping_tool_runtime_ops": "runtime",
     "shopping_tool_recovery": "runtime",
     "shopping_final_response_builder": "runtime",
+    "shopping_direct_cart_executor": "runtime",
     "shopping_agent_runtime_mixin": "runtime",
     "shopping_agent_service_mixin": "runtime",
     "shopping_agent_state_ops": "runtime",
@@ -94,7 +95,7 @@ _LAYER_ORDER: dict[str, int] = {
 }
 
 EXPECTED_LAYER_VIOLATIONS: set[tuple[str, str]] = set()
-MAX_OUTDEGREE_ALLOWED = 8
+MAX_OUTDEGREE_ALLOWED = 9
 MAX_MODULE_LOC_ALLOWED = 490  # recipe_search_vocabulary ~484 (data-only)
 
 

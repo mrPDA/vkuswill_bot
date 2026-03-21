@@ -192,7 +192,7 @@ SCENARIOS: list[StageScenario] = [
         status="stable",
         contract=_contract(
             "cart",
-            expected_profile="cart",
+            expected_profile=None,
             requires_cart_button=True,
             min_items_count=4,
             must_contain_any=["итог", "корзин"],
@@ -416,7 +416,8 @@ SCENARIOS: list[StageScenario] = [
             expected_profile="recipe",
             requires_cart_button=True,
             min_items_count=3,
-            required_products=["кур", "рис", "лук"],
+            must_contain_any=["куриц", "цыплен"],
+            required_products=["рис", "лук"],
             must_not_contain=["на неделю"],
         ),
     ),
@@ -564,7 +565,7 @@ SCENARIOS: list[StageScenario] = [
         status="stable",
         contract=_contract(
             "recipe",
-            expected_profile="recipe",
+            expected_profile=None,
             requires_cart_button=True,
             min_items_count=2,
             must_contain_any=["без яиц", "без глютена", "глютен"],

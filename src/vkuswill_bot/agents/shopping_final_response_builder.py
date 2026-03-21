@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import contextlib
 import logging
 from typing import Any
@@ -35,6 +36,25 @@ _TEXTUAL_TOOL_CALL_ERROR = "Не удалось корректно выполн�
 
 
 class DefaultFinalResponseBuilder:
+    @staticmethod
+    def _store_enriched_cart_snapshot(
+        *,
+        agent: Any,
+        user_id: int,
+        cart_data: dict[str, Any],
+    ) -> None:
+        snapshot = copy.deepcopy(cart_data)
+        summary = snapshot.get("price_summary")
+        if "total" not in snapshot and isinstance(summary, dict) and "total" in summary:
+            snapshot["total"] = summary.get("total")
+        if "items_count" not in snapshot and isinstance(summary, dict):
+            items = summary.get("items")
+            if isinstance(items, list):
+                snapshot["items_count"] = len(items)
+            elif isinstance(summary.get("count"), int):
+                snapshot["items_count"] = summary.get("count")
+        agent._last_cart_snapshot[user_id] = snapshot
+
     @staticmethod
     def _render_meal_plan_response(
         *,
@@ -132,6 +152,11 @@ class DefaultFinalResponseBuilder:
                 cart_data=state.cart_data_this_turn,
                 product_index=state.product_index_this_turn,
             )
+            self._store_enriched_cart_snapshot(
+                agent=agent,
+                user_id=user_id,
+                cart_data=state.cart_data_this_turn,
+            )
             preamble, postamble = extract_llm_surrounding_text(final_text)
             safety_note = extract_cart_safety_note(final_text)
             cart_output = render_stable_cart_output(
@@ -221,6 +246,11 @@ class DefaultFinalResponseBuilder:
                 cart_data=state.cart_data_this_turn,
                 product_index=state.product_index_this_turn,
             )
+            self._store_enriched_cart_snapshot(
+                agent=agent,
+                user_id=user_id,
+                cart_data=state.cart_data_this_turn,
+            )
             final_text = render_stable_cart_output(state.cart_data_this_turn)
             agent._history[user_id] = agent._trim_history(
                 [*state.history, {"role": "assistant", "content": final_text}],
@@ -293,6 +323,7 @@ class DefaultFinalResponseBuilder:
             cart_data=cart_data,
             product_index=state.product_index_this_turn,
         )
+        self._store_enriched_cart_snapshot(agent=agent, user_id=user_id, cart_data=cart_data)
         if state.prompt_profile == "meal_plan":
             final_text = self._render_meal_plan_response(state=state)
         else:
