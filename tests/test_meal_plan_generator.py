@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from vkuswill_bot.agents.meal_plan_generator import generate_meal_plan
+from vkuswill_bot.agents.meal_plan_generator import _validate_meal_plan_payload, generate_meal_plan
 from vkuswill_bot.agents.meal_plan_types import parse_meal_plan_request
 
 
@@ -308,3 +308,71 @@ async def test_generate_meal_plan_rejects_duplicate_names_case_insensitive() -> 
 
     assert plan is None
     assert "повтор блюд не допускается" in error
+
+
+def test_validate_meal_plan_payload_rejects_extra_short_slot_fillers() -> None:
+    request = parse_meal_plan_request("собери мне обеды для здорового питания на два дня", {})
+    payload = {
+        "schema_version": 1,
+        "dishes": [
+            {
+                "name": "Куриный суп с овощами",
+                "day": 1,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["русская"],
+            },
+            {
+                "name": "Запечённая рыба с картофелем",
+                "day": 2,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["русская"],
+            },
+            {
+                "name": "Гречка с тушеной капустой и грибами",
+                "day": 1,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["русская"],
+            },
+        ],
+    }
+
+    plan, error = _validate_meal_plan_payload(payload, request)
+
+    assert plan is None
+    assert "2..2" in error
+
+
+def test_validate_meal_plan_payload_rejects_missing_short_requested_slot_day() -> None:
+    request = parse_meal_plan_request("собери мне обеды для здорового питания на два дня", {})
+    payload = {
+        "schema_version": 1,
+        "dishes": [
+            {
+                "name": "Куриный суп с овощами",
+                "day": 1,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["русская"],
+            },
+            {
+                "name": "Гречка с тушеной капустой и грибами",
+                "day": 1,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["русская"],
+            },
+        ],
+    }
+
+    plan, error = _validate_meal_plan_payload(payload, request)
+
+    assert plan is None
+    assert "не все приёмы пищи покрыты" in error

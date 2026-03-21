@@ -98,3 +98,16 @@ def test_parse_meal_plan_request_explicit_diet_overrides_stored_conflict() -> No
         and row.get("value") == "vegan"
         for row in request.preferences_trace
     )
+
+
+def test_meal_plan_request_uses_exact_slot_count_for_short_explicit_meal_types() -> None:
+    request = parse_meal_plan_request(
+        "Собери мне обеды для здорового питания на два дня",
+        {},
+    )
+
+    payload = request.to_prompt_dict()
+
+    assert payload["requested_meal_types"] == ["lunch"]
+    assert payload["min_dishes"] == 2
+    assert payload["max_dishes"] == 2

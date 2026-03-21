@@ -22,7 +22,7 @@ from vkuswill_bot.agents.meal_plan_types import (
     MealPlan,
     MealPlanDish,
     MealPlanRequest,
-    dish_count_range,
+    dish_count_range_for_request,
 )
 from vkuswill_bot.services.llm_adapters import extract_usage_details
 from vkuswill_bot.services.prompts import get_meal_plan_generation_prompt_with_metadata
@@ -87,7 +87,7 @@ def _validate_meal_plan_payload(
     dishes_raw = payload.get("dishes")
     if not isinstance(dishes_raw, list):
         return None, "dishes должен быть списком"
-    min_dishes, max_dishes = dish_count_range(request.days, request.meals_per_day)
+    min_dishes, max_dishes = dish_count_range_for_request(request)
     if not (min_dishes <= len(dishes_raw) <= max_dishes):
         return None, f"dishes должен содержать {min_dishes}..{max_dishes} блюд"
 
@@ -157,12 +157,16 @@ def _validate_meal_plan_payload(
         if missing_days:
             return None, f"не все дни покрыты: отсутствуют дни {sorted(missing_days)}"
 
+    requested_slots_explicit = bool(request.requested_meal_types)
     effective_meal_types = request.requested_meal_types
     if not effective_meal_types and request.days >= 3:
         effective_meal_types = ["breakfast", "lunch", "dinner"]
     total_slots = request.days * len(effective_meal_types) if effective_meal_types else 0
     can_enforce_full_coverage = len(result_dishes) >= total_slots
-    if effective_meal_types and request.days >= 3 and can_enforce_full_coverage:
+    should_enforce_slot_coverage = bool(effective_meal_types) and (
+        requested_slots_explicit or request.days >= 3
+    )
+    if should_enforce_slot_coverage and can_enforce_full_coverage:
         by_day: dict[int, set[str]] = {}
         for dish in result_dishes:
             by_day.setdefault(dish.day, set()).add(dish.meal_type)

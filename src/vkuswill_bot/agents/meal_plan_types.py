@@ -76,6 +76,19 @@ def dish_count_range(days: int, meals_per_day: int = 1) -> tuple[int, int]:
     return min_dishes, max_dishes
 
 
+def dish_count_range_for_request(request: MealPlanRequest) -> tuple[int, int]:
+    """Resolve dish-count bounds for a concrete request.
+
+    Explicit meal-slot requests like "обеды на два дня" should map to an
+    exact slot count for a single shared audience group: one dish per slot
+    per day, no extra fillers.
+    """
+    if request.requested_meal_types and len(request.groups) == 1:
+        total_slots = request.days * len(request.requested_meal_types)
+        return total_slots, total_slots
+    return dish_count_range(request.days, request.meals_per_day)
+
+
 _DIET_KEYWORDS = {
     "vegan": ("веган", "vegan"),
     "vegetarian": ("вегетариан", "vegetarian"),
@@ -126,7 +139,7 @@ class MealPlanRequest:
         return {group.id for group in self.groups}
 
     def to_prompt_dict(self) -> dict[str, Any]:
-        min_d, max_d = dish_count_range(self.days, self.meals_per_day)
+        min_d, max_d = dish_count_range_for_request(self)
         d: dict[str, Any] = {
             "people_total": self.people_total,
             "days": self.days,

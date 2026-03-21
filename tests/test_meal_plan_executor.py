@@ -265,7 +265,27 @@ async def test_run_meal_plan_turn_happy_path() -> None:
 
 @pytest.mark.asyncio
 async def test_run_meal_plan_turn_uses_llm_request_extraction_when_enabled() -> None:
-    plan_payload = _build_plan_payload(cuisine="italian", days=2)
+    plan_payload = {
+        "schema_version": 1,
+        "dishes": [
+            {
+                "name": "Овощной суп",
+                "day": 1,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["italian"],
+            },
+            {
+                "name": "Ризотто с овощами",
+                "day": 2,
+                "meal_type": "lunch",
+                "servings_total": 1,
+                "audience_groups": ["adults"],
+                "cuisine_tags": ["italian"],
+            },
+        ],
+    }
 
     def _mcp(name: str, arguments: dict[str, Any]) -> str:
         if name == "recipe_ingredients":
