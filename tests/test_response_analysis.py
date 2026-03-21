@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from vkuswill_bot.agents.response_analysis import (
+    count_explicit_recipe_courses,
     count_expected_recipe_courses,
     is_additive_cart_intent,
     is_cart_intent,
@@ -257,3 +258,16 @@ class TestCountExpectedRecipeCourses:
 
     def test_two_dishes(self):
         assert count_expected_recipe_courses("паста и салат") == 2
+
+
+class TestCountExplicitRecipeCourses:
+    def test_abstract_meal_slots_without_dishes(self):
+        assert count_explicit_recipe_courses("собери мне завтрак и обед") == 0
+
+    def test_meal_types_with_concrete_dishes(self):
+        text = "завтрак овсянка, обед суп, ужин паста"
+        assert count_explicit_recipe_courses(text) >= 3
+
+    def test_single_abstract_meal_request_with_constraints_counts_as_one(self):
+        text = "собери на завтрак, но без яиц и без глютена"
+        assert count_explicit_recipe_courses(text) == 1

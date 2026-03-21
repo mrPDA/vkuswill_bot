@@ -374,6 +374,79 @@ class TestBuildTurnStateIntegration:
         assert state.route_override_to == "meal_plan"
         assert state.route_override_reason == "heuristic_meal_plan_override"
 
+    async def test_abstract_meal_slots_override_recipe_to_cart(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = IntentClassificationResult(
+            profile="recipe",
+            confidence=0.96,
+            reason="перечислены конкретные приёмы пищи",
+            raw_output='{"profile":"recipe","confidence":0.96}',
+        )
+
+        state = await build_turn_state(
+            agent=agent,
+            user_id=1,
+            text="собери мне завтрак и обед",
+        )
+
+        assert state.prompt_profile == "cart"
+        assert state.heuristic_prompt_profile == "cart"
+        assert state.llm_prompt_profile == "recipe"
+        assert state.intent_conflict is True
+        assert state.route_override_applied is True
+        assert state.route_override_from == "recipe"
+        assert state.route_override_to == "cart"
+        assert state.route_override_reason == "abstract_meal_slots_override"
+        assert state.multi_course_expected == 0
+        assert all(
+            "Мульти-курс:" not in str(message.get("content", ""))
+            for message in state.history
+            if isinstance(message, dict)
+        )
+
+    async def test_single_meal_request_with_constraints_stays_recipe(self):
+        from vkuswill_bot.agents.shopping_turn_types import build_turn_state
+
+        agent = AsyncMock()
+        agent._history = {}
+        agent._last_cart_snapshot = {}
+        agent._prompt_profiles_enabled = True
+        agent._compact_followup_prompt_enabled = True
+        agent._max_tool_calls = 5
+        agent._max_input_chars_per_turn = 250000
+        agent._llm_routing_strategy = "single_provider"
+        agent._should_start_fresh_context = MagicMock(return_value=True)
+        agent._normalize_history = MagicMock(side_effect=lambda h: h)
+        agent._load_user_preferences.return_value = {}
+        agent._classify_intent.return_value = IntentClassificationResult(
+            profile="recipe",
+            confidence=0.95,
+            reason="конкретный приём пищи с ограничениями",
+            raw_output='{"profile":"recipe","confidence":0.95}',
+        )
+
+        state = await build_turn_state(
+            agent=agent,
+            user_id=1,
+            text="собери на завтрак, но без яиц и без глютена",
+        )
+
+        assert state.prompt_profile == "recipe"
+        assert state.route_override_applied is False
+        assert state.multi_course_expected == 1
+
 
 class TestShoppingAgentClassifyIntent:
     """Verify ShoppingAgent._classify_intent respects feature flag."""
