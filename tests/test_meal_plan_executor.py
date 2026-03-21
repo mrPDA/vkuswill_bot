@@ -342,6 +342,7 @@ async def test_run_meal_plan_turn_uses_llm_request_extraction_when_enabled() -> 
         row for row in trace.spans if row["start"]["name"] == "meal-plan.parse-request"
     )
     assert parse_span["end"]["output"]["days"] == 2
+    assert parse_span["end"]["output"]["people_total"] == 1
     assert parse_span["end"]["output"]["parser"]["source"] == "llm"
     assert parse_span["end"]["output"]["parser"]["confidence"] == 0.97
     extraction_call = agent.llm_calls[0]

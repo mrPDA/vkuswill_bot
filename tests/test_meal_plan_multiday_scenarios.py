@@ -117,8 +117,12 @@ class TestPeopleParsing:
         r = parse_meal_plan_request("Корзина на неделю для 50 человек", EMPTY_PROFILE)
         assert r.people_total == 20
 
-    def test_no_people_defaults_to_2(self) -> None:
+    def test_no_people_defaults_to_1(self) -> None:
         r = parse_meal_plan_request("Собери рацион на неделю", EMPTY_PROFILE)
+        assert r.people_total == 1
+
+    def test_collective_people_phrase(self) -> None:
+        r = parse_meal_plan_request("Меню на 3 дня на двоих", EMPTY_PROFILE)
         assert r.people_total == 2
 
 
@@ -733,7 +737,7 @@ class TestCombinedScenarios:
         """Минимальный запрос без ограничений."""
         r = parse_meal_plan_request("Рацион на неделю", EMPTY_PROFILE)
         assert r.days == 7
-        assert r.people_total == 2
+        assert r.people_total == 1
         assert len(r.groups) == 1
         assert r.groups[0].id == "adults"
 

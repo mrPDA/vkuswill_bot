@@ -110,7 +110,7 @@ def _parse_request_payload(
         )
 
     days = _to_int(request_payload.get("days", 7), 7, 1, 31)
-    people_total = _to_int(request_payload.get("people_total", 2), 2, 1, 100)
+    people_total = _to_int(request_payload.get("people_total", 1), 1, 1, 100)
     groups_payload = (
         request_payload.get("groups") if isinstance(request_payload.get("groups"), list) else []
     )

@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any
 
+from vkuswill_bot.agents.meal_plan_people_parser import parse_request_people_total
 from vkuswill_bot.agents.meal_plan_types import parse_request_days
 from vkuswill_bot.agents.meal_plan_response_contract_model import (
     ContractCartGroup,
@@ -13,7 +14,6 @@ from vkuswill_bot.agents.meal_plan_response_contract_model import (
     ContractCartSummary,
 )
 
-_PEOPLE_RE = re.compile(r"для\s+(\d+)\s+(?:чел|человек)", flags=re.IGNORECASE)
 _CHILD_COUNT_RE = re.compile(r"(\d+)\s*(?:ребен(?:ок|ка|ку|ком)|дет(?:и|ей|ям|ьми))", re.IGNORECASE)
 _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет|год|г)", re.IGNORECASE)
 _ALLERGY_RE = re.compile(r"аллерг\w*\s+на\s+([^\n,.;:]+)", re.IGNORECASE)
@@ -34,13 +34,7 @@ def extract_days(text: str) -> int:
 
 
 def extract_people_total(text: str) -> int:
-    match = _PEOPLE_RE.search(text.lower())
-    if not match:
-        return 1
-    try:
-        return max(1, int(match.group(1)))
-    except ValueError:
-        return 1
+    return parse_request_people_total(text, default=1, max_people=100)
 
 
 def extract_child_group(text: str, people_total: int) -> tuple[str | None, int, int | None]:

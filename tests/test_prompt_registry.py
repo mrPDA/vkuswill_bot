@@ -191,6 +191,11 @@ class TestLangfuseIntegration:
         registry = PromptRegistry(langfuse_client=langfuse)
         assert registry.get("greet", name="Alice") == "Hello Alice from Langfuse"
 
+    def test_langfuse_with_single_brace_placeholder(self):
+        langfuse = _make_langfuse_mock({"greet": "Hello {name} from Langfuse"})
+        registry = PromptRegistry(langfuse_client=langfuse)
+        assert registry.get("greet", name="Alice") == "Hello Alice from Langfuse"
+
     def test_langfuse_error_falls_through_to_env(self):
         langfuse = _make_langfuse_mock({})
         registry = PromptRegistry(

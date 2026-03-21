@@ -59,10 +59,24 @@ def _safe_format(text: str, variables: dict[str, str]) -> str:
     """Apply Python str.format() with graceful fallback on errors."""
     if not variables:
         return text
+    replaced = _replace_known_placeholders(text, variables)
     try:
-        return text.format(**variables)
+        return replaced.format(**variables)
     except (KeyError, IndexError, ValueError):
+        return replaced
+
+
+def _replace_known_placeholders(text: str, variables: dict[str, str]) -> str:
+    """Replace known prompt placeholders without touching unrelated JSON braces."""
+    if not variables:
         return text
+
+    result = text
+    for key, value in variables.items():
+        replacement = str(value)
+        result = result.replace("{{" + key + "}}", replacement)
+        result = result.replace("{" + key + "}", replacement)
+    return result
 
 
 class PromptRegistry:
@@ -121,7 +135,7 @@ class PromptRegistry:
                     label=self._label,
                     cache_ttl_seconds=self._cache_ttl,
                 )
-                text = prompt_obj.compile(**variables)
+                text = _replace_known_placeholders(prompt_obj.compile(**variables), variables)
                 version = (
                     str(
                         getattr(prompt_obj, "version", "")

@@ -32,10 +32,10 @@ def test_parse_meal_plan_request_fallbacks_to_default_group() -> None:
     request = parse_meal_plan_request("Рацион на неделю", {})
 
     assert request.days == 7
-    assert request.people_total == 2
+    assert request.people_total == 1
     assert len(request.groups) == 1
     assert request.groups[0].id == "adults"
-    assert request.groups[0].count == 2
+    assert request.groups[0].count == 1
 
 
 def test_parse_meal_plan_request_supports_segmented_adult_preferences() -> None:

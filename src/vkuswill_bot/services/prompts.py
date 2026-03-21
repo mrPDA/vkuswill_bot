@@ -70,7 +70,7 @@ _FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT = (
     "Формат ответа:\n"
     "{{\n"
     '  "days": 2,\n'
-    '  "people_total": 2,\n'
+    '  "people_total": null,\n'
     '  "requested_meal_types": ["lunch"],\n'
     '  "child_count": null,\n'
     '  "child_age_years": null,\n'
@@ -84,6 +84,7 @@ _FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT = (
     "- Не выдумывай значения. Если параметр не указан явно, верни null или [].\n"
     "- days: целое число 1..14. 'на неделю' = 7, 'на рабочую неделю' = 5.\n"
     "- people_total: целое число 1..20 только если количество людей явно указано.\n"
+    "- Число дней НЕ означает число людей: 'на два дня' => days=2, people_total=null.\n"
     "- requested_meal_types: список только из breakfast, lunch, dinner, snack.\n"
     "- 'обеды' => ['lunch'], 'завтрак и ужин' => ['breakfast','dinner'].\n"
     "- diet: только vegan, vegetarian, halal или null.\n"
@@ -92,6 +93,15 @@ _FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT = (
     " ('орехи', 'глютен', 'лактоза', 'яйца').\n"
     "- confidence: число от 0 до 1.\n"
     "- reason: кратко, до 12 слов.\n\n"
+    "Примеры:\n"
+    "Сообщение: собери мне обеды для здорового питания на два дня\n"
+    "Ответ: {{\"days\":2,\"people_total\":null,\"requested_meal_types\":[\"lunch\"],"
+    "\"child_count\":null,\"child_age_years\":null,\"diet\":null,\"cuisines\":[],"
+    "\"allergens_excluded\":[],\"confidence\":0.95,\"reason\":\"обеды на два дня\"}}\n\n"
+    "Сообщение: меню на 3 дня для 2 человек\n"
+    "Ответ: {{\"days\":3,\"people_total\":2,\"requested_meal_types\":[],"
+    "\"child_count\":null,\"child_age_years\":null,\"diet\":null,\"cuisines\":[],"
+    "\"allergens_excluded\":[],\"confidence\":0.97,\"reason\":\"меню на 3 дня для 2 человек\"}}\n\n"
     "Сообщение пользователя:\n{text}"
 )
 

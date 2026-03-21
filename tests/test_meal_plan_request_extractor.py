@@ -89,6 +89,43 @@ async def test_parse_meal_plan_request_with_llm_uses_model_output() -> None:
 
 
 @pytest.mark.asyncio
+async def test_parse_meal_plan_request_with_llm_ignores_hallucinated_people_total() -> None:
+    agent = _FakeExtractorAgent(
+        [
+            _resp(
+                json.dumps(
+                    {
+                        "days": 2,
+                        "people_total": 2,
+                        "requested_meal_types": ["lunch"],
+                        "child_count": None,
+                        "child_age_years": None,
+                        "diet": None,
+                        "cuisines": [],
+                        "allergens_excluded": [],
+                        "confidence": 0.91,
+                        "reason": "обеды на два дня",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+        ]
+    )
+
+    request, debug = await parse_meal_plan_request_with_llm(
+        agent=agent,
+        text="собери мне обеды для здорового питания на два дня",
+        stored_profile={},
+        llm_provider="qwen_openai",
+    )
+
+    assert request.days == 2
+    assert request.people_total == 1
+    assert request.requested_meal_types == ["lunch"]
+    assert debug.source == "llm"
+
+
+@pytest.mark.asyncio
 async def test_parse_meal_plan_request_with_llm_falls_back_to_deterministic_builder() -> None:
     agent = _FakeExtractorAgent([_resp("not json at all"), _resp("still not json")])
 

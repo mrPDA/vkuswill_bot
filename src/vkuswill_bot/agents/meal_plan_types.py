@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
+from vkuswill_bot.agents.meal_plan_people_parser import parse_request_people_total
 from vkuswill_bot.agents.meal_plan_request_model import MealPlanRequestExtraction
 from vkuswill_bot.agents.meal_plan_request_profile import (
     build_shared_constraints,
@@ -20,7 +21,6 @@ _DAYS_WORD_RE = re.compile(
     r"одиннадцать|двенадцать|тринадцать|четырнадцать)\s+д(?:ней|ня|ень)",
     flags=re.IGNORECASE,
 )
-_PEOPLE_RE = re.compile(r"для\s+(\d+)\s+(?:чел|человек)", flags=re.IGNORECASE)
 _CHILD_COUNT_RE = re.compile(r"(\d+)\s*(?:ребен(?:ок|ка|ку|ком)|дет(?:и|ей|ям|ьми))", re.IGNORECASE)
 _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет|год|г)", re.IGNORECASE)
 _ALLERGY_RE = re.compile(r"аллерг\w*\s+на\s+([^\n,.;:]+)", re.IGNORECASE)
@@ -222,23 +222,8 @@ def _extract_days(text: str) -> int:
     return parse_request_days(text, default=7, max_days=14)
 
 
-_SOLO_RE = re.compile(
-    r"для\s+(?:одного|одной|себя|меня)|на\s+одного|для\s+1\b",
-    re.IGNORECASE,
-)
-
-
 def _extract_people_total(text: str) -> int:
-    low = text.lower()
-    if _SOLO_RE.search(low):
-        return 1
-    match = _PEOPLE_RE.search(low)
-    if not match:
-        return 2
-    try:
-        return max(1, min(20, int(match.group(1))))
-    except ValueError:
-        return 2
+    return parse_request_people_total(text, default=1, max_people=20)
 
 
 def _extract_child_group(text: str, people_total: int) -> tuple[str | None, int, int | None]:
@@ -342,11 +327,7 @@ def parse_meal_plan_request(
         if extracted is not None and isinstance(extracted.days, int)
         else _extract_days(text)
     )
-    people_total = (
-        extracted.people_total
-        if extracted is not None and isinstance(extracted.people_total, int)
-        else _extract_people_total(text)
-    )
+    people_total = _extract_people_total(text)
     child_group_id, child_count, child_age = _extract_child_group(text, people_total)
     if extracted is not None and (
         isinstance(extracted.child_count, int) or isinstance(extracted.child_age_years, int)

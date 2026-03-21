@@ -60,6 +60,7 @@ LAYER_BY_MODULE: dict[str, str] = {
     "recipe_quantity_calculator": "domain",
     "recipe_cart_recovery": "domain",
     "meal_plan_types": "domain",
+    "meal_plan_people_parser": "domain",
     "meal_plan_request_extractor": "domain",
     "meal_plan_request_model": "domain",
     "meal_plan_request_profile": "domain",
