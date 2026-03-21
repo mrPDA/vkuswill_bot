@@ -61,6 +61,13 @@ class TestDaysParsing:
         r = parse_meal_plan_request("Собери продукты на 1 день для 2 человек", EMPTY_PROFILE)
         assert r.days == 1
 
+    def test_word_two_days(self) -> None:
+        r = parse_meal_plan_request(
+            "Собери мне обеды для здорового питания на два дня",
+            EMPTY_PROFILE,
+        )
+        assert r.days == 2
+
     def test_explicit_5_days(self) -> None:
         r = parse_meal_plan_request("Меню на 5 дней для 2 человек", EMPTY_PROFILE)
         assert r.days == 5

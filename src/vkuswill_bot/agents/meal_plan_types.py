@@ -10,8 +10,15 @@ from vkuswill_bot.agents.meal_plan_request_profile import (
     build_shared_constraints,
     extract_segmented_adult_preferences,
 )
+from vkuswill_bot.services.tool_input_normalizers import normalize_colloquial_numerals
 
 _DAYS_RE = re.compile(r"(?:на\s+)?(\d+)\s+д(?:ней|ня|ень)", flags=re.IGNORECASE)
+_DAYS_WORD_RE = re.compile(
+    r"(?:на\s+)?"
+    r"(один|одну|два|две|три|четыре|пять|шесть|семь|восемь|девять|десять|"
+    r"одиннадцать|двенадцать|тринадцать|четырнадцать)\s+д(?:ней|ня|ень)",
+    flags=re.IGNORECASE,
+)
 _PEOPLE_RE = re.compile(r"для\s+(\d+)\s+(?:чел|человек)", flags=re.IGNORECASE)
 _CHILD_COUNT_RE = re.compile(r"(\d+)\s*(?:ребен(?:ок|ка|ку|ком)|дет(?:и|ей|ям|ьми))", re.IGNORECASE)
 _CHILD_AGE_RE = re.compile(r"ребен\w*[^0-9]{0,12}(\d+)\s*(?:года|лет|год|г)", re.IGNORECASE)
@@ -170,21 +177,49 @@ class MealPlan:
 
 
 _WORKING_WEEK_RE = re.compile(r"рабоч\w+\s+недел", re.IGNORECASE)
+_DAYS_WORD_VALUES = {
+    "один": 1,
+    "одну": 1,
+    "два": 2,
+    "две": 2,
+    "три": 3,
+    "четыре": 4,
+    "пять": 5,
+    "шесть": 6,
+    "семь": 7,
+    "восемь": 8,
+    "девять": 9,
+    "десять": 10,
+    "одиннадцать": 11,
+    "двенадцать": 12,
+    "тринадцать": 13,
+    "четырнадцать": 14,
+}
+
+
+def parse_request_days(text: str, *, default: int = 7, max_days: int = 14) -> int:
+    normalized = normalize_colloquial_numerals(text).lower().replace("ё", "е")
+    if _WORKING_WEEK_RE.search(normalized):
+        return min(max_days, 5)
+    if "на неделю" in normalized or "неделю" in normalized:
+        return min(max_days, 7)
+
+    match = _DAYS_RE.search(normalized)
+    if match:
+        try:
+            return max(1, min(max_days, int(match.group(1))))
+        except ValueError:
+            return default
+
+    match = _DAYS_WORD_RE.search(normalized)
+    if not match:
+        return default
+    value = _DAYS_WORD_VALUES.get(match.group(1), default)
+    return max(1, min(max_days, value))
 
 
 def _extract_days(text: str) -> int:
-    low = text.lower()
-    if _WORKING_WEEK_RE.search(low):
-        return 5
-    if "на неделю" in low or "неделю" in low:
-        return 7
-    match = _DAYS_RE.search(low)
-    if not match:
-        return 7
-    try:
-        return max(1, min(14, int(match.group(1))))
-    except ValueError:
-        return 7
+    return parse_request_days(text, default=7, max_days=14)
 
 
 _SOLO_RE = re.compile(
