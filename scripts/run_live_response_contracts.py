@@ -31,8 +31,11 @@ from vkuswill_bot.services.prompts import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
+TESTS_ROOT = REPO_ROOT / "tests"
+if str(TESTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(TESTS_ROOT))
 
-from tests.stage_response_contract_cases import SCENARIOS, StageScenario  # noqa: E402
+from stage_response_contract_cases import SCENARIOS, StageScenario  # noqa: E402
 
 if TYPE_CHECKING:
     import asyncpg
