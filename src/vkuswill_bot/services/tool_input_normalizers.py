@@ -122,7 +122,22 @@ def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
         xml_id = item.get("xml_id")
         if xml_id is None:
             continue
-        q = item.get("q", 1)
+        q_raw = item.get("q", 1)
+        # Нормализуем значение q, если оно строковое
+        if isinstance(q_raw, str):
+            # Заменяем запятую на точку для правильного парсинга
+            q_normalized = q_raw.replace(',', '.')
+            try:
+                q = float(q_normalized)
+            except ValueError:
+                # Если не удалось преобразовать, используем 1 как безопасное значение
+                q = 1
+        elif not isinstance(q_raw, (int, float)):
+            # Для других типов данных используем 1
+            q = 1
+        else:
+            q = float(q_raw)
+        
         if xml_id in merged:
             merged[xml_id] += q
         else:

@@ -931,3 +931,68 @@ class TestAddDuplicateWarning:
 
         result = await processor.add_duplicate_warning(args, result_text)
         assert result == result_text
+
+
+# ============================================================================
+# Тесты нормализации строкового q
+# ============================================================================
+
+
+class TestStringQNormalization:
+    """Тесты нормализации строковых значений q в fix_cart_args."""
+
+    def test_string_q_normalized_comma_decimal(self):
+        """Строковые значения q с запятой нормализуются."""
+        from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
+        
+        args = {
+            "products": [
+                {"xml_id": 100, "q": "2,5"},
+                {"xml_id": 100, "q": "1,5"},
+            ]
+        }
+        result = fix_cart_args(args)
+        assert len(result["products"]) == 1
+        assert result["products"][0]["q"] == 4.0
+
+    def test_string_q_normalized_dot_decimal(self):
+        """Строковые значения q с точкой нормализуются."""
+        from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
+        
+        args = {
+            "products": [
+                {"xml_id": 100, "q": "2.5"},
+                {"xml_id": 100, "q": "1.5"},
+            ]
+        }
+        result = fix_cart_args(args)
+        assert len(result["products"]) == 1
+        assert result["products"][0]["q"] == 4.0
+
+    def test_string_q_invalid_fallback(self):
+        """Невалидные строковые значения q используют fallback 1."""
+        from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
+        
+        args = {
+            "products": [
+                {"xml_id": 100, "q": "invalid"},
+                {"xml_id": 100, "q": "1"},
+            ]
+        }
+        result = fix_cart_args(args)
+        assert len(result["products"]) == 1
+        assert result["products"][0]["q"] == 2.0
+
+    def test_string_q_empty_fallback(self):
+        """Пустые строковые значения q используют fallback 1."""
+        from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
+        
+        args = {
+            "products": [
+                {"xml_id": 100, "q": ""},
+                {"xml_id": 100, "q": "1"},
+            ]
+        }
+        result = fix_cart_args(args)
+        assert len(result["products"]) == 1
+        assert result["products"][0]["q"] == 2.0
