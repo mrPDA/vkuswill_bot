@@ -7,10 +7,16 @@
 - `src/vkuswill_bot/bot/telegram_delivery.py`
   Общая логика доставки ответа в Telegram:
   HTML-санитизация, вынос ссылки корзины в inline-кнопку, разбивка длинного текста.
+- `src/vkuswill_bot/testing/response_contract_cases.py`
+  Единый каталог исполняемых кейсов `TC-*` и контрактов ответа
+  (используется и в pytest, и в live-раннере).
 - `tests/stage_response_contract_cases.py`
-  Исполняемые stage-кейсы `TC-*` с контрактами ответа.
+  Compatibility wrapper для старых импортов.
 - `tests/test_stage_response_contracts.py`
   Интеграционный pytest-раннер для stage/debug API + Langfuse-проверки.
+- `scripts/run_live_response_contracts.py`
+  CLI-раннер тех же `TC-*` кейсов против локального runtime `ShoppingAgent`
+  (без stage/debug API).
 
 ## Что проверяет контракт
 
@@ -25,6 +31,8 @@
 - подтверждение, что trace реально относится к `stage`
 
 ## Как запускать
+
+### Режим A: stage/debug API (pytest)
 
 Подготовь переменные окружения:
 
@@ -59,6 +67,32 @@ uv run pytest tests/test_stage_response_contracts.py -m stage -k "TC-NLP-02" -rs
 ```
 
 `stable`-кейсы должны проходить. Кейсы со статусом `known_issue` помечены как `xfail`: они нужны, чтобы известные проблемы не потерялись и автоматически стали заметны, когда неожиданно починятся.
+
+### Режим B: локальный live runtime (CLI)
+
+Этот режим запускает те же контракты `TC-*`, но через локально собранный
+`ShoppingAgent` и текущие настройки prompt registry.
+
+Базовый запуск стабильных кейсов:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --status stable --verbose
+```
+
+Запуск конкретного кейса:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --case TC-NLP-02 --verbose
+```
+
+Полезные флаги:
+
+- `--status stable|known_issue|all` — фильтр по статусу кейса
+- `--case TC-*` (можно повторять) — точечный запуск
+- `--max-scenarios N` — ограничить число кейсов после фильтрации
+- `--timeout-seconds` — таймаут на один turn `process_message`
+- `--report-json path/to/report.json` — сохранить JSON-отчёт
+- `--with-user-store` — подключить PostgreSQL `UserStore`, если задан `DATABASE_URL`
 
 ## Как пользоваться notesforllm
 
@@ -123,7 +157,7 @@ notes_decision_save(
 
 ## Практика обновления кейсов
 
-Обновляй `tests/stage_response_contract_cases.py`, когда меняется одно из:
+Обновляй `src/vkuswill_bot/testing/response_contract_cases.py`, когда меняется одно из:
 
 - ожидаемый `profile`
 - допустимый объём ответа
