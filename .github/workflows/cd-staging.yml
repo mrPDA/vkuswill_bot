@@ -47,7 +47,7 @@ jobs:
           echo "tag=${TAG}" >> $GITHUB_OUTPUT
           echo "full_image=${CR_REGISTRY}/${IMAGE_NAME}:${TAG}" >> $GITHUB_OUTPUT
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@v4
 
       - name: Login to Yandex Container Registry
         run: |
