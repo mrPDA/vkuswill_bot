@@ -135,17 +135,12 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Secrets scan — Gitleaks
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_CONFIG: .gitleaks.toml
-
-      - name: Install gitleaks
+      - name: Install gitleaks v8.30.0
         run: |
-          curl -sSfL https://raw.githubusercontent.com/gitleaks/gitleaks/master/install.sh | sh -s -- -b /usr/local/bin v8.30.0
+          curl -sSfL "https://github.com/gitleaks/gitleaks/releases/download/v8.30.0/gitleaks_8.30.0_linux_x64.tar.gz" \
+            | tar -xzC /usr/local/bin gitleaks
 
-      - name: Secret scan — gitleaks
+      - name: Secret scan — gitleaks (full history)
         run: gitleaks detect --source . --no-banner --redact --config .gitleaks.toml
 
       - name: Install uv

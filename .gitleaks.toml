@@ -45,6 +45,12 @@ regexes = [
   '''PUBLIC_KEY:SECRET_KEY''',
 ]
 
+[[allowlists]]
+description = "curl-auth-user false positives in Langfuse docs (placeholder curl examples, no real credentials)"
+commits = [
+  "e4524c1176b32905498ce3927ac467a41491c1f0",
+]
+
 # Кастомные правила для обнаружения Langfuse API-ключей (self-hosted и cloud)
 [[rules]]
 id = "langfuse-public-key"
