@@ -48,13 +48,13 @@ jobs:
             --summary-file "$GITHUB_STEP_SUMMARY"
 
       - name: Upload architecture KPI artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: architecture-kpi
           path: ci-artifacts/architecture-kpi
 
       - name: Upload services KPI artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: services-kpi
           path: ci-artifacts/services-kpi
@@ -92,7 +92,7 @@ jobs:
 
       - name: Upload coverage
         if: matrix.python-version == '3.12'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: coverage-report
           path: coverage.xml
