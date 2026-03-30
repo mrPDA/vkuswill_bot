@@ -177,6 +177,13 @@ make lint              # Линтер (ruff)
 
 Проект включает 2200+ тестов: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak), валидация входных данных и тесты навыка Алисы.
 
+Для response-layer контрактов (stage + live runtime) см. `docs/stage-response-contracts.md`:
+
+```bash
+uv run pytest tests/test_stage_response_contracts.py -m stage -rs
+uv run python scripts/run_live_response_contracts.py --status stable --verbose
+```
+
 ---
 
 ## Команды бота
