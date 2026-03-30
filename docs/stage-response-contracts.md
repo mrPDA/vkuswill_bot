@@ -1,32 +1,42 @@
 # Stage Response Contracts
 
-Этот набор нужен, чтобы проверять не только `items_count` и `trace_id`, но и то, **что реально увидит пользователь** в Telegram: текст ответа, наличие кнопки корзины, разбивку на чанки и отсутствие служебного мусора.
+Контракты response layer проверяют не только `items_count` и `trace_id`, но и то, **что реально увидит пользователь** в Telegram: итоговый текст, inline-кнопку корзины, разбиение на чанки и отсутствие служебного мусора.
 
-## Что добавлено
+## Покрываемые codepath
 
-- `src/vkuswill_bot/bot/telegram_delivery.py`
-  Общая логика доставки ответа в Telegram:
-  HTML-санитизация, вынос ссылки корзины в inline-кнопку, разбивка длинного текста.
-- `tests/stage_response_contract_cases.py`
-  Исполняемые stage-кейсы `TC-*` с контрактами ответа.
-- `tests/test_stage_response_contracts.py`
-  Интеграционный pytest-раннер для stage/debug API + Langfuse-проверки.
+- `tests/test_stage_response_contracts.py`  
+  Stage-раннер поверх `/debug/*` API + верификация trace в Langfuse.
+- `scripts/run_live_response_contracts.py`  
+  Локальный live-раннер, который поднимает `ShoppingAgent` в текущем runtime и прогоняет те же `TC-*` кейсы.
+- `src/vkuswill_bot/testing/response_contract_cases.py`  
+  Единый источник сценариев `SCENARIOS` и dataclass-контрактов.
+- `tests/stage_response_contract_cases.py`  
+  Совместимый импорт-обёртка для legacy путей в тестах.
+- `src/vkuswill_bot/bot/telegram_delivery.py`  
+  Боевая логика Telegram-доставки (чанки, кнопка корзины, очистка текста), на которую завязан контракт.
 
 ## Что проверяет контракт
 
-Для каждого сценария проверяются:
+Для каждого сценария валидируются:
 
 - ожидаемый `diagnostics.prompt_profile`
 - наличие или отсутствие inline-кнопки корзины
-- максимальный объём ответа
-- число Telegram-чанков
-- обязательные и запрещённые фразы в ответе
-- обязательные и запрещённые товары в `cart_snapshot`
-- подтверждение, что trace реально относится к `stage`
+- лимиты по объёму ответа (`chars`, `lines`, `chunks`)
+- обязательные и запрещённые фразы
+- обязательные и запрещённые товары в `cart_snapshot` (или в финальном тексте как fallback)
+- отсутствие служебных артефактов (`<tool_call>`, JSON tool payload и т.д.)
+- для stage-режима: подтверждение, что trace относится к `stage`
 
-## Как запускать
+## Режимы запуска
 
-Подготовь переменные окружения:
+| Режим | Когда использовать | Точка входа |
+|---|---|---|
+| Stage contract run | Проверка реального stage окружения и trace provenance | `tests/test_stage_response_contracts.py` |
+| Live local contract run | Быстрый регресс на текущем коде/промптах без обращения к stage | `scripts/run_live_response_contracts.py` |
+
+### 1) Stage contract run (через debug API)
+
+Подготовь окружение:
 
 ```bash
 set -a
@@ -37,28 +47,68 @@ export STAGE_BASE_URL="https://89.169.138.16"
 export STAGE_VERIFY_SSL=0
 ```
 
-Нужны:
+Обязательные переменные:
 
 - `DEBUG_API_KEY_STG`
 - `LANGFUSE_HOST`
 - `LANGFUSE_PUBLIC_KEY`
 - `LANGFUSE_SECRET_KEY`
 
-`STAGE_VERIFY_SSL=0` по умолчанию подходит для текущего stage с self-signed TLS на debug API. Если сертификат станет доверенным, можно включить строгую проверку через `STAGE_VERIFY_SSL=1`.
+`STAGE_VERIFY_SSL=0` подходит для self-signed TLS на debug API. После перевода stage на доверенный сертификат включи `STAGE_VERIFY_SSL=1`.
 
-Запуск:
+Запуск полного набора:
 
 ```bash
 uv run pytest tests/test_stage_response_contracts.py -m stage -rs
 ```
 
-Если нужно запустить только один кейс:
+Запуск одного кейса:
 
 ```bash
 uv run pytest tests/test_stage_response_contracts.py -m stage -k "TC-NLP-02" -rs
 ```
 
-`stable`-кейсы должны проходить. Кейсы со статусом `known_issue` помечены как `xfail`: они нужны, чтобы известные проблемы не потерялись и автоматически стали заметны, когда неожиданно починятся.
+### 2) Live local contract run (без stage)
+
+Запуск stable кейсов:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --status stable --verbose
+```
+
+Точечный запуск:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --case TC-NLP-02 --case TC-MULTI-01
+```
+
+Сохранить JSON-отчёт:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --status all --report-json reports/response-contracts.json
+```
+
+Ключевые флаги:
+
+- `--status stable|known_issue|all`
+- `--case TC-...` (можно несколько раз)
+- `--max-scenarios N`
+- `--timeout-seconds N`
+- `--with-user-store` (подключить PostgreSQL `UserStore`, если нужен runtime с лимитами/логированием)
+
+Выходной код live-раннера:
+
+- `0` — нет `fail`
+- `1` — есть хотя бы один `fail`
+- `2` — после фильтрации не осталось сценариев
+
+`known_issue` сценарии возвращают `xfail`/`xpass` и не должны ломать pipeline как обычные регрессы.
+
+## Частые проблемы и ограничения
+
+- Stage-тесты намеренно скипаются, если запуск неявный (нужно явно вызывать `-m stage` или файл `test_stage_response_contracts.py`).
+- Для live-раннера должен быть доступен тот же runtime-конфиг, что и для `ShoppingAgent` (LLM/MCP/env); иначе будут ложные `fail`.
+- `tests/stage_response_contract_cases.py` не хранит собственные кейсы, а только реэкспортирует `SCENARIOS` из `src/vkuswill_bot/testing/response_contract_cases.py`. Обновлять нужно shared-модуль.
 
 ## Как пользоваться notesforllm
 
@@ -123,7 +173,7 @@ notes_decision_save(
 
 ## Практика обновления кейсов
 
-Обновляй `tests/stage_response_contract_cases.py`, когда меняется одно из:
+Обновляй `src/vkuswill_bot/testing/response_contract_cases.py`, когда меняется одно из:
 
 - ожидаемый `profile`
 - допустимый объём ответа
