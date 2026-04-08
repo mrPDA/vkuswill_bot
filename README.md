@@ -179,6 +179,57 @@ make lint              # Линтер (ruff)
 
 ---
 
+## Отладка meal-plan и корзины (runbook)
+
+### Stage debug API
+
+Для воспроизведения проблем в одном запросе используйте stage endpoint `POST /debug/run-shopping`.
+
+Условия включения:
+- задан `DEBUG_API_KEY`;
+- `PROMPT_LABEL` не равен `production`;
+- бот запущен в webhook-режиме (`USE_WEBHOOK=true`).
+
+Пример запроса:
+
+```bash
+curl -X POST "http://localhost:8080/debug/run-shopping" \
+  -H "Content-Type: application/json" \
+  -H "X-Debug-Api-Key: ${DEBUG_API_KEY}" \
+  -d '{
+    "user_id": 12345,
+    "text": "План питания на 3 дня для 2 человек",
+    "reset_history": true
+  }'
+```
+
+Что смотреть в ответе:
+- `trace_id` — корреляция с Langfuse;
+- `cart_snapshot` — финальное состояние корзины;
+- `diagnostics.execution_path` — какой путь выполнен (`meal_plan_executor` или стандартный turn);
+- `diagnostics.meal_plan_ingredient_collection` — MCP/fallback статистика ингредиентов;
+- `diagnostics.meal_plan_recipe_search` — статистика day-by-day поиска;
+- `diagnostics.meal_plan_cart_create` — информация о создании корзины/групп корзин.
+
+### Частые симптомы и причины
+
+| Симптом | Проверка | Типичная причина |
+|---|---|---|
+| В ответе несколько ссылок на корзину | `diagnostics.meal_plan_cart_create.groups_count` | Лимит MCP `vkusvill_cart_link_create`: максимум 30 товаров на одну корзину, поэтому создаются grouped carts |
+| Для части блюд нет ингредиентов | `diagnostics.meal_plan_ingredient_collection` (`fallback_attempted_dishes`, `empty_dishes`) | Деградация/таймаут `recipe_ingredients`, переход на batch fallback |
+| Много `not_found` по ингредиентам | `diagnostics.meal_plan_recipe_search.final_not_found_count` | Слишком длинные/контекстные `search_query` (например, "рис для суши" вместо "рис") |
+
+### Ограничения search_query для recipe fallback
+
+При изменении промптов recipe extraction и batch fallback соблюдайте базовые правила:
+- короткий запрос: 1-2 слова;
+- без контекста блюда (не "масло для жарки");
+- без лишних прилагательных (не "свежий", "молотый");
+- без уточнения сорта по умолчанию ("рис", а не "рис басмати");
+- исключения для диетических требований допустимы (например, "безлактозное молоко", "тофу").
+
+---
+
 ## Команды бота
 
 | Команда | Описание |
