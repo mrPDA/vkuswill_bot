@@ -30,7 +30,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import FSInputFile
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-from vkuswill_bot.bot.handlers import admin_router, router
+from vkuswill_bot.bot.handlers import admin_commands_router, router
 from vkuswill_bot.bot.middlewares import ThrottlingMiddleware, UserMiddleware
 from vkuswill_bot.config import config
 from vkuswill_bot.services.chat_engine import ChatEngineProtocol
@@ -247,7 +247,7 @@ async def main() -> None:
             default=DefaultBotProperties(parse_mode=ParseMode.HTML),
         )
     dp = Dispatcher()
-    dp.include_router(admin_router)
+    dp.include_router(admin_commands_router)
     dp.include_router(router)
 
     # ------------------------------------------------------------------
