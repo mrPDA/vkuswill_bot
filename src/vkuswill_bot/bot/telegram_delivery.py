@@ -158,7 +158,7 @@ async def _send_typing_periodically(message: Message, stop_event: asyncio.Event,
         while not stop_event.is_set():
             await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
             await asyncio.wait_for(stop_event.wait(), timeout=delay)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         # Продолжаем, если таймаут и событие не установлено
         pass
     except asyncio.CancelledError:
