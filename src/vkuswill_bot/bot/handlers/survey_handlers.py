@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery
 
 if TYPE_CHECKING:
-    from vkuswill_bot.services.user_store import UserStore
+    pass
 
 logger = logging.getLogger(__name__)
 
