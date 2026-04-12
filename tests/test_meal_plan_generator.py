@@ -43,7 +43,10 @@ def _resp(content: str) -> dict[str, Any]:
 
 
 def _build_dishes(
-    *, audience: str = "adults", cuisine: str = "italian", days: int = 7,
+    *,
+    audience: str = "adults",
+    cuisine: str = "italian",
+    days: int = 7,
 ) -> list[dict[str, Any]]:
     meal_types = ["breakfast", "lunch", "dinner"]
     dishes: list[dict[str, Any]] = []

@@ -944,7 +944,7 @@ class TestStringQNormalization:
     def test_string_q_normalized_comma_decimal(self):
         """Строковые значения q с запятой нормализуются."""
         from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
-        
+
         args = {
             "products": [
                 {"xml_id": 100, "q": "2,5"},
@@ -958,7 +958,7 @@ class TestStringQNormalization:
     def test_string_q_normalized_dot_decimal(self):
         """Строковые значения q с точкой нормализуются."""
         from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
-        
+
         args = {
             "products": [
                 {"xml_id": 100, "q": "2.5"},
@@ -972,7 +972,7 @@ class TestStringQNormalization:
     def test_string_q_invalid_fallback(self):
         """Невалидные строковые значения q используют fallback 1."""
         from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
-        
+
         args = {
             "products": [
                 {"xml_id": 100, "q": "invalid"},
@@ -986,7 +986,7 @@ class TestStringQNormalization:
     def test_string_q_empty_fallback(self):
         """Пустые строковые значения q используют fallback 1."""
         from vkuswill_bot.services.tool_input_normalizers import fix_cart_args
-        
+
         args = {
             "products": [
                 {"xml_id": 100, "q": ""},

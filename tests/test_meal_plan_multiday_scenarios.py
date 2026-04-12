@@ -509,7 +509,11 @@ class TestHardConstraintValidation:
         dishes = [
             MealPlanDish(
                 "Овощной суп на курином бульоне без глютена",
-                1, "lunch", 2, ["adults"], ["русская"],
+                1,
+                "lunch",
+                2,
+                ["adults"],
+                ["русская"],
             ),
             MealPlanDish("Гречневая каша на воде", 1, "breakfast", 2, ["adults"], []),
             MealPlanDish("Запечённая курица с овощами", 2, "dinner", 2, ["adults"], []),
@@ -545,7 +549,12 @@ class TestHardConstraintValidation:
         )
         dishes = [
             MealPlanDish(
-                "Безглютеновые оладьи из гречневой крупы", 1, "breakfast", 2, ["adults"], [],
+                "Безглютеновые оладьи из гречневой крупы",
+                1,
+                "breakfast",
+                2,
+                ["adults"],
+                [],
             ),
             MealPlanDish("Рис с овощами", 1, "lunch", 2, ["adults"], []),
             MealPlanDish("Гречка", 2, "breakfast", 2, ["adults"], []),

@@ -118,8 +118,7 @@ async def run_locked_turn(
     )
     user_in_rollout = _is_user_in_rollout(user_id=user_id, rollout_percent=rollout_percent)
     executor_enabled = (
-        bool(getattr(agent, "_meal_plan_executor_enabled", False))
-        and not _skip_meal_plan_executor
+        bool(getattr(agent, "_meal_plan_executor_enabled", False)) and not _skip_meal_plan_executor
     )
     can_use_executor = (
         state.prompt_profile == "meal_plan"

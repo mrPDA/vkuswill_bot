@@ -140,7 +140,10 @@ class TestRenderResponse:
             },
         }
         result = _render_multi_course_response(
-            dishes=dishes, by_dish=by_dish, cart_data=cart_data, not_found=["сметана"],
+            dishes=dishes,
+            by_dish=by_dish,
+            cart_data=cart_data,
+            not_found=["сметана"],
         )
         assert "2 блюд" in result
         assert "Каша" in result
@@ -159,12 +162,14 @@ class TestCollectAllIngredients:
     async def test_collects_from_all_dishes(self):
         agent = MagicMock()
         agent._call_mcp_tool = AsyncMock(
-            return_value=json.dumps({
-                "ok": True,
-                "ingredients": [
-                    {"name": "молоко", "search_query": "молоко", "quantity": 1, "unit": "л"},
-                ],
-            }),
+            return_value=json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {"name": "молоко", "search_query": "молоко", "quantity": 1, "unit": "л"},
+                    ],
+                }
+            ),
         )
         state = SimpleNamespace(mcp_call_cache={})
         dishes = [
@@ -195,12 +200,14 @@ class TestCollectAllIngredients:
             call_count += 1
             if call_count == 1:
                 raise TimeoutError("MCP timeout")
-            return json.dumps({
-                "ok": True,
-                "ingredients": [
-                    {"name": "свёкла", "search_query": "свёкла", "quantity": 1, "unit": "шт"},
-                ],
-            })
+            return json.dumps(
+                {
+                    "ok": True,
+                    "ingredients": [
+                        {"name": "свёкла", "search_query": "свёкла", "quantity": 1, "unit": "шт"},
+                    ],
+                }
+            )
 
         agent = MagicMock()
         agent._call_mcp_tool = _mock_tool

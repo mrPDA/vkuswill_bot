@@ -126,7 +126,7 @@ def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
         # Нормализуем значение q, если оно строковое
         if isinstance(q_raw, str):
             # Заменяем запятую на точку для правильного парсинга
-            q_normalized = q_raw.replace(',', '.')
+            q_normalized = q_raw.replace(",", ".")
             try:
                 q = float(q_normalized)
             except ValueError:
@@ -137,7 +137,7 @@ def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
             q = 1
         else:
             q = float(q_raw)
-        
+
         if xml_id in merged:
             merged[xml_id] += q
         else:

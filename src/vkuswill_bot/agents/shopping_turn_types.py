@@ -322,17 +322,19 @@ async def build_turn_state(
         multi_course_expected = explicit_recipe_courses
 
     if multi_course_expected >= 2:
-        history.append({
-            "role": "system",
-            "content": (
-                f"[Мульти-курс: {multi_course_expected} блюд] "
-                "Обработай ВСЕ блюда по порядку. Алгоритм: "
-                "1) вызови recipe_ingredients для КАЖДОГО блюда; "
-                "2) для каждого результата найди товары; "
-                "3) создай ОДНУ корзину со ВСЕМИ продуктами от ВСЕХ блюд. "
-                "НЕ создавай корзину, пока не обработаны ВСЕ блюда!"
-            ),
-        })
+        history.append(
+            {
+                "role": "system",
+                "content": (
+                    f"[Мульти-курс: {multi_course_expected} блюд] "
+                    "Обработай ВСЕ блюда по порядку. Алгоритм: "
+                    "1) вызови recipe_ingredients для КАЖДОГО блюда; "
+                    "2) для каждого результата найди товары; "
+                    "3) создай ОДНУ корзину со ВСЕМИ продуктами от ВСЕХ блюд. "
+                    "НЕ создавай корзину, пока не обработаны ВСЕ блюда!"
+                ),
+            }
+        )
 
     normalized_history = agent._normalize_history(history)
 

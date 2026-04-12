@@ -27,6 +27,7 @@ test = [
 ]
 dev = [
     "ruff>=0.8",
+    "pygments>=2.20.0",
 ]
 loadtest = [
     "locust>=2.29",

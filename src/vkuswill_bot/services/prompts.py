@@ -98,13 +98,13 @@ _FALLBACK_MEAL_PLAN_REQUEST_PARSE_PROMPT = (
     "- reason: кратко, до 12 слов.\n\n"
     "Примеры:\n"
     "Сообщение: собери мне обеды для здорового питания на два дня\n"
-    "Ответ: {{\"days\":2,\"people_total\":null,\"requested_meal_types\":[\"lunch\"],"
-    "\"child_count\":null,\"child_age_years\":null,\"diet\":null,\"cuisines\":[],"
-    "\"allergens_excluded\":[],\"confidence\":0.95,\"reason\":\"обеды на два дня\"}}\n\n"
+    'Ответ: {{"days":2,"people_total":null,"requested_meal_types":["lunch"],'
+    '"child_count":null,"child_age_years":null,"diet":null,"cuisines":[],'
+    '"allergens_excluded":[],"confidence":0.95,"reason":"обеды на два дня"}}\n\n'
     "Сообщение: меню на 3 дня для 2 человек\n"
-    "Ответ: {{\"days\":3,\"people_total\":2,\"requested_meal_types\":[],"
-    "\"child_count\":null,\"child_age_years\":null,\"diet\":null,\"cuisines\":[],"
-    "\"allergens_excluded\":[],\"confidence\":0.97,\"reason\":\"меню на 3 дня для 2 человек\"}}\n\n"
+    'Ответ: {{"days":3,"people_total":2,"requested_meal_types":[],'
+    '"child_count":null,"child_age_years":null,"diet":null,"cuisines":[],'
+    '"allergens_excluded":[],"confidence":0.97,"reason":"меню на 3 дня для 2 человек"}}\n\n'
     "Сообщение пользователя:\n{text}"
 )
 
