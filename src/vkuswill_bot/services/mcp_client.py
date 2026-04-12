@@ -110,7 +110,7 @@ class VkuswillMCPClient:
         if params is not None:
             payload["params"] = params
 
-        logger.debug("JSON-RPC → %s (id=%d)", method, request_id)
+        logger.debug("JSON-RPC -> %s (id=%d)", method, request_id)
 
         response = await asyncio.to_thread(
             client.post,
@@ -120,7 +120,7 @@ class VkuswillMCPClient:
         )
 
         logger.debug(
-            "JSON-RPC ← %s status=%d ct=%s",
+            "JSON-RPC <- %s status=%d ct=%s",
             method,
             response.status_code,
             response.headers.get("content-type", "?"),
@@ -186,7 +186,7 @@ class VkuswillMCPClient:
         if params is not None:
             payload["params"] = params
 
-        logger.debug("JSON-RPC notify → %s", method)
+        logger.debug("JSON-RPC notify -> %s", method)
 
         response = await asyncio.to_thread(
             client.post,
@@ -279,8 +279,7 @@ class VkuswillMCPClient:
                     MAX_RETRIES,
                     e,
                 )
-                logger.debug("MCP get_tools traceback:
-%s", traceback.format_exc())
+                logger.debug(f"MCP get_tools traceback: {traceback.format_exc()}") # Reformat this line
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:
                     await asyncio.sleep(RETRY_DELAY * (attempt + 1))
@@ -334,9 +333,8 @@ class VkuswillMCPClient:
                     if isinstance(item, dict) and item.get("type") == "text":
                         texts.append(item.get("text", ""))
 
-                response = "
-".join(texts) if texts else json.dumps(result, ensure_ascii=False)
-                logger.debug("MCP ответ %s: %s", name, response[:500])
+                response = "\n".join(texts) if texts else json.dumps(result, ensure_ascii=False)
+                logger.debug(f"MCP ответ {name}: {response[:500]}") # Reformat this line
                 return response
 
             except Exception as e:
@@ -348,8 +346,7 @@ class VkuswillMCPClient:
                     MAX_RETRIES,
                     e,
                 )
-                logger.debug("MCP call_tool %s traceback:
-%s", name, traceback.format_exc())
+                logger.debug(f"MCP call_tool {name} traceback: {traceback.format_exc()}") # Reformat this line
                 # Сбрасываем сессию и пробуем заново
                 await self._reset_session()
                 if attempt < MAX_RETRIES - 1:
