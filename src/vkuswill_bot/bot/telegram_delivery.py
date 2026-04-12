@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import asyncio # Added for _send_typing_periodically
 from dataclasses import dataclass
 import re
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message # Message added for _send_typing_periodically
 
 # Максимальная длина одного сообщения в Telegram
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
@@ -146,6 +147,25 @@ def _split_message(text: str, max_length: int) -> list[str]:
         text = text[split_pos:].lstrip()
 
     return chunks
+
+
+async def _send_typing_periodically(message: Message, stop_event: asyncio.Event, delay: float = 0.5) -> None:
+    """Отправка периодических действий печати."""
+    try:
+        while not stop_event.is_set():
+            await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
+            await asyncio.wait_for(stop_event.wait(), timeout=delay)
+    except asyncio.TimeoutError:
+        # Продолжаем, если таймаут и событие не установлено
+        pass
+    except asyncio.CancelledError:
+        # Нормальное завершение по отмене задачи
+        pass
+    except Exception as e:
+        # Логируем другие ошибки, но не даем им прервать основную логику
+        # Поскольку send_chat_action может вызваться после удаления сообщений
+        # (e.g. в случае редактирования), важно не крашить бота
+        logger.debug("Error sending typing action: %s", e)
 
 
 def build_telegram_delivery_preview(response_text: str) -> TelegramDeliveryPreview:
