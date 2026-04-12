@@ -15,7 +15,9 @@ _FULL_WEEK_MEALS = ["breakfast", "lunch", "dinner"]
 
 
 def _build_full_week_plan(
-    *, name_prefix: str = "Овощное блюдо", cuisine: str = "italian",
+    *,
+    name_prefix: str = "Овощное блюдо",
+    cuisine: str = "italian",
 ) -> dict[str, Any]:
     return {
         "schema_version": 1,

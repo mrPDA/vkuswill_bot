@@ -366,9 +366,7 @@ def try_status_cart_shortcircuit(
         product_index=state.product_index_this_turn,
     )
     cart_text = render_stable_cart_output(previous_cart_snapshot, include_intro=True)
-    agent._history[user_id] = agent._trim_history(
-        [*state.history, assistant_msg(cart_text)]
-    )
+    agent._history[user_id] = agent._trim_history([*state.history, assistant_msg(cart_text)])
     if trace is not None:
         with contextlib.suppress(Exception):
             trace.update(

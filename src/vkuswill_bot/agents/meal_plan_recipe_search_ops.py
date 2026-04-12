@@ -376,9 +376,7 @@ async def search_products(
                 combined_products = merge_products([*combined_products, *retry_products])
                 stats.retry_recovered = len(retry_products)
             still_not_found_set = set(retry_still_not_found)
-            combined_not_found = [
-                nf for nf in combined_not_found if nf in still_not_found_set
-            ]
+            combined_not_found = [nf for nf in combined_not_found if nf in still_not_found_set]
             logger.info(
                 "Retry not_found: attempted=%d, recovered=%d, still_missing=%d",
                 stats.retry_attempted,

@@ -42,9 +42,14 @@ _CART_TIMEOUT_SECONDS = 15.0
 _INGREDIENT_CONCURRENCY = 4
 
 _SERVINGS_WORDS: dict[str, int] = {
-    "двоих": 2, "двух": 2,
-    "троих": 3, "трёх": 3, "трех": 3,
-    "четверых": 4, "четырёх": 4, "четырех": 4,
+    "двоих": 2,
+    "двух": 2,
+    "троих": 3,
+    "трёх": 3,
+    "трех": 3,
+    "четверых": 4,
+    "четырёх": 4,
+    "четырех": 4,
 }
 
 _MEAL_TYPE_RE = re.compile(
@@ -85,6 +90,7 @@ def _extract_servings_from_segment(segment: str) -> tuple[int, str]:
 # Dish extraction
 # ---------------------------------------------------------------------------
 
+
 def extract_dishes_from_text(text: str) -> list[dict[str, Any]]:
     """Extract individual dish names and servings from a multi-course request.
 
@@ -115,15 +121,20 @@ def extract_dishes_from_text(text: str) -> list[dict[str, Any]]:
         # Remove trailing standalone connectors — require whitespace before
         # to avoid stripping word-final letters (e.g. "и" in "фруктами").
         segment = re.sub(
-            r"\s+(?:плюс|и|всё|все|ещё|еще)\s*$", "", segment, flags=re.I,
+            r"\s+(?:плюс|и|всё|все|ещё|еще)\s*$",
+            "",
+            segment,
+            flags=re.I,
         )
 
         dish_name = segment.strip().strip(".,;:—–- ").strip()
         if dish_name and len(dish_name) >= 2:
-            dishes.append({
-                "name": dish_name,
-                "servings": per_dish or global_servings,
-            })
+            dishes.append(
+                {
+                    "name": dish_name,
+                    "servings": per_dish or global_servings,
+                }
+            )
 
     return dishes
 
@@ -131,6 +142,7 @@ def extract_dishes_from_text(text: str) -> list[dict[str, Any]]:
 # ---------------------------------------------------------------------------
 # Ingredient collection
 # ---------------------------------------------------------------------------
+
 
 async def _collect_all_ingredients(
     *,
@@ -181,6 +193,7 @@ async def _collect_all_ingredients(
 # Product index builder
 # ---------------------------------------------------------------------------
 
+
 def _build_product_index(products: list[dict[str, Any]]) -> dict[int, dict[str, Any]]:
     """Build a product_index from search results for ensure_cart_price_summary."""
     index: dict[int, dict[str, Any]] = {}
@@ -194,6 +207,7 @@ def _build_product_index(products: list[dict[str, Any]]) -> dict[int, dict[str, 
 # ---------------------------------------------------------------------------
 # Response rendering
 # ---------------------------------------------------------------------------
+
 
 def _render_multi_course_response(
     *,
@@ -212,9 +226,7 @@ def _render_multi_course_response(
         status = "✅" if count else "⚠️"
         dish_lines.append(f"{status} {name} ({d['servings']} порц.) — {count} ингр.")
 
-    parts.append(
-        f"🍽 <b>Собрала корзину для {len(dishes)} блюд:</b>\n" + "\n".join(dish_lines)
-    )
+    parts.append(f"🍽 <b>Собрала корзину для {len(dishes)} блюд:</b>\n" + "\n".join(dish_lines))
 
     cart_output = render_stable_cart_output(cart_data, include_intro=False)
     parts.append(cart_output)
@@ -230,6 +242,7 @@ def _render_multi_course_response(
 # ---------------------------------------------------------------------------
 # Main executor
 # ---------------------------------------------------------------------------
+
 
 async def run_multi_course_turn(
     *,
@@ -281,10 +294,12 @@ async def run_multi_course_turn(
     )
     if ingr_span is not None:
         with contextlib.suppress(Exception):
-            ingr_span.end(output={
-                "total_ingredients": len(flat_ingredients),
-                "dishes_with_ingredients": len(by_dish),
-            })
+            ingr_span.end(
+                output={
+                    "total_ingredients": len(flat_ingredients),
+                    "dishes_with_ingredients": len(by_dish),
+                }
+            )
 
     if not flat_ingredients:
         logger.warning("Multi-course: no ingredients collected")
@@ -312,10 +327,12 @@ async def run_multi_course_turn(
     )
     if search_span is not None:
         with contextlib.suppress(Exception):
-            search_span.end(output={
-                "products_found": len(products),
-                "not_found_count": len(not_found),
-            })
+            search_span.end(
+                output={
+                    "products_found": len(products),
+                    "not_found_count": len(not_found),
+                }
+            )
 
     if not products:
         logger.warning("Multi-course: no products found")
@@ -366,10 +383,12 @@ async def run_multi_course_turn(
         not_found=not_found,
     )
 
-    agent._history[user_id] = agent._trim_history([
-        *state.history,
-        {"role": "assistant", "content": response},
-    ])
+    agent._history[user_id] = agent._trim_history(
+        [
+            *state.history,
+            {"role": "assistant", "content": response},
+        ]
+    )
 
     elapsed_ms = (time.monotonic() - started_at) * 1000
     if isinstance(diagnostics, dict):

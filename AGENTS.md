@@ -1,257 +1,136 @@
-# AGENTS.md — VkusVill Bot
+# AGENTS.md — vkuswill_bot
 
-> Единый источник правды для всех ИИ-агентов, работающих с этим репозиторием.
+## Start here
 
----
+- Repo: `readlink -f repo` — resolve before every action. Runtime over memory.
+- Forbidden: `/home/denis/projects/vkuswill_bot`.
 
-## Mission
+### Local services — use them, don't say "I don't have a tool"
 
-Telegram-бот ВкусВилл — ИИ-ассистент для покупок. Бот понимает запрос на естественном языке, находит товары через MCP-сервер ВкусВилл, собирает корзину и отдаёт ссылку. Поддерживает голосовой канал через Алису и Яндекс Станцию.
+| Service | Access |
+|---------|--------|
+| **Hub** | `/home/denis/.local/bin/oc-hub <cmd>` or `curl http://127.0.0.1:8080/api/...` |
+| **n4l** | `/home/denis/.local/bin/n4l <tool>` |
+| **dispatch** | `/home/denis/.local/bin/oc-dev-dispatch <cmd>` |
 
-**Репозиторий:** `vkuswill_bot`
-**Стек:** Python 3.11+, aiogram 3, Qwen (OpenAI-compatible), MCP, PostgreSQL, Redis, Langfuse.
+Hub essentials: `oc-hub list`, `oc-hub status <id>`, `oc-hub dashboard`, `oc-hub tree <id>`, `oc-hub context <id>`
+Hub lifecycle: `oc-hub approve <id>`, `oc-hub start <id> --plan "..."`, `oc-hub question <id>`, `oc-hub answer <id>`
+Hub hierarchy: `oc-hub epic`, `oc-hub feature --parent <epic_id>`, `oc-hub task --parent <feature_id>`, `oc-hub subtask --parent <task_id>`
+List filters: `oc-hub list --type epic`, `oc-hub list --parent <id>`, `oc-hub list --priority high`
 
----
+## Working rules
 
-## Экипаж «Испаньолы» — реестр агентов
+- Resolve repo: `readlink -f repo` then `git -C repo rev-parse --show-toplevel`.
 
-| Агент | Пиратское имя | Специализация | Триггеры |
-|-------|--------------|--------------|----------|
-| **teamlead** | Капитан Смоллетт | Координация, декомпозиция, делегирование | `тимлид`, `капитан`, `Смоллетт` |
-| **architect-analyst** | Доктор Ливси | Архитектура, ADR, trade-offs | `архитектура`, `ADR`, `Доктор Ливси` |
-| **code-reviewer** | Гектор Барбосса | Code review, качество, стандарты | `ревью`, `review`, `Барбосса` |
-| **refactoring-agent** | Уилл Тёрнер | Рефакторинг, code smells | `рефакторинг`, `упрости`, `Уилл Тёрнер` |
-| **appsec-agent** | Дэйви Джонс | SAST, DAST, OWASP, AI safety | `безопасность`, `SAST`, `Дэйви Джонс` |
-| **prompt-engineer** | Тиа Дальма | Промпты, A/B-тесты, prompt injection | `промпт`, `Тиа Дальма` |
-| **dialog-analyst** | Джек Воробей | Сценарии диалогов, UX | `сценарий`, `диалог`, `Джек Воробей` |
-| **secops-agent** | Израэль Хэндс | Деплой, K8s, CI/CD, Yandex Cloud | `деплой`, `kubernetes`, `Израэль Хэндс` |
-| **devops-agent** | Джон Сильвер | Git, ветки, PR, релизы, CHANGELOG | `коммит`, `PR`, `релиз`, `Джон Сильвер` |
-| **testing-agent** | Билли Бонс | pytest, покрытие, SAST, AI Safety | `тесты`, `pytest`, `Билли Бонс` |
-| **habr-writer** | Джошами Гиббс | Статьи на Хабр | `хабр`, `статья`, `Гиббс` |
-| **doc-writer** | Бен Ганн | Документация, README, руководства | `документация`, `docs`, `Бен Ганн` |
-| **python-senior-developer** | — | Реализация фич, баг-фиксы, рефакторинг | прямая разработка в `src/` |
+### CRITICAL: Git rules
 
-Подробные описания ролей и характеров — в [docs/TEAM_HISPANIOLA.md](docs/TEAM_HISPANIOLA.md).
+- **ЗАПРЕЩЕНО** делать `git commit`, `git push`, `git merge`, `git rebase`. Hub делает ВСЁ это автоматически. Просто вноси изменения в файлы.
+- Hub создаёт ветку `task-<id>/<slug>` автоматически. Проверь текущую ветку: `git branch --show-current`.
+- Hub автоматически: коммитит → squash → push → создаёт PR → проверяет CI → отправляет на ревью → мержит.
 
----
+### CRITICAL: File editing rules
 
-## Session Memory via notesforllm
+- **ЗАПРЕЩЕНО** использовать `write` tool для перезаписи существующих файлов целиком. Используй `edit` (patch) для точечных правок.
+- `write` допускается ТОЛЬКО для создания НОВЫХ файлов, которых ещё нет в репозитории.
+- После каждого изменения файла проверь его валидность: `python -c "import ast; ast.parse(open('file.py').read())"`.
+- Если файл стал невалидным — отмени изменения: `git checkout -- <file>` и попробуй заново через `edit`.
 
-MCP-сервер `user-notesforllm` (alias: `notesforllm`) — persistent memory layer для всех агентов.
+### Pre-completion checklist
 
-### Обязательные правила
+**ОБЯЗАТЕЛЬНО перед завершением** — запусти и убедись, что всё проходит:
+1. `uv run ruff check src/ tests/ --fix` — lint
+2. `uv run ruff format src/ tests/` — форматирование
+3. `uv run pytest tests/ -x -q` — тесты
 
-1. **Старт сессии (context restore):**
-   - Если `task_id` известен — вызвать `notes_resume_context(space_id, task_id)` **до начала изменений кода**.
-   - Если `task_id` неизвестен — вызвать `notes_search(query)` или `notes_list(space_id)` для поиска контекста.
-   - Проверить наличие decisions, handoffs и checkpoints по задаче.
+Если есть ошибки lint/тестов — исправь их ДО завершения задачи. Hub проверяет CI автоматически и вернёт задачу если CI не проходит.
 
-2. **Во время работы (checkpoints & decisions):**
-   - После meaningful milestone — `notes_checkpoint_save(space_id, title, summary, task_id=..., agent_id=..., status="in_progress", findings=[...], artifacts=[...], next_steps=[...])`.
-   - При durable technical decision (архитектура, схема, API, workflow) — `notes_decision_save(space_id, title, decision, why, task_id=..., agent_id=..., alternatives=[...], consequences=[...])`.
-   - Предпочитать краткие, фактологические записи. Не дублировать весь чат.
+### CI checks troubleshooting
 
-3. **Конец сессии (handoff):**
-   - Если работа **не завершена** — обязательно `notes_handoff_save(space_id, title, goal, current_state, first_next_step, task_id=..., agent_id=..., verified=[...], risks=[...], after_that=[...])`.
-   - Если работа **завершена** — handoff не нужен, кроме случаев ожидаемого follow-up.
+Hub автоматически проверяет CI после каждого push. Если CI не проходит — тебе придёт задание с логами ошибок. Справочник по исправлению:
 
-4. **Timeline review:**
-   - Если задача прошла несколько сессий/агентов — `notes_task_timeline(space_id, task_id)` для полной истории.
-   - Перед изменением архитектуры — проверить prior decisions.
+| CI Check | Как исправить |
+|----------|--------------|
+| **Lint & Format** | `uv run ruff check src/ tests/ --fix && uv run ruff format src/ tests/` |
+| **Tests** | `uv run pytest tests/ -x -q` — исправь упавшие тесты |
+| **Security: pip-audit** | CVE в зависимостях → `uv lock --upgrade-package <имя_пакета>` (имя и версия в логе) |
+| **Security: bandit** | SAST-замечания → исправь код по рекомендациям |
+| **Security: gitleaks** | Секреты в коде → вынеси в переменные окружения |
+| **Validate commits** | Hub коммитит сам, тебе НЕ нужно коммитить. Если ошибка — не делай git commit. |
+| **Architecture gate** | `uv run pytest -q tests/test_agents_architecture.py tests/test_services_architecture.py tests/test_shopping_contract_flows.py` |
 
-### Запрещено
+### General
 
-- Пропускать context restore на multi-session задачах.
-- Создавать handoff для полностью завершённой работы без follow-up.
-- Писать low-signal checkpoints на тривиальные правки.
-- Менять `task_id` в рамках одного непрерывного workstream.
-- **Создавать JSON/MD файлы в `docs/` для хранения контекста, handoffs, decisions.** Всё это должно идти в notesforllm. Файлы `docs/MEAL_PLAN_HANDOFF.json`, `docs/DEBUG_API_KEY_SOURCE.json`, `docs/STAGE_ACCESS.json` — legacy, их данные мигрированы в notesforllm.
+- Keep token spend low: targeted reads, narrow grep, focused tests.
+- Use `.venv/bin/pytest` or `uv run pytest` — never `python -m pytest`.
+- One tool call per turn. After editing, validate first, then accept.
+- If tool call `terminated` with partial args, retry once.
+- Don't end tasks with plan when execution was requested.
 
----
+## Roles
 
-## Repository Context via Git/MCP Workbench
+- **main**: resolve repo, delegate via Hub. Use `oc-hub propose` for new work.
+- **python-senior-developer**: minimal edits, validate from repo root, report changes.
+- **code-reviewer**: findings from repo root only.
+- **testing-agent**: focused checks from repo root.
+- **appsec-agent / secops-agent**: inspect repo root; cite files/commands.
 
-> **Статус:** setup-dependent. Workbench доступен только если конкретный разработчик или агент локально настроил `.cursor/mcp.json` (gitignored). Репозиторий хранит только переносимый шаблон `workbench-mcp.json.example`, поэтому нельзя писать, что Workbench "уже подключён" без локальной проверки. См. [docs/integration-setup.md](docs/integration-setup.md).
+## Hub task updates
 
-### Если Workbench настроен локально: MCP tools вместо shell
+When working on a task, write updates via `oc-hub update <task_id>`:
+- Start: `--kind status --message "Plan: <approach> (chose over <alternative> because <reason>)"`
+- Milestone: `--kind status --message "Done X (approach: <what and why>), moving to Y"`
+- Blocker: `--kind blocker --message "Blocked by: <issue>. Tried: <what>. Need: <what>"`
+- Question: `oc-hub question <task_id> --message "..." --agent "<role>"` — task pauses
+- Finish: `--kind done --message "Changed: <files>. Approach: <why this way>. Validation: <how tested>"`
+- Extra work needed? `oc-hub propose ...` — don't start it, propose first.
 
-Использовать MCP-инструменты Workbench **в первую очередь** для получения Git-контекста. Shell — fallback **только** если Workbench не настроен или недоступен.
+**Every update MUST include rationale** — not just "done X, moving to Y" but WHY this approach was chosen. For code-reviewer: include severity (high/medium/low) and reasoning for each finding.
 
-| Задача | MCP tool (primary) | Shell fallback |
-|--------|-------------------|----------------|
-| Статус репозитория | `git_status` | `git status` |
-| Изменённые файлы | `changed_files` | `git diff --name-only` |
-| Сводка diff | `git_diff_summary` | `git diff --stat` |
-| Последние коммиты | `recent_commits` | `git log --oneline -10` |
-| Сводка коммита | `commit_summary` | `git show --stat <sha>` |
-| Снимок задачи | `task_snapshot` | git status + diff + log |
-| Подготовка PR | `pr_prep` | ручная сборка |
-| Восстановление контекста | `restore_task_context` | `notes_resume_context` |
-| Checkpoint через Workbench | `save_session_checkpoint` | `notes_checkpoint_save` |
-| Decision через Workbench | `save_decision` | `notes_decision_save` |
-| Handoff через Workbench | `save_session_handoff` | `notes_handoff_save` |
+### Lifecycle enforcement
 
-### Когда Workbench временно недоступен
+Hub enforces two rules at the data level:
+1. **Plan before start**: `oc-hub start <id>` requires `--plan "..."` or a prior `Plan:` update. Without it, start fails with 400.
+2. **Done report before completion**: When your task finishes, Hub sets `pending_report` instead of `completed` until you submit `--kind done --message "..."`. If you don't report — the task stays in inbox.
+3. **Stale detection**: Tasks with no updates for 30+ min get an automatic alert. Keep updating.
 
-Если MCP-сервер `git_mcp_workbench` не отвечает — используй Shell для git-операций и прямые `notes_*` tools для memory. Но зафиксируй проблему как `[WARN]` в checkpoint.
+### Hierarchy context
 
----
+Before starting work on a task, get its context: `oc-hub context <task_id>`. This shows:
+- Breadcrumb path (epic > feature > task)
+- Sibling tasks (to understand scope)
+- Children and progress (for parent tasks)
 
-## Task ID и Space Policy
+Use this context in your updates and when making architectural decisions.
 
-### Формат task_id
-
-| Тип | Формат | Пример |
-|-----|--------|--------|
-| Product | `<repo>:<issue-or-branch>` | `vkuswill_bot:feature/meal-plan` |
-| Verification | `<repo>:verification/<topic>` | `vkuswill_bot:verification/pg-migration` |
-
-### Правила
-
-- Один `task_id` на весь непрерывный workstream — не создавать новый при рестарте сессии.
-- Предпочитать имя ветки или номер issue.
-- Verification-задачи (smoke, debug, integration validation) — **всегда** в формате `verification/<topic>`.
-
-### Spaces
+For n4l integration, use `task_id: "hub:<id>"` convention, e.g. `n4l checkpoint --task_id "hub:42"`.
 
-| Space | Назначение | Что хранить |
-|-------|-----------|-------------|
-| **Product space** (`NOTESFORLLM_SPACE_ID`) | Основная работа по репозиторию | Checkpoints, decisions, handoffs по фичам и багам |
-| **Verification space** (`NOTESFORLLM_VERIFICATION_SPACE_ID`) | Smoke, debug, integration validation | Результаты проверок, debug-находки |
+Full Hub reference: read `HUB.md`.
 
-Не смешивать product и verification notes в одном space.
+## notesforllm
 
----
+For multi-session work only. Details: read `NOTESFORLLM.md`.
 
-## Workflow
+Core commands:
+- `n4l resume` — at start of continuing tasks.
+- `n4l checkpoint` — after validated milestones.
+- `n4l decision` — for durable choices.
+- `n4l handoff` — when work stops unfinished.
 
-### 1. Startup (начало сессии)
+Analysis commands:
+- `n4l timeline` — chronological history of a task (use before resuming complex tasks).
+- `n4l compare` — diff two checkpoints or pages.
+- `n4l test_run` — structured test results with pass/fail counts (`testing-agent`).
+- `n4l search` — text search across all pages.
+- `n4l query` — structured query with filters (kind, workflow, stage, etc.).
 
-```
-1. Определить space_id (из env или через spaces_list)
-2. Определить task_id:
-   → Из .workbench/task-branches.json (по текущей ветке)
-   → Или из issue / контекста запроса
-   → Привязать ветку: bash scripts/bind-task-branch.sh <task_id>
-3. Если task_id известен:
-   → при локально настроенном Workbench можно вызвать restore_task_context
-   → иначе вызвать notes_resume_context(space_id, task_id)
-4. Если task_id неизвестен:
-   → notes_search(query) или notes_list(space_id)
-5. Прочитать prior decisions и handoffs
-6. Получить Git-контекст:
-   → git_status, changed_files, recent_commits (через Workbench)
-   → Fallback: git status, git diff, git log (Shell)
-7. Начать работу
-```
+Structured fields (optional, use on multi-session tasks):
+- `provenance`: `{repo, branch, head_sha, environment}` — where work happened.
+- `operational`: `{last_good_state, exact_next_command, files_in_play, unresolved_risks}` — bootstrap for next session.
+- `bridge`: `{role, target_page_id}` — link verification → fix → follow-up pages.
 
-### 2. During Work (выполнение)
+## Reference files (read on demand)
 
-```
-1. После meaningful milestone:
-   → notes_checkpoint_save(...)
-2. При durable technical decision:
-   → notes_decision_save(...)
-3. При фрагментации контекста:
-   → notes_task_timeline(space_id, task_id)
-4. Для Git-контекста:
-   → Workbench tools (preferred) или git shell commands
-```
-
-### 3. End of Session (завершение)
-
-```
-1. Если работа завершена:
-   → Финальный checkpoint со status="done"
-   → Handoff НЕ нужен (если нет follow-up)
-2. Если работа НЕ завершена:
-   → notes_handoff_save(...)
-     - goal: что задача должна достичь
-     - current_state: что сделано
-     - verified: что подтверждено
-     - risks: известные риски
-     - first_next_step: одно главное следующее действие
-   → Использовать тот же task_id
-```
-
----
-
-## Memory Linkage Convention
-
-Для восстановления контекста между сессиями агенты должны заполнять метаданные linkage, **используя только реально поддерживаемые параметры `notesforllm`**.
-
-### session_id (checkpoint, handoff)
-
-`session_id` поддерживается в `notes_checkpoint_save` и `notes_handoff_save`, но **не** в `notes_decision_save`.
-
-```
-notes_checkpoint_save(
-  ...,
-  session_id="vkuswill-bot-agent-2026-03-15",
-  agent_id="teamlead"
-)
-```
-
-### related_page_ids (только decision)
-
-`related_page_ids` поддерживается **только** в `notes_decision_save`. Используй для связи decision с предшествующими checkpoint/decision.
-
-```
-notes_decision_save(
-  ...,
-  related_page_ids=["<uuid-предыдущего-checkpoint>"]
-)
-```
-
-Для checkpoint и handoff связи передаются через `tags` и `findings`, а не через `related_page_ids`.
-
-### Verification → Product bridge
-
-Когда verification-находка (из verification space) требует продуктовых изменений:
-
-1. Создать checkpoint в verification space с `findings` и `status="done"`.
-2. Создать decision в product space с `tags=["from-verification"]` и `related_page_ids=["<verification-page-uuid>"]`.
-3. В `findings` product checkpoint указать: `"Originated from verification: <verification-task-id>"`.
-
-Это позволяет построить цепочку: verification finding → product decision → remediation.
-
----
-
-## Правила для всех агентов
-
-### Coding Standards
-
-- Python 3.11+, strict type hints, async/await
-- Форматирование: `ruff format`, линтер: `ruff check`
-- Тесты: `pytest` + `pytest-asyncio`
-- Пакетный менеджер: `uv`
-- Conventional Commits (см. `.cursor/rules/git-commits.mdc`)
-
-### Приоритеты
-
-| Приоритет | Область |
-|-----------|---------|
-| P0 | Безопасность |
-| P1 | Работоспособность (баги) |
-| P2 | Качество кода |
-| P3 | Документация |
-| P4 | Оптимизация |
-
-### Запрещено
-
-- Хардкодить абсолютные пути из чужих машин
-- Коммитить секреты, токены, пароли
-- Пропускать тесты перед коммитом
-- Игнорировать prior decisions из notesforllm
-- Создавать агентов для разовых задач
-
----
-
-## Подробные руководства
-
-| Документ | Описание |
-|----------|----------|
-| [docs/integration-setup.md](docs/integration-setup.md) | Подключение notesforllm и Git/MCP Workbench |
-| [docs/agent-kickoff.md](docs/agent-kickoff.md) | Bootstrap-задача и порядок запуска |
-| [docs/TEAM_HISPANIOLA.md](docs/TEAM_HISPANIOLA.md) | Описание ролей экипажа |
-| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура проекта |
+- `HUB.md` — Hub CLI, API, lifecycle, Q&A, proposal workflow
+- `TOOLS.md` — paths, commands, acceptance helpers
+- `NOTESFORLLM.md` — n4l commands and templates
+- `BOOTSTRAP.md` — core path discipline

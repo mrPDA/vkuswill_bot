@@ -15,16 +15,47 @@ from vkuswill_bot.agents.intent_markers import (
 )
 from vkuswill_bot.services.cart_intent_heuristics import looks_like_cart_product_list
 
-_MEAL_TYPES = frozenset({
-    "завтрак", "обед", "ужин", "десерт", "полдник", "перекус",
-})
+_MEAL_TYPES = frozenset(
+    {
+        "завтрак",
+        "обед",
+        "ужин",
+        "десерт",
+        "полдник",
+        "перекус",
+    }
+)
 
 _DISH_STEMS = (
-    "борщ", "суп", "паста", "лазань", "пицц", "салат", "карбонар",
-    "плов", "окрошк", "блин", "оладь", "каш", "омлет", "стейк",
-    "чизкейк", "шарлотк", "котлет", "пельмен", "вареник",
-    "шашлык", "ролл", "суши", "бургер", "тефтел", "запеканк",
-    "ризотто", "гуляш", "азу", "рагу",
+    "борщ",
+    "суп",
+    "паста",
+    "лазань",
+    "пицц",
+    "салат",
+    "карбонар",
+    "плов",
+    "окрошк",
+    "блин",
+    "оладь",
+    "каш",
+    "омлет",
+    "стейк",
+    "чизкейк",
+    "шарлотк",
+    "котлет",
+    "пельмен",
+    "вареник",
+    "шашлык",
+    "ролл",
+    "суши",
+    "бургер",
+    "тефтел",
+    "запеканк",
+    "ризотто",
+    "гуляш",
+    "азу",
+    "рагу",
 )
 
 _MEAL_TYPE_MARKER_RE = re.compile(
@@ -90,11 +121,7 @@ def _segment_has_explicit_course_content(segment: str) -> bool:
     cleaned = re.sub(r"^[\s\-—–:;,]+", "", cleaned)
     cleaned = re.sub(r"[\s\-—–:;,]+$", "", cleaned)
     cleaned = re.sub(r"\s+(?:и|плюс|все|всё|ещё|еще)\s*$", "", cleaned)
-    words = [
-        word
-        for word in _SEGMENT_WORD_RE.findall(cleaned)
-        if word not in _SEGMENT_STOP_WORDS
-    ]
+    words = [word for word in _SEGMENT_WORD_RE.findall(cleaned) if word not in _SEGMENT_STOP_WORDS]
     return bool(words)
 
 

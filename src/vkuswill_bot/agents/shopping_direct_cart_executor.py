@@ -181,11 +181,7 @@ async def try_explicit_cart_fast_path(
             cart_data["items_count"] = summary.get("count")
     agent._last_cart_snapshot[user_id] = copy.deepcopy(cart_data)
 
-    safety_note = (
-        f"Не нашлось: {', '.join(compact_not_found)}."
-        if compact_not_found
-        else ""
-    )
+    safety_note = f"Не нашлось: {', '.join(compact_not_found)}." if compact_not_found else ""
     final_text = render_stable_cart_output(cart_data, safety_note=safety_note)
     recipe_search_history = {
         "role": "tool",

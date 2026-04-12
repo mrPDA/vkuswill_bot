@@ -117,7 +117,7 @@ async def test_try_explicit_cart_fast_path_rejects_luxury_substitutes() -> None:
                         "best_match": {
                             "xml_id": 202,
                             "suggested_q": 1,
-                            "name": 'Паштет Французский с фуа-гра',
+                            "name": "Паштет Французский с фуа-гра",
                             "price": 312,
                             "unit": "шт",
                         },

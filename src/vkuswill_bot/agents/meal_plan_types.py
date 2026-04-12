@@ -157,6 +157,7 @@ class MealPlanRequest:
             d["requested_meal_types"] = meal_types
         return d
 
+
 @dataclass(slots=True)
 class MealPlanDish:
     name: str
