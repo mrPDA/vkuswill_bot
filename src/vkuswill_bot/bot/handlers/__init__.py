@@ -29,8 +29,6 @@ from vkuswill_bot.bot.handlers.cart_feedback_handlers import (
     cart_feedback_positive,
     cart_feedback_negative,
     cart_feedback_reason,
-    # _extract_cart_url_from_keyboard, # Removed, assumed internal
-    # _cart_only_keyboard,            # Removed, assumed internal
 )
 from vkuswill_bot.bot.handlers.survey_handlers import (
     is_survey_pending,
@@ -50,9 +48,6 @@ from vkuswill_bot.bot.handlers.user_commands import (
     cmd_privacy,
     consent_accept_callback,
     handle_text,
-    # _freemium_user_note,           # Removed, assumed internal
-    # _process_referral_start,       # Removed, assumed internal
-    # _send_typing_periodically,     # Removed, as test was removed
 )
 
 # Импортируем функции из telegram_delivery для обратной совместимости
@@ -60,6 +55,7 @@ from vkuswill_bot.bot.telegram_delivery import (
     _extract_cart_link,
     _sanitize_telegram_html,
     _split_message,
+    _send_typing_periodically, # _send_typing_periodically now permanently in telegram_delivery
 )
 
 # Создаем главный роутер и включаем в него все подроутеры
@@ -69,7 +65,7 @@ router.include_router(survey_handlers_router)
 router.include_router(cart_feedback_handlers_router)
 router.include_router(admin_commands_router)
 
-__all__ = [
+__all__ = sorted([
     "AdminFilter",
     "router",
     "user_commands_router",
@@ -111,4 +107,5 @@ __all__ = [
     "_extract_cart_link",
     "_sanitize_telegram_html",
     "_split_message",
-]
+    "_send_typing_periodically",
+])
