@@ -5,12 +5,12 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from aiogram import F, Router
+from aiogram import Router
 from aiogram.filters import BaseFilter, Command
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import Message
 
 if TYPE_CHECKING:
-    from vkuswill_bot.services.user_store import UserStore
+    pass
 
 logger = logging.getLogger(__name__)
 

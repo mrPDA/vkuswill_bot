@@ -137,7 +137,7 @@ def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
             q = 1
         else:
             q = float(q_raw)
-        
+
         if xml_id in merged:
             merged[xml_id] += q
         else:

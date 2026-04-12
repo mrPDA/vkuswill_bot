@@ -9,7 +9,7 @@ from aiogram import F, Router
 from aiogram.types import CallbackQuery, InlineKeyboardMarkup
 
 if TYPE_CHECKING:
-    from vkuswill_bot.services.user_store import UserStore
+    pass
 
 logger = logging.getLogger(__name__)
 
