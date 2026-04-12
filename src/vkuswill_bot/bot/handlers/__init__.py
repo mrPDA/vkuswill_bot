@@ -17,10 +17,10 @@ router.include_router(cart_feedback_handlers_router)
 router.include_router(admin_commands_router)
 
 __all__ = [
-    "router",
-    "user_commands_router",
-    "survey_handlers_router",
-    "cart_feedback_handlers_router",
     "admin_commands_router",
+    "cart_feedback_handlers_router",
+    "router",
+    "survey_handlers_router",
+    "user_commands_router",
 ]
 __all__.sort()
