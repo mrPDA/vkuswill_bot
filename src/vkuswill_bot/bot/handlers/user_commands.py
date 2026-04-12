@@ -4,26 +4,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import contextlib # Added by Agent
+import contextlib
 from typing import TYPE_CHECKING
 
 from aiogram import F, Router
-from aiogram.enums import ChatAction
 from aiogram.filters import Command, CommandStart
-from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup # Modified by Agent
+from aiogram.types import CallbackQuery, Message, InlineKeyboardButton, InlineKeyboardMarkup
 
 from vkuswill_bot.bot.telegram_delivery import (
-    MAX_TELEGRAM_MESSAGE_LENGTH,
-    _extract_cart_link,
-    _sanitize_telegram_html,
-    _split_message,
     build_telegram_delivery_preview,
+    _send_typing_periodically, # Imported from telegram_delivery.py
 )
 from vkuswill_bot.services.chat_engine import ChatEngineProtocol
-from vkuswill_bot.config import config as app_config # Added by agent
+from vkuswill_bot.config import config as app_config
 
 if TYPE_CHECKING:
-    from vkuswill_bot.services.stats_aggregator import StatsAggregator
     from vkuswill_bot.services.user_store import UserStore
 
 logger = logging.getLogger(__name__)
@@ -38,7 +33,6 @@ async def cmd_start(
     db_user: dict | None = None,
 ) -> None:
     print(f"DEBUG: Entering cmd_start with user_id={message.from_user.id}")
-    # Парсинг deep link для определения источника
     start_param: str | None = None
     if message.text and message.text.startswith("/start "):
         start_param = message.text.split(maxsplit=1)[1].strip()
@@ -291,17 +285,17 @@ async def handle_text(
     pending = None
     if user_store is not None:
         pending = await user_store.get_survey_pending(user_id)
-    
+
     if pending:
         if user_store is not None:
-            await user_store.clear_survey_pending(user_id) # Clear pending state after retrieval
+            await user_store.clear_survey_pending(user_id)
             # from vkuswill_bot.bot.handlers.survey_handlers import _finish_survey # Import needed for _finish_survey
             # _ok, text = await _finish_survey(
-                # user_id,
-                # user_store,
-                # pending["pmf"],
-                # pending["feature"],
-                # feedback,
+            #     user_id,
+            #     user_store,
+            #     pending["pmf"],
+            #     pending["feature"],
+            #     feedback,
             # )
             await message.answer("feedback received and pending cleared") # Placeholder
             return
@@ -381,12 +375,6 @@ async def handle_text(
     for i, chunk in enumerate(preview.chunks):
         is_last = i == len(preview.chunks) - 1
         await message.answer(chunk, reply_markup=preview.cart_keyboard if is_last else None)
-
-
-async def _send_typing_periodically(message: Message, delay: float = 0.5) -> None:
-    """Отправка периодических действий печати."""
-    # ... реализация отправки типирования ...
-    pass
 
 
 async def _freemium_user_note() -> str:
