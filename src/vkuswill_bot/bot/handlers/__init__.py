@@ -60,7 +60,7 @@ router.include_router(survey_handlers_router)
 router.include_router(cart_feedback_handlers_router)
 router.include_router(admin_commands_router)
 
-__all__ = sorted([
+__all__ = [
     "AdminFilter",
     "admin_commands_router",
     "cart_feedback_negative",
@@ -100,4 +100,5 @@ __all__ = sorted([
     "survey_handlers_router",
     "survey_pmf_callback",
     "user_commands_router",
-])
+]
+__all__.sort()
