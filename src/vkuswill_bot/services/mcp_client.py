@@ -1,1 +1,355 @@
-"""MCP-клиент для взаимодействия с сервером ВкусВилл.\n\nИспользует прямые JSON-RPC POST-вызовы через httpx\nс **постоянным** HTTP-соединением (keep-alive) вместо\nпересоздания сессии на каждый вызов.\n"""\n\nimport asyncio\nimport importlib.metadata\nimport json\nimport logging\nimport traceback\nfrom typing import Any\n\nimport httpx\n\nfrom vkuswill_bot.services.tool_input_normalizers import (\n    SEARCH_LIMIT,\n    STANDALONE_NUM_PATTERN,\n    UNIT_PATTERN,\n    clean_search_query as _clean_search_query_shared,\n    fix_cart_args as _fix_cart_args_shared,\n)\nfrom vkuswill_bot.config import config # Import the config\n\nlogger = logging.getLogger(__name__)\n\n\ndef _get_package_version() -> str:\n    """Получить версию пакета из метаданных."""\n    try:\n        return importlib.metadata.version("vkuswill-bot")\n    except importlib.metadata.PackageNotFoundError:\n        return "0.0.0-dev"\n\n# Removed hardcoded timeouts, now using config\n# CONNECT_TIMEOUT = 15\n# READ_TIMEOUT = 120\n# Количество попыток при ошибке\nMAX_RETRIES = 3\nRETRY_DELAY = 2.0\n\n# JSON-RPC\nJSONRPC_VERSION = "2.0"\nMCP_PROTOCOL_VERSION = "2025-03-26"\n\n\nclass VkuswillMCPClient:\n    """Клиент для MCP-сервера ВкусВилл.\n\n    Поддерживает постоянное HTTP-соединение и MCP-сессию.\n    Автоматически переинициализирует сессию при потере.\n\n    Инструменты:\n    - vkusvill_products_search — поиск товаров\n    - vkusvill_product_details — детали товара (состав, КБЖУ)\n    - vkusvill_cart_link_create — создание ссылки на корзину\n    """\n\n    def __init__(self, server_url: str, api_key: str | None = None) -> None:\n        self.server_url = server_url\n        self.api_key = api_key\n        self._tools_cache: list[dict] | None = None\n        self._session_id: str | None = None\n        self._request_id: int = 0\n        self._client: httpx.Client | None = None\n\n    def _next_id(self) -> int:\n        self._request_id += 1\n        return self._request_id\n\n    async def _get_client(self) -> httpx.Client:\n        """Получить или создать постоянный httpx-клиент."""\n        if self._client is None or self._client.is_closed:\n            self._client = httpx.Client(\n                timeout=httpx.Timeout(\n                    config.mcp_connect_timeout_seconds,\n                    read=config.mcp_read_timeout_seconds,\n                ),\n                follow_redirects=True,\n                # keep-alive включён по умолчанию в httpx\n            )\n        return self._client\n\n    def _headers(self) -> dict[str, str]:\n        """Общие заголовки для MCP-запросов."""\n        headers = {\n            "Content-Type": "application/json",\n            "Accept": "application/json, text/event-stream",\n        }\n        if self.api_key:\n            headers["Authorization"] = f"Bearer {self.api_key}"\n        if self._session_id:\n            headers["mcp-session-id"] = self._session_id\n        return headers\n\n    async def _rpc_call(\n        self,\n        client: httpx.Client,\n        method: str,\n        params: dict[str, Any] | None = None,\n    ) -> dict[str, Any] | None:\n        """Выполнить JSON-RPC вызов к MCP-серверу."""\n        request_id = self._next_id()\n        payload: dict[str, Any] = {\n            "jsonrpc": JSONRPC_VERSION,\n            "id": request_id,\n            "method": method,\n        }\n        if params is not None:\n            payload["params"] = params\n\n        logger.debug("JSON-RPC → %s (id=%d)", method, request_id)\n\n        response = await asyncio.to_thread(\n            client.post,\n            self.server_url,\n            json=payload,\n            headers=self._headers(),\n        )\n\n        logger.debug(\n            "JSON-RPC ← %s status=%d ct=%s",\n            method,\n            response.status_code,\n            response.headers.get("content-type", "?"),\n        )\n\n        # Сохраняем session-id\n        new_session_id = response.headers.get("mcp-session-id")\n        if new_session_id:\n            self._session_id = new_session_id\n            logger.debug("Session ID: %s", self._session_id)\n\n        # 202 = принято (notification)\n        if response.status_code == 202:\n            return None\n\n        response.raise_for_status()\n\n        content_type = response.headers.get("content-type", "")\n\n        # SSE-ответ\n        if "text/event-stream" in content_type:\n            return self._parse_sse_response(response.text)\n\n        # JSON-ответ\n        data = response.json()\n        if "error" in data:\n            error = data["error"]\n            raise RuntimeError(f"MCP JSON-RPC error {error.get('code')}: {error.get('message')}")\n        return data.get("result")\n\n    @staticmethod\n    def _parse_sse_response(raw: str) -> dict | None:\n        """Извлечь JSON из SSE-ответа (text/event-stream)."""\n        result = None\n        for line in raw.splitlines():\n            if line.startswith("data:"):\n                data_str = line[len("data:") :].strip()\n                if data_str:\n                    try:\n                        msg = json.loads(data_str)\n                        if "result" in msg:\n                            result = msg["result"]\n                        elif "error" in msg:\n                            error = msg["error"]\n                            raise RuntimeError(\n                                f"MCP JSON-RPC error {error.get('code')}: {error.get('message')}"\n                            )\n                    except json.JSONDecodeError:\n                        continue\n        return result\n\n    async def _rpc_notify(\n        self,\n        client: httpx.Client,\n        method: str,\n        params: dict[str, Any] | None = None,\n    ) -> None:\n        """Отправить JSON-RPC уведомление (без id)."""\n        payload: dict[str, Any] = {\n            "jsonrpc": JSONRPC_VERSION,\n            "method": method,\n        }\n        if params is not None:\n            payload["params"] = params\n\n        logger.debug("JSON-RPC notify → %s", method)\n\n        response = await asyncio.to_thread(\n            client.post,\n            self.server_url,\n            json=payload,\n            headers=self._headers(),\n        )\n        if response.status_code not in (200, 202, 204):\n            response.raise_for_status()\n\n    async def _ensure_initialized(self) -> httpx.Client:\n        """Убедиться, что MCP-сессия инициализирована.\n\n        Если сессия уже есть — возвращает клиент.\n        Иначе — инициализирует новую.\n        """\n        client = await self._get_client()\n\n        if self._session_id is not None:\n            return client\n\n        # Инициализация\n        logger.info("MCP: инициализация сессии...")\n        result = await self._rpc_call(\n            client,\n            "initialize",\n            {\n                "protocolVersion": MCP_PROTOCOL_VERSION,\n                "capabilities": {},\n                "clientInfo": {\n                    "name": "vkuswill-bot",\n                    "version": _get_package_version(),\n                },\n            },\n        )\n        logger.debug("MCP initialize result: %s", result)\n        await self._rpc_notify(client, "notifications/initialized")\n        logger.info("MCP: сессия инициализирована (sid=%s)", self._session_id)\n\n        return client\n\n    async def _reset_session(self) -> None:\n        """Сбросить сессию (при ошибке подключения)."""\n        self._session_id = None\n        if self._client and not self._client.is_closed:\n            await asyncio.to_thread(self._client.close)\n        self._client = None\n\n    async def close(self) -> None:\n        """Закрыть клиент."""\n        await self._reset_session()\n\n    async def get_tools(self) -> list[dict]:\n        """Получить список инструментов с MCP-сервера.\n\n        Результат кешируется.\n        """\n        if self._tools_cache is not None:\n            return self._tools_cache\n\n        last_error: Exception | None = None\n        for attempt in range(MAX_RETRIES):\n            try:\n                client = await self._ensure_initialized()\n                result = await self._rpc_call(client, "tools/list")\n                tools_raw = result.get("tools", []) if result else []\n\n                self._tools_cache = []\n                for tool in tools_raw:\n                    self._tools_cache.append(\n                        {\n                            "name": tool["name"],\n                            "description": tool.get("description", ""),\n                            "parameters": tool.get("inputSchema", {}),\n                        }\n                    )\n\n                logger.info(\n                    "MCP: загружено %d инструментов: %s",\n                    len(self._tools_cache),\n                    [t["name"] for t in self._tools_cache],\n                )\n                return self._tools_cache\n\n            except Exception as e:\n                last_error = e\n                logger.warning(\n                    "MCP get_tools попытка %d/%d: %r",\n                    attempt + 1,\n                    MAX_RETRIES,\n                    e,\n                )\n                logger.debug("MCP get_tools traceback:\n%s", traceback.format_exc())\n                await self._reset_session()\n                if attempt < MAX_RETRIES - 1:\n                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))\n\n        raise last_error or RuntimeError("MCP get_tools failed")\n\n    # ---- Обратная совместимость: делегаты в SearchProcessor/CartProcessor ----\n\n    @staticmethod\n    def _fix_cart_args(arguments: dict) -> dict:\n        """Обратная совместимость: нормализация аргументов корзины."""\n        return _fix_cart_args_shared(arguments)\n\n    # Алиасы для тестов\n    SEARCH_LIMIT = SEARCH_LIMIT\n    _UNIT_PATTERN = UNIT_PATTERN\n    _STANDALONE_NUM = STANDALONE_NUM_PATTERN\n\n    @classmethod\n    def _clean_search_query(cls, query: str) -> str:\n        """Обратная совместимость: очистка поискового запроса."""\n        return _clean_search_query_shared(query)\n\n    async def call_tool(self, name: str, arguments: dict) -> str:\n        """Вызвать инструмент на MCP-сервере.\n\n        Использует постоянное соединение и переинициализирует\n        сессию при ошибке.\n\n        Примечание: предобработка аргументов (очистка запроса, fix_cart_args)\n        теперь выполняется в ToolExecutor.preprocess_args() перед вызовом.\n        """\n        logger.info("MCP вызов: %s(%s)", name, arguments)\n\n        last_error: Exception | None = None\n        for attempt in range(MAX_RETRIES):\n            try:\n                client = await self._ensure_initialized()\n                result = await self._rpc_call(\n                    client,\n                    "tools/call",\n                    {"name": name, "arguments": arguments},\n                )\n\n                if result is None:\n                    return ""\n\n                content_list = result.get("content", [])\n                texts = []\n                for item in content_list:\n                    if isinstance(item, dict) and item.get("type") == "text":\n                        texts.append(item.get("text", ""))\n\n                response = "\\n".join(texts) if texts else json.dumps(result, ensure_ascii=False)\n                logger.debug("MCP ответ %s: %s", name, response[:500])\n                return response\n\n            except Exception as e:\n                last_error = e\n                logger.warning(\n                    "MCP call_tool %s попытка %d/%d: %r",\n                    name,\n                    attempt + 1,\n                    MAX_RETRIES,\n                    e,\n                )\n                logger.debug("MCP call_tool %s traceback:\n%s", name, traceback.format_exc())\n                # Сбрасываем сессию и пробуем заново\n                await self._reset_session()\n                if attempt < MAX_RETRIES - 1:\n                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))\n\n        raise last_error or RuntimeError(f"MCP call_tool {name} failed")
+\"\"\"MCP-клиент для взаимодействия с сервером ВкусВилл.
+
+Использует прямые JSON-RPC POST-вызовы через httpx
+с **постоянным** HTTP-соединением (keep-alive) вместо
+пересоздания сессии на каждый вызов.
+\"\"\"
+
+import asyncio
+import importlib.metadata
+import json
+import logging
+import traceback
+from typing import Any
+
+import httpx
+
+from vkuswill_bot.services.tool_input_normalizers import (
+    SEARCH_LIMIT,
+    STANDALONE_NUM_PATTERN,
+    UNIT_PATTERN,
+    clean_search_query as _clean_search_query_shared,
+    fix_cart_args as _fix_cart_args_shared,
+)
+from vkuswill_bot.config import config # Import the config
+
+logger = logging.getLogger(__name__)
+
+
+def _get_package_version() -> str:
+    \"\"\"Получить версию пакета из метаданных.\"\"\"
+    try:
+        return importlib.metadata.version(\"vkuswill-bot\")
+    except importlib.metadata.PackageNotFoundError:
+        return \"0.0.0-dev\"
+
+# Removed hardcoded timeouts, now using config
+# CONNECT_TIMEOUT = 15
+# READ_TIMEOUT = 120
+# Количество попыток при ошибке
+MAX_RETRIES = 3
+RETRY_DELAY = 2.0
+
+# JSON-RPC
+JSONRPC_VERSION = \"2.0\"
+MCP_PROTOCOL_VERSION = \"2025-03-26\"
+
+
+class VkuswillMCPClient:
+    \"\"\"Клиент для MCP-сервера ВкусВилл.
+
+    Поддерживает постоянное HTTP-соединение и MCP-сессию.
+    Автоматически переинициализирует сессию при потере.
+
+    Инструменты:
+    - vkusvill_products_search — поиск товаров
+    - vkusvill_product_details — детали товара (состав, КБЖУ)
+    - vkusvill_cart_link_create — создание ссылки на корзину
+    \"\"\"
+
+    def __init__(self, server_url: str, api_key: str | None = None) -> None:
+        self.server_url = server_url
+        self.api_key = api_key
+        self._tools_cache: list[dict] | None = None
+        self._session_id: str | None = None
+        self._request_id: int = 0
+        self._client: httpx.Client | None = None
+
+    def _next_id(self) -> int:
+        self._request_id += 1
+        return self._request_id
+
+    async def _get_client(self) -> httpx.Client:
+        \"\"\"Получить или создать постоянный httpx-клиент.\"\"\"
+        if self._client is None or self._client.is_closed:
+            self._client = httpx.Client(
+                timeout=httpx.Timeout(
+                    config.mcp_connect_timeout_seconds,
+                    read=config.mcp_read_timeout_seconds,
+                ),
+                follow_redirects=True,
+                # keep-alive включён по умолчанию в httpx
+            )
+        return self._client
+
+    def _headers(self) -> dict[str, str]:
+        \"\"\"Общие заголовки для MCP-запросов.\"\"\"
+        headers = {
+            \"Content-Type\": \"application/json\",
+            \"Accept\": \"application/json, text/event-stream\",
+        }
+        if self.api_key:
+            headers[\"Authorization\"] = f\"Bearer {self.api_key}\"
+        if self._session_id:
+            headers[\"mcp-session-id\"] = self._session_id
+        return headers
+
+    async def _rpc_call(
+        self,
+        client: httpx.Client,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> dict[str, Any] | None:
+        \"\"\"Выполнить JSON-RPC вызов к MCP-серверу.\"\"\"
+        request_id = self._next_id()
+        payload: dict[str, Any] = {
+            \"jsonrpc\": JSONRPC_VERSION,
+            \"id\": request_id,
+            \"method\": method,
+        }
+        if params is not None:
+            payload[\"params\"] = params
+
+        logger.debug(\"JSON-RPC → %s (id=%d)\", method, request_id)
+
+        response = await asyncio.to_thread(
+            client.post,
+            self.server_url,
+            json=payload,
+            headers=self._headers(),
+        )
+
+        logger.debug(
+            \"JSON-RPC ← %s status=%d ct=%s\",
+            method,
+            response.status_code,
+            response.headers.get(\"content-type\", \"?\"),
+        )
+
+        # Сохраняем session-id
+        new_session_id = response.headers.get(\"mcp-session-id\")
+        if new_session_id:
+            self._session_id = new_session_id
+            logger.debug(\"Session ID: %s\", self._session_id)
+
+        # 202 = принято (notification)
+        if response.status_code == 202:
+            return None
+
+        response.raise_for_status()
+
+        content_type = response.headers.get(\"content-type\", \"\")
+
+        # SSE-ответ
+        if \"text/event-stream\" in content_type:
+            return self._parse_sse_response(response.text)
+
+        # JSON-ответ
+        data = response.json()
+        if \"error\" in data:
+            error = data[\"error\"]
+            raise RuntimeError(f\"MCP JSON-RPC error {error.get(\'code\')}: {error.get(\'message\')}\")
+        return data.get(\"result\")
+
+    @staticmethod
+    def _parse_sse_response(raw: str) -> dict | None:
+        \"\"\"Извлечь JSON из SSE-ответа (text/event-stream).\"\"\"\
+        result = None
+        for line in raw.splitlines():
+            if line.startswith(\"data:\"):
+                data_str = line[len(\"data:\") :].strip()
+                if data_str:
+                    try:
+                        msg = json.loads(data_str)
+                        if \"result\" in msg:
+                            result = msg[\"result\"]
+                        elif \"error\" in msg:
+                            error = msg[\"error\"]
+                            raise RuntimeError(
+                                f\"MCP JSON-RPC error {error.get(\'code\')}: {error.get(\'message\')}\"
+                            )
+                    except json.JSONDecodeError:
+                        continue
+        return result
+
+    async def _rpc_notify(
+        self,
+        client: httpx.Client,
+        method: str,
+        params: dict[str, Any] | None = None,
+    ) -> None:
+        \"\"\"Отправить JSON-RPC уведомление (без id).\"\"\"\
+        payload: dict[str, Any] = {
+            \"jsonrpc\": JSONRPC_VERSION,
+            \"method\": method,
+        }
+        if params is not None:
+            payload[\"params\"] = params
+
+        logger.debug(\"JSON-RPC notify → %s\", method)
+
+        response = await asyncio.to_thread(
+            client.post,
+            self.server_url,
+            json=payload,
+            headers=self._headers(),
+        )
+        if response.status_code not in (200, 202, 204):
+            response.raise_for_status()
+
+    async def _ensure_initialized(self) -> httpx.Client:
+        \"\"\"Убедиться, что MCP-сессия инициализирована.
+
+        Если сессия уже есть — возвращает клиент.
+        Иначе — инициализирует новую.
+        \"\"\"
+        client = await self._get_client()
+
+        if self._session_id is not None:
+            return client
+
+        # Инициализация
+        logger.info(\"MCP: инициализация сессии...\")
+        result = await self._rpc_call(
+            client,
+            \"initialize\",
+            {
+                \"protocolVersion\": MCP_PROTOCOL_VERSION,
+                \"capabilities\": {},
+                \"clientInfo\": {
+                    \"name\": \"vkuswill-bot\",
+                    \"version\": _get_package_version(),
+                },
+            },
+        )
+        logger.debug(\"MCP initialize result: %s\", result)
+        await self._rpc_notify(client, \"notifications/initialized\")
+        logger.info(\"MCP: сессия инициализирована (sid=%s)\", self._session_id)
+
+        return client
+
+    async def _reset_session(self) -> None:
+        \"\"\"Сбросить сессию (при ошибке подключения).\"\"\"\
+        self._session_id = None
+        if self._client and not self._client.is_closed:
+            await asyncio.to_thread(self._client.close)
+        self._client = None
+
+    async def close(self) -> None:
+        \"\"\"Закрыть клиент.\"\"\"\
+        await self._reset_session()
+
+    async def get_tools(self) -> list[dict]:
+        \"\"\"Получить список инструментов с MCP-сервера.
+
+        Результат кешируется.
+        \"\"\"
+        if self._tools_cache is not None:
+            return self._tools_cache
+
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                client = await self._ensure_initialized()
+                result = await self._rpc_call(client, \"tools/list\")
+                tools_raw = result.get(\"tools\", []) if result else []
+
+                self._tools_cache = []
+                for tool in tools_raw:
+                    self._tools_cache.append(
+                        {
+                            \"name\": tool[\"name\"],
+                            \"description\": tool.get(\"description\", \"\"),
+                            \"parameters\": tool.get(\"inputSchema\", {}),
+                        }
+                    )
+
+                logger.info(
+                    \"MCP: загружено %d инструментов: %s\",
+                    len(self._tools_cache),
+                    [t[\"name\"] for t in self._tools_cache],
+                )
+                return self._tools_cache
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    \"MCP get_tools попытка %d/%d: %r\",
+                    attempt + 1,
+                    MAX_RETRIES,
+                    e,
+                )
+                logger.debug(\"MCP get_tools traceback:\\n%s\", traceback.format_exc())\
+                await self._reset_session()
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+
+        raise last_error or RuntimeError(\"MCP get_tools failed\")
+
+    # ---- Обратная совместимость: делегаты в SearchProcessor/CartProcessor ----
+
+    @staticmethod
+    def _fix_cart_args(arguments: dict) -> dict:
+        \"\"\"Обратная совместимость: нормализация аргументов корзины.\"\"\"\
+        return _fix_cart_args_shared(arguments)
+
+    # Алиасы для тестов
+    SEARCH_LIMIT = SEARCH_LIMIT
+    _UNIT_PATTERN = UNIT_PATTERN
+    _STANDALONE_NUM = STANDALONE_NUM_PATTERN
+
+    @classmethod
+    def _clean_search_query(cls, query: str) -> str:
+        \"\"\"Обратная совместимость: очистка поискового запроса.\"\"\"\
+        return _clean_search_query_shared(query)
+
+    async def call_tool(self, name: str, arguments: dict) -> str:
+        \"\"\"Вызвать инструмент на MCP-сервере.
+
+        Использует постоянное соединение и переинициализирует
+        сессию при ошибке.
+
+        Примечание: предобработка аргументов (очистка запроса, fix_cart_args)
+        теперь выполняется в ToolExecutor.preprocess_args() перед вызовом.
+        \"\"\"
+        logger.info(\"MCP вызов: %s(%s)\", name, arguments)
+
+        last_error: Exception | None = None
+        for attempt in range(MAX_RETRIES):
+            try:
+                client = await self._ensure_initialized()
+                result = await self._rpc_call(
+                    client,
+                    \"tools/call\",
+                    {\"name\": name, \"arguments\": arguments},
+                )
+
+                if result is None:
+                    return \"\"
+
+                content_list = result.get(\"content\", [])
+                texts = []
+                for item in content_list:
+                    if isinstance(item, dict) and item.get(\"type\") == \"text\":
+                        texts.append(item.get(\"text\", \"\"))
+
+                response = \"\\n\".join(texts) if texts else json.dumps(result, ensure_ascii=False)
+                logger.debug(\"MCP ответ %s: %s\", name, response[:500])
+                return response
+
+            except Exception as e:
+                last_error = e
+                logger.warning(
+                    \"MCP call_tool %s попытка %d/%d: %r\",
+                    name,
+                    attempt + 1,
+                    MAX_RETRIES,
+                    e,
+                )
+                logger.debug(\"MCP call_tool %s traceback:\\n%s\", name, traceback.format_exc())\
+                # Сбрасываем сессию и пробуем заново
+                await self._reset_session()
+                if attempt < MAX_RETRIES - 1:
+                    await asyncio.sleep(RETRY_DELAY * (attempt + 1))
+
+        raise last_error or RuntimeError(f\"MCP call_tool {name} failed\")
