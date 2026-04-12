@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, Message
 
 if TYPE_CHECKING:
     pass
