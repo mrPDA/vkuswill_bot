@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import asyncio # Added for _send_typing_periodically
 from dataclasses import dataclass
+import logging # Added for logger
 import re
 
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, Message # Message added for _send_typing_periodically
+
+logger = logging.getLogger(__name__)
 
 # Максимальная длина одного сообщения в Telegram
 MAX_TELEGRAM_MESSAGE_LENGTH = 4096
@@ -155,7 +158,7 @@ async def _send_typing_periodically(message: Message, stop_event: asyncio.Event,
         while not stop_event.is_set():
             await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
             await asyncio.wait_for(stop_event.wait(), timeout=delay)
-    except TimeoutError:
+    except asyncio.TimeoutError:
         # Продолжаем, если таймаут и событие не установлено
         pass
     except asyncio.CancelledError:
