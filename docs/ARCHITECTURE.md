@@ -1,400 +1,130 @@
 # Архитектура VkusVill Bot
 
-Mermaid-диаграммы архитектуры проекта.
+Документ отражает **текущий runtime** на базе `ShoppingAgent` и `Qwen OpenAI-compatible`.
 
----
-
-## Общая схема (C4 Context)
-
-```mermaid
-flowchart TB
-    subgraph Users["👤 Пользователи"]
-        TG[Telegram]
-    end
-
-    subgraph Bot["VkusVill Bot"]
-        direction TB
-        BotCore[Telegram Bot\naiogram 3]
-    end
-
-    subgraph External["Внешние сервисы"]
-        GigaChat[GigaChat API\nСбер]
-        MCP[MCP-сервер\nВкусВилл]
-        DB[(PostgreSQL)]
-        Redis[(Redis)]
-        SQLite[(SQLite)]
-    end
-
-    TG <-->|Long Poll / Webhook| BotCore
-    BotCore --> GigaChat
-    BotCore --> MCP
-    BotCore <--> DB
-    BotCore <--> Redis
-    BotCore <--> SQLite
-```
-
----
-
-## Поток данных (уровень контейнеров)
-
-```mermaid
-flowchart TB
-    subgraph Telegram["Telegram"]
-        API[Bot API]
-    end
-
-    subgraph Bot["VkusVill Bot"]
-        direction TB
-        
-        subgraph Entry["Точка входа"]
-            Main[__main__.py]
-            Polling[Polling / Webhook]
-            Health["/health"]
-        end
-
-        subgraph Middlewares["Middleware"]
-            UM[UserMiddleware]
-            TM[ThrottlingMiddleware]
-        end
-
-        subgraph Handlers["Handlers"]
-            Cmd[Команды: /start, /help, /reset,\n/invite, /survey]
-            Text[Текстовые сообщения]
-            Admin[Админ: /admin_*]
-        end
-
-        subgraph Core["Ядро"]
-            GCS[GigaChatService]
-            TE[ToolExecutor]
-        end
-
-        subgraph Processors["Процессоры"]
-            SP[SearchProcessor]
-            CP[CartProcessor]
-        end
-
-        subgraph Stores["Хранилища"]
-            Prefs[PreferencesStore]
-            UserStore[UserStore]
-            RecipeStore[RecipeStore]
-            CartSnap[CartSnapshotStore]
-            DialogMgr[DialogManager]
-        end
-
-        subgraph Caches["Кеши"]
-            PriceCache[PriceCache\nTwoLevelPriceCache]
-        end
-    end
-
-    subgraph External["Внешние API"]
-        GigaChat[GigaChat API]
-        MCP[MCP-сервер ВкусВилл]
-        OpenFF[Open Food Facts]
-    end
-
-    subgraph Persistence["Персистентность"]
-        PG[(PostgreSQL)]
-        RD[(Redis)]
-        PrefsDB[(SQLite prefs)]
-        RecipeDB[(SQLite recipes)]
-    end
-
-    API --> Main
-    Main --> Polling
-    Main --> Health
-    Polling --> UM --> TM --> Cmd
-    TM --> Text
-    TM --> Admin
-    
-    Text --> GCS
-    Cmd --> GCS
-    
-    GCS --> GigaChat
-    GCS --> TE
-    GCS --> DialogMgr
-    GCS --> Prefs
-    
-    TE --> MCP
-    TE --> SP
-    TE --> CP
-    TE --> Prefs
-    TE --> CartSnap
-    TE --> OpenFF
-    TE --> UserStore
-    
-    SP --> PriceCache
-    CP --> PriceCache
-    
-    UM --> UserStore
-    UserStore --> PG
-    Prefs --> PrefsDB
-    RecipeStore --> RecipeDB
-    CartSnap --> RD
-    DialogMgr --> RD
-    PriceCache --> RD
-```
-
----
-
-## Компоненты и зависимости (детальная схема)
+## 1) Актуальный runtime-контур
 
 ```mermaid
 flowchart LR
-    subgraph Input["Вход"]
-        TG[Telegram]
-    end
-
-    subgraph App["Приложение"]
-        direction TB
-        
-        subgraph BotLayer["Bot Layer"]
-            H[handlers.py]
-            M[middlewares.py]
-        end
-
-        subgraph ServiceLayer["Service Layer"]
-            GCS[GigaChatService]
-            TE[ToolExecutor]
-            LS[LangfuseService]
-        end
-
-        subgraph Processors["Processors"]
-            SP[SearchProcessor]
-            CP[CartProcessor]
-            NS[NutritionService]
-        end
-
-        subgraph Stores["Stores"]
-            Prefs[PreferencesStore]
-            UserStore[UserStore]
-            RecipeStore[RecipeStore]
-            CartSnapStore[CartSnapshotStore]
-        end
-
-        subgraph Managers["Managers"]
-            DM[DialogManager\nRedisDialogManager]
-        end
-
-        subgraph Clients["Clients"]
-            MCPClient[VkusvillMCPClient]
-        end
-
-        subgraph Caches["Caches"]
-            PC[PriceCache]
-        end
-
-        subgraph Background["Background"]
-            SA[StatsAggregator]
-            MR[MigrationRunner]
-        end
-    end
-
-    subgraph External["Внешние"]
-        GigaChat[GigaChat]
-        MCP[MCP Server]
-        OpenFF[Open Food Facts]
-        PG[(PostgreSQL)]
-        Redis[(Redis)]
-        SQLite1[(SQLite)]
-    end
-
-    TG --> H
-    H --> M
-    M --> GCS
-    GCS --> TE
-    GCS --> DM
-    GCS --> Prefs
-    GCS --> LS
-    GCS --> GigaChat
-    
-    TE --> MCPClient
-    TE --> SP
-    TE --> CP
-    TE --> Prefs
-    TE --> CartSnapStore
-    TE --> NS
-    TE --> UserStore
-    
-    MCPClient --> MCP
-    NS --> OpenFF
-    
-    SP --> PC
-    CP --> PC
-    
-    DM --> Redis
-    CartSnapStore --> Redis
-    PC --> Redis
-    
-    UserStore --> PG
-    Prefs --> SQLite1
-    RecipeStore --> SQLite1
-    SA --> PG
+    U[Telegram / Alice] --> H[aiogram handlers]
+    H --> F[create_chat_engine]
+    F --> A[ShoppingAgent]
+    A --> LLM[Qwen OpenAI-compatible API]
+    A --> MCP[MCP tools]
+    A --> D[DialogManager]
+    A --> P[PreferencesStore]
+    A --> LF[Langfuse]
+    A --> US[UserStore]
 ```
 
----
+Кодовые точки:
 
-## Цикл обработки сообщения (Function Calling)
+- `src/vkuswill_bot/services/chat_engine_factory.py` - фабрика runtime (`ShoppingAgent only`).
+- `src/vkuswill_bot/agents/shopping_agent.py` - основной chat engine.
+- `src/vkuswill_bot/agents/shopping_turn_executor.py` - цикл одного turn-а и роутинг executor-веток.
+- `src/vkuswill_bot/agents/meal_plan_executor.py` - специализированный meal-plan pipeline.
 
-```mermaid
-sequenceDiagram
-    participant User
-    participant TG as Telegram
-    participant H as Handlers
-    participant GCS as GigaChatService
-    participant DM as DialogManager
-    participant GC as GigaChat API
-    participant TE as ToolExecutor
-    participant MCP as MCP Server
-    participant Local as Local Tools
+## 2) Публичный интерфейс chat engine
 
-    User->>TG: Текстовое сообщение
-    TG->>H: handle_text()
-    H->>GCS: process_message(user_id, text)
-    
-    GCS->>DM: get_history(user_id)
-    DM-->>GCS: history
-    
-    loop Function Calling (до max_tool_calls)
-        GCS->>GC: chat(messages, functions)
-        GC-->>GCS: tool_calls[]
-        
-        alt MCP tool (search, cart_link, etc.)
-            GCS->>TE: execute(tool_name, args)
-            TE->>MCP: JSON-RPC call
-            MCP-->>TE: result
-        else Local tool (preferences, recipe, nutrition)
-            GCS->>TE: execute(tool_name, args)
-            TE->>Local: internal call
-            Local-->>TE: result
-        end
-        
-        TE-->>GCS: tool_result
-        GCS->>DM: append_assistant + tool_result
-    end
-    
-    GCS->>GC: chat(messages) // финальный ответ
-    GC-->>GCS: text response
-    GCS->>DM: append_final_response()
-    GCS-->>H: response text
-    H->>TG: answer(response)
-    TG->>User: Ответ бота
+Контракт описан в `src/vkuswill_bot/services/chat_engine.py` (`ChatEngineProtocol`):
+
+- `process_message(user_id, text, on_progress=None) -> str`
+- `reset_conversation(user_id) -> None`
+- `get_last_cart_snapshot(user_id) -> dict | None`
+- `get_last_trace_id(user_id) -> str | None`
+- `close() -> None`
+
+Это API используют Telegram handlers и voice-контур, поэтому изменения сигнатур считаются breaking.
+
+## 3) Маршрут обработки одного сообщения
+
+Порядок ветвления в `run_locked_turn(...)`:
+
+1. Построение `TurnState` + diagnostics + trace.
+2. Проверка, можно ли идти в `meal_plan_executor` (profile, rollout, shadow mode, feature flags).
+3. Если не meal-plan: попытка `multi_course_executor`.
+4. Если не multi-course: быстрые ветки:
+   - `status_cart_shortcircuit`
+   - `explicit_cart_fast_path` (явный запрос на корзину)
+5. Иначе - стандартный tool-loop (`_max_tool_calls`) с MCP/local tools.
+
+Ключевое ограничение из `create_chat_engine(...)`:
+
+- поддерживается только `LLM_PROVIDER=qwen_openai`
+- `LLM_ROUTING_STRATEGY=single_provider`
+
+## 4) Meal-plan executor: что важно знать
+
+### 4.1 Разбор запроса (LLM-first + fallback)
+
+`parse_meal_plan_request_with_llm(...)`:
+
+- сначала просит LLM вернуть JSON структуры запроса;
+- при невалидном JSON делает один retry с жёсткой инструкцией;
+- при ошибке откатывается в детерминированный парсер `parse_meal_plan_request(...)`.
+
+Практический эффект: сбой парсера не обрывает turn, а переводит в fallback-путь.
+
+### 4.2 Нормализация people/days и ограничения
+
+Из `meal_plan_people_parser.py` и `meal_plan_types.py`:
+
+- `days`: `1..14`, word-based формы (`"два дня"`, `"рабочая неделя"`) поддержаны.
+- `people_total`: `1..20`.
+- Без явного указания людей система **не выводит "2 человека из 2 дней"**; базово остаётся `default=1`, кроме сегментированного паттерна `"один..., другой..."`.
+
+### 4.3 Валидация структуры плана
+
+`meal_plan_generator.py` валидирует:
+
+- `schema_version == 1`
+- диапазон количества блюд через `dish_count_range_for_request(...)`
+- уникальность названий блюд
+- валидные `day`, `meal_type`, `servings_total`, `audience_groups`
+- покрытие дней/слотов (включая explicit meal slots)
+
+Важно для short meal slots:
+
+- если пользователь явно запросил слоты (`requested_meal_types`) и группа одна, диапазон блюд фиксируется в точное число слотов (`days * slots`), без лишних "филлеров".
+
+### 4.4 Phase 2
+
+`run_meal_plan_turn(...)` выполняет:
+
+1. сбор ингредиентов;
+2. phase2 safety policy;
+3. поиск продуктов по дням;
+4. сбор grouped carts;
+5. deterministic rendering ответа.
+
+На каждом этапе есть дедлайны и fail-soft fallback, чтобы turn завершался предсказуемо.
+
+## 5) Нормализация входа для корзины
+
+`src/vkuswill_bot/services/tool_input_normalizers.py`:
+
+- нормализует разговорные числительные и смешанный язык/translit для grocery-запросов;
+- очищает поисковую строку от количеств и единиц;
+- в `fix_cart_args(...)`:
+  - подставляет `q=1`, если количество не передано;
+  - объединяет дубли по `xml_id`;
+  - приводит `q` к `float`, включая строки с запятой (`"1,5" -> 1.5`).
+
+Следствие для интеграций: дробные количества в корзине допустимы и ожидаемы.
+
+## 6) Диагностика и observability
+
+- Turn-диагностика пишется в `_last_turn_diagnostics` (например, execution path, rollout gate, phase stats).
+- Trace/generation-спаны отправляются в Langfuse (`shopping_turn_executor.py`, `meal_plan_executor.py`).
+- Для stage/live контрактов используется общий набор сценариев:
+  - `src/vkuswill_bot/testing/response_contract_cases.py`.
+
+## 7) Что проверять при изменениях
+
+Минимум после правок в routing/meal-plan/cart:
+
+```bash
+uv run pytest tests/test_meal_plan_executor.py tests/test_meal_plan_generator.py
+uv run pytest tests/test_shopping_turn_executor.py tests/test_cart_processor.py
+uv run pytest tests/test_stage_response_contracts.py -m stage -rs
 ```
-
----
-
-## Режимы работы (Polling vs Webhook)
-
-```mermaid
-flowchart TB
-    subgraph Dev["Разработка (USE_WEBHOOK=false)"]
-        P[Long Polling]
-        P --> DP[Dispatcher.start_polling]
-        DP --> TG[Telegram API\ngetUpdates]
-    end
-
-    subgraph Prod["Production (USE_WEBHOOK=true)"]
-        W[aiohttp Web Server]
-        W --> WH["/webhook"]
-        W --> HC["/health"]
-        TG2[Telegram API] -->|POST Update| WH
-        WH --> DP2[Dispatcher]
-    end
-
-    subgraph HealthCheck["/health проверки"]
-        HC --> RedisChk[Redis ping]
-        HC --> PGChk[PostgreSQL SELECT 1]
-        HC --> MCPChk[MCP get_tools]
-    end
-```
-
----
-
-## Хранилища данных
-
-```mermaid
-flowchart LR
-    subgraph SQLite["SQLite (файлы)"]
-        PrefsDB[(preferences.db\nпредпочтения)]
-        RecipeDB[(recipes.db\nрецепты)]
-    end
-
-    subgraph PostgreSQL["PostgreSQL"]
-        Users[(users\nadmin, blocked)]
-        Events[(events\nаналитика)]
-        DailyStats[(daily_stats\nагрегаты)]
-    end
-
-    subgraph Redis["Redis (опционально)"]
-        Dialogs[(диалоги\nTTL)]
-        Prices[(кеш цен\nL2)]
-        CartSnap[(снимки корзины\n24h)]
-    end
-
-    subgraph Memory["In-memory (fallback)"]
-        MemDialogs[DialogManager]
-        MemCache[PriceCache]
-        MemCart[CartSnapshotStore]
-    end
-
-    PrefsStore[PreferencesStore] --> PrefsDB
-    RecipeStore[RecipeStore] --> RecipeDB
-    UserStore[UserStore] --> Users
-    UserStore --> Events
-    StatsAggregator --> DailyStats
-    RedisDialogManager --> Dialogs
-    TwoLevelPriceCache --> Prices
-    CartSnapshotStore --> CartSnap
-```
-
----
-
-## Инструменты (Tools) ToolExecutor
-
-```mermaid
-flowchart TB
-    TE[ToolExecutor]
-    
-    subgraph MCP["MCP Tools (удалённые)"]
-        VS[vkusvill_products_search]
-        VD[vkusvill_product_details]
-        VCL[vkusvill_cart_link_create]
-    end
-
-    subgraph Local["Local Tools (локальные)"]
-        UPG[user_preferences_get]
-        UPS[user_preferences_set]
-        UPD[user_preferences_delete]
-        RI[recipe_ingredients]
-        GPC[get_previous_cart]
-        NL[nutrition_lookup]
-    end
-
-    TE --> MCP
-    TE --> Local
-    
-    UPG --> PrefsStore
-    UPS --> PrefsStore
-    UPD --> PrefsStore
-    RI --> RecipeService
-    GPC --> CartSnapshotStore
-    NL --> NutritionService
-    
-    VS --> SearchProcessor
-    VCL --> CartProcessor
-```
-
----
-
-## Легенда
-
-| Компонент | Назначение |
-|-----------|------------|
-| **GigaChatService** | Оркестрация LLM, function calling, история диалогов |
-| **ToolExecutor** | Маршрутизация MCP vs local tools, обработка ошибок |
-| **SearchProcessor** | Поиск товаров, кеш цен, постпроцессинг результатов |
-| **CartProcessor** | Сборка корзины, верификация, расчёт стоимости |
-| **DialogManager** | Хранение истории диалога (in-memory или Redis) |
-| **PreferencesStore** | Предпочтения пользователя (SQLite) |
-| **UserStore** | Пользователи, админы, блокировки, рефералы (PostgreSQL) |
-| **VkusvillMCPClient** | JSON-RPC клиент к MCP-серверу ВкусВилл |
-| **PriceCache** | Кеш цен (in-memory или L1+L2 с Redis) |
