@@ -43,7 +43,7 @@ from vkuswill_bot.bot.handlers import (
     survey_done_callback,
 )
 
-from helpers import make_message
+from .helpers import make_message
 
 
 # ============================================================================
