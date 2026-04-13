@@ -52,6 +52,24 @@ _MULTILINGUAL_REPLACEMENTS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"\blitra\b", re.I), "литра"),
     (re.compile(r"\blitrov\b", re.I), "литров"),
     (re.compile(r"\blitr\b", re.I), "литр"),
+    (re.compile(r"\byogurt\b", re.I), "йогурт"),
+    (re.compile(r"\boil\b", re.I), "растительное масло"),
+    (re.compile(r"\bonion\b", re.I), "лук"),
+    (re.compile(r"\bgarlic\b", re.I), "чеснок"),
+    (re.compile(r"\bapple\b", re.I), "яблоко"),
+    (re.compile(r"\bsugar\b", re.I), "сахар"),
+    (re.compile(r"\bflour\b", re.I), "мука"),
+    (re.compile(r"\bcarrot\b", re.I), "морковь"),
+    (re.compile(r"\bcucumber\b", re.I), "огурец"),
+    (re.compile(r"\bpepper\b", re.I), "перец"),
+    (re.compile(r"\bbeef\b", re.I), "говядина"),
+    (re.compile(r"\bpork\b", re.I), "свинина"),
+    (re.compile(r"\bfish\b", re.I), "рыба"),
+    (re.compile(r"\bsalmon\b", re.I), "лосось"),
+    (re.compile(r"\boats\b", re.I), "овсянка"),
+    (re.compile(r"\bpasta\b", re.I), "макароны"),
+    (re.compile(r"\bcoffee\b", re.I), "кофе"),
+    (re.compile(r"\btea\b", re.I), "чай"),
 ]
 
 
@@ -137,7 +155,7 @@ def fix_cart_args(arguments: dict[str, Any]) -> dict[str, Any]:
             q = 1
         else:
             q = float(q_raw)
-        
+
         if xml_id in merged:
             merged[xml_id] += q
         else:
