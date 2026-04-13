@@ -14,6 +14,7 @@ from typing import Any
 
 import httpx
 
+from vkuswill_bot.config import config
 from vkuswill_bot.services.tool_input_normalizers import (
     SEARCH_LIMIT,
     STANDALONE_NUM_PATTERN,
@@ -34,9 +35,6 @@ def _get_package_version() -> str:
 
 
 # Таймауты (секунды)
-CONNECT_TIMEOUT = 15
-READ_TIMEOUT = 120
-# Количество попыток при ошибке
 MAX_RETRIES = 3
 RETRY_DELAY = 2.0
 
@@ -73,7 +71,10 @@ class VkusvillMCPClient:
         """Получить или создать постоянный httpx-клиент."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.Client(
-                timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
+                timeout=httpx.Timeout(
+                    config.mcp_connect_timeout_seconds,
+                    read=config.mcp_read_timeout_seconds,
+                ),
                 follow_redirects=True,
                 # keep-alive включён по умолчанию в httpx
             )

@@ -51,6 +51,27 @@ class Config(BaseSettings):
         le=8192,
         description="max_tokens для финального ответа при корзине по рецепту",
     )
+
+    # MCP Client Timeouts
+    mcp_connect_timeout_seconds: float = Field(default=15.0, ge=1.0, le=30.0)
+    mcp_read_timeout_seconds: float = Field(default=120.0, ge=1.0, le=300.0)
+
+    # Nutrition Service Timeouts
+    nutrition_connect_timeout_seconds: float = Field(default=10.0, ge=1.0, le=30.0)
+    nutrition_read_timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
+
+    # S3 Log Handler Timeouts
+    s3_connect_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    s3_read_timeout_seconds: float = Field(default=10.0, ge=1.0, le=60.0)
+
+    # Redis Client Timeouts
+    redis_socket_connect_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+    redis_socket_timeout_seconds: float = Field(default=5.0, ge=1.0, le=30.0)
+
+    # Agents/Handlers Timeouts
+    ingredient_timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
+    cart_timeout_seconds: float = Field(default=15.0, ge=1.0, le=60.0)
+    telegram_handler_timeout_seconds: float = Field(default=4.0, ge=1.0, le=30.0)
     llm_temperature: float = Field(default=0.2, ge=0.0, le=1.0)
     llm_prompt_profiles_enabled: bool = True
     llm_compact_followup_prompt_enabled: bool = True

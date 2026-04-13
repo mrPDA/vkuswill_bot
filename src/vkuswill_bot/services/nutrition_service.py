@@ -20,6 +20,8 @@ from typing import Any
 
 import httpx
 
+from vkuswill_bot.config import config
+
 logger = logging.getLogger(__name__)
 
 # Open Food Facts Search API
@@ -29,8 +31,7 @@ OFF_SEARCH_URL = "https://world.openfoodfacts.org/cgi/search.pl"
 OFF_FIELDS = "product_name,brands,nutriments,serving_size,nutrition_grades"
 
 # Таймауты (секунды)
-CONNECT_TIMEOUT = 10
-READ_TIMEOUT = 15
+
 
 # Количество результатов поиска
 SEARCH_PAGE_SIZE = 5
@@ -72,7 +73,10 @@ class NutritionService:
         """Получить или создать HTTP-клиент с keep-alive."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.AsyncClient(
-                timeout=httpx.Timeout(CONNECT_TIMEOUT, read=READ_TIMEOUT),
+                timeout=httpx.Timeout(
+                    config.nutrition_connect_timeout_seconds,
+                    read=config.nutrition_read_timeout_seconds,
+                ),
                 follow_redirects=True,
                 headers={"User-Agent": USER_AGENT},
             )

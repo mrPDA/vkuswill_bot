@@ -9,6 +9,8 @@ import logging
 from redis.asyncio import Redis
 from redis.exceptions import RedisError
 
+from vkuswill_bot.config import config
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,8 +18,8 @@ async def create_redis_client(
     redis_url: str,
     *,
     decode_responses: bool = False,
-    socket_connect_timeout: float = 5.0,
-    socket_timeout: float = 5.0,
+    socket_connect_timeout: float = config.redis_socket_connect_timeout_seconds,
+    socket_timeout: float = config.redis_socket_timeout_seconds,
 ) -> Redis:
     """Создать Redis-клиент и проверить соединение.
 

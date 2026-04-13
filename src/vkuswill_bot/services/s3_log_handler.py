@@ -34,6 +34,7 @@ import uuid
 from datetime import datetime, UTC
 from typing import TYPE_CHECKING
 
+from vkuswill_bot.config import config
 from vkuswill_bot.services.pii_utils import hash_user_id, mask_pii
 
 if TYPE_CHECKING:
@@ -119,8 +120,8 @@ class S3LogHandler(logging.Handler):
                     "s3",
                     config=BotoConfig(
                         retries={"max_attempts": 3, "mode": "standard"},
-                        connect_timeout=5,
-                        read_timeout=10,
+                        connect_timeout=config.s3_connect_timeout_seconds,
+                        read_timeout=config.s3_read_timeout_seconds,
                     ),
                     **self._client_kwargs,
                 )

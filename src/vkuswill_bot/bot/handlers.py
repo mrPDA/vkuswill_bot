@@ -17,6 +17,7 @@ from aiogram.types import (
     Message,
 )
 
+from vkuswill_bot.config import config
 from vkuswill_bot.bot.telegram_delivery import (
     MAX_TELEGRAM_MESSAGE_LENGTH,
     _extract_cart_link,
@@ -1136,7 +1137,10 @@ async def _send_typing_periodically(
         except Exception as e:
             logger.debug("Ошибка отправки typing indicator: %s", e)
         with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(stop_event.wait(), timeout=4.0)
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=config.telegram_handler_timeout_seconds,
+            )
 
 
 # ---------------------------------------------------------------------------

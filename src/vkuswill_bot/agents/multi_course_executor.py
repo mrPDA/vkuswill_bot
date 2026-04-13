@@ -30,6 +30,7 @@ from vkuswill_bot.agents.meal_plan_runtime_policy import (
     call_with_timeout_retry,
     deadline_after,
 )
+from vkuswill_bot.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -37,8 +38,6 @@ ProgressReporter = Callable[[str], Awaitable[None]]
 FallbackFn = Callable[[str], Awaitable[str]]
 
 _TURN_DEADLINE_SECONDS = 55.0
-_INGREDIENT_TIMEOUT_SECONDS = 15.0
-_CART_TIMEOUT_SECONDS = 15.0
 _INGREDIENT_CONCURRENCY = 4
 
 _SERVINGS_WORDS: dict[str, int] = {
@@ -154,7 +153,7 @@ async def _collect_all_ingredients(
                     call_cache=state.mcp_call_cache,
                     user_id=user_id,
                 ),
-                timeout_seconds=_INGREDIENT_TIMEOUT_SECONDS,
+                timeout_seconds=config.ingredient_timeout_seconds,
                 hard_deadline_at=deadline_at,
                 retries=0,
             )
@@ -334,7 +333,7 @@ async def run_multi_course_turn(
         llm_provider=llm_provider,
         products=merged,
         phase2_deadline_at=turn_deadline_at,
-        timeout_seconds=_CART_TIMEOUT_SECONDS,
+        timeout_seconds=config.cart_timeout_seconds,
     )
 
     if cart_data is None or not cart_stats.cart_created:

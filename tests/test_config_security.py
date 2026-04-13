@@ -886,13 +886,17 @@ class TestMCPClientSecurity:
 
     def test_mcp_timeouts_configured(self):
         """MCP-клиент имеет настроенные таймауты."""
-        from vkuswill_bot.services.mcp_client import CONNECT_TIMEOUT, READ_TIMEOUT
+        from vkuswill_bot.config import Config
+
+        cfg = Config(_env_file=None) # type: ignore[call-arg]
 
         # Таймауты должны быть разумными
-        assert 1 <= CONNECT_TIMEOUT <= 60, (
-            f"CONNECT_TIMEOUT={CONNECT_TIMEOUT} — должен быть в [1, 60]"
+        assert 1 <= cfg.mcp_connect_timeout_seconds <= 60, (
+            f"mcp_connect_timeout_seconds={cfg.mcp_connect_timeout_seconds} — должен быть в [1, 60]"
         )
-        assert 1 <= READ_TIMEOUT <= 300, f"READ_TIMEOUT={READ_TIMEOUT} — должен быть в [1, 300]"
+        assert 1 <= cfg.mcp_read_timeout_seconds <= 300, (
+            f"mcp_read_timeout_seconds={cfg.mcp_read_timeout_seconds} — должен быть в [1, 300]"
+        )
 
     def test_mcp_retries_limited(self):
         """Количество retry ограничено."""
