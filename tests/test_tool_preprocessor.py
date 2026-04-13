@@ -433,6 +433,10 @@ class TestNormalizeMultilingualGroceryText:
             ),
             ("moloko 2 litra, hleb, maslo", "молоко 2 литра, хлеб, масло"),
             ("сыр и хлеб", "сыр и хлеб"),
+            (
+                "yogurt oil onion garlic apple sugar flour carrot cucumber pepper beef pork fish salmon oats pasta coffee tea",
+                "йогурт растительное масло лук чеснок яблоко сахар мука морковь огурец перец говядина свинина рыба лосось овсянка макароны кофе чай"
+            ),
         ],
     )
     def test_normalize(self, text: str, expected: str) -> None:
