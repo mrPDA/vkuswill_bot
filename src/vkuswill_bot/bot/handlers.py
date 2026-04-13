@@ -1137,7 +1137,10 @@ async def _send_typing_periodically(
         except Exception as e:
             logger.debug("Ошибка отправки typing indicator: %s", e)
         with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(stop_event.wait(), timeout=config.telegram_handler_timeout_seconds)
+            await asyncio.wait_for(
+                stop_event.wait(),
+                timeout=config.telegram_handler_timeout_seconds,
+            )
 
 
 # ---------------------------------------------------------------------------

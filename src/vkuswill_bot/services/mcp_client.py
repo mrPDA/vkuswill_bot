@@ -71,7 +71,10 @@ class VkusvillMCPClient:
         """Получить или создать постоянный httpx-клиент."""
         if self._client is None or self._client.is_closed:
             self._client = httpx.Client(
-                timeout=httpx.Timeout(config.mcp_connect_timeout_seconds, read=config.mcp_read_timeout_seconds),
+                timeout=httpx.Timeout(
+                    config.mcp_connect_timeout_seconds,
+                    read=config.mcp_read_timeout_seconds,
+                ),
                 follow_redirects=True,
                 # keep-alive включён по умолчанию в httpx
             )
