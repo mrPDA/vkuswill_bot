@@ -2,15 +2,21 @@
 
 Этот набор нужен, чтобы проверять не только `items_count` и `trace_id`, но и то, **что реально увидит пользователь** в Telegram: текст ответа, наличие кнопки корзины, разбивку на чанки и отсутствие служебного мусора.
 
+Сценарии и контрактные правила переиспользуются между stage pytest и live runtime-раннером, чтобы проверки не расходились между окружениями.
+
 ## Что добавлено
 
 - `src/vkuswill_bot/bot/telegram_delivery.py`
   Общая логика доставки ответа в Telegram:
   HTML-санитизация, вынос ссылки корзины в inline-кнопку, разбивка длинного текста.
+- `src/vkuswill_bot/testing/response_contract_cases.py`
+  Единый источник `TC-*` кейсов и контрактов ответа.
 - `tests/stage_response_contract_cases.py`
-  Исполняемые stage-кейсы `TC-*` с контрактами ответа.
+  Совместимый wrapper-импорт для legacy пути (реэкспорт из `vkuswill_bot.testing.response_contract_cases`).
 - `tests/test_stage_response_contracts.py`
   Интеграционный pytest-раннер для stage/debug API + Langfuse-проверки.
+- `scripts/run_live_response_contracts.py`
+  Раннер тех же `TC-*` сценариев против локального runtime `ShoppingAgent` (без stage API).
 
 ## Что проверяет контракт
 
@@ -23,6 +29,8 @@
 - обязательные и запрещённые фразы в ответе
 - обязательные и запрещённые товары в `cart_snapshot`
 - подтверждение, что trace реально относится к `stage`
+
+Проверка Telegram-представления делается через `build_telegram_delivery_preview(...)` из `src/vkuswill_bot/bot/telegram_delivery.py` (тот же код, что используется при runtime-доставке ответа в Telegram).
 
 ## Как запускать
 
@@ -59,6 +67,22 @@ uv run pytest tests/test_stage_response_contracts.py -m stage -k "TC-NLP-02" -rs
 ```
 
 `stable`-кейсы должны проходить. Кейсы со статусом `known_issue` помечены как `xfail`: они нужны, чтобы известные проблемы не потерялись и автоматически стали заметны, когда неожиданно починятся.
+
+### Запуск live runtime-раннера (без stage API)
+
+Если нужно проверить те же контракты в локальном runtime (тот же `ShoppingAgent`, тот же PromptRegistry), используй:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --status stable --verbose
+```
+
+Полезные флаги:
+
+- `--case TC-NLP-02` — выбрать конкретный кейс (можно повторять);
+- `--max-scenarios 5` — ограничить число кейсов;
+- `--timeout-seconds 120` — таймаут на turn;
+- `--with-user-store` — подключить PostgreSQL `UserStore`, если задан `DATABASE_URL`;
+- `--report-json /tmp/contracts.json` — сохранить JSON-отчёт.
 
 ## Как пользоваться notesforllm
 
@@ -123,7 +147,7 @@ notes_decision_save(
 
 ## Практика обновления кейсов
 
-Обновляй `tests/stage_response_contract_cases.py`, когда меняется одно из:
+Обновляй `src/vkuswill_bot/testing/response_contract_cases.py`, когда меняется одно из:
 
 - ожидаемый `profile`
 - допустимый объём ответа
