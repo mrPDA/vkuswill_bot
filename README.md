@@ -111,7 +111,7 @@ LLM_API_KEY=your_api_key
 LLM_MODEL=gpt://<folder_id>/qwen3-235b-a22b-fp8/latest
 ```
 
-Подробнее: [ADR-004](docs/ADR-004-llm-provider-migration.md), переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`.
+Подробнее о runtime см. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`.
 
 PostgreSQL и Redis **не обязательны** для локальной разработки — бот автоматически использует in-memory хранилище и SQLite.
 
@@ -201,8 +201,8 @@ make lint              # Линтер (ruff)
 | # | Статья | Тема |
 |---|--------|------|
 | 1 | *Скоро* | Демо и обзор — как бот собирает корзину по одному сообщению |
-| 2 | *Скоро* | MCP + GigaChat — как подключить LLM к API ВкусВилл |
-| 3 | *Скоро* | 11 граблей function calling на GigaChat |
+| 2 | *Скоро* | MCP + Qwen — как подключить LLM к API ВкусВилл |
+| 3 | *Скоро* | 11 граблей function calling в продуктовом боте |
 | 4 | *Скоро* | Тестирование ИИ-бота: SAST, AI Safety, 98% покрытие |
 | 5 | *Скоро* | Юнит-экономика Telegram-бота с ИИ |
 

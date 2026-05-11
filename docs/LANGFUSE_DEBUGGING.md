@@ -9,7 +9,7 @@
 
 ## Общая информация
 
-Langfuse — система LLM-observability: трейсы взаимодействий бота с **OpenAI-compatible** провайдером (в production чаще **Yandex Cloud AI Studio / Qwen** по `LLM_MODEL`, см. ADR-004). Каждое сообщение пользователя создаёт **trace**, каждый вызов LLM — **generation**, каждый вызов инструмента — **span**.
+Langfuse — система LLM-observability: трейсы взаимодействий бота с **OpenAI-compatible** провайдером (в production чаще **Yandex Cloud AI Studio / Qwen** по `LLM_MODEL`; текущие переменные см. в `.env.example`). Каждое сообщение пользователя создаёт **trace**, каждый вызов LLM — **generation**, каждый вызов инструмента — **span**.
 
 ### Структура трейса (shopping_agent / Telegram)
 

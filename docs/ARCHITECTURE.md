@@ -1,6 +1,6 @@
 # Архитектура VkusVill Bot
 
-Mermaid-диаграммы архитектуры проекта.
+Mermaid-диаграммы и краткие пояснения по текущей архитектуре проекта.
 
 ---
 
@@ -18,7 +18,7 @@ flowchart TB
     end
 
     subgraph External["Внешние сервисы"]
-        GigaChat[GigaChat API\nСбер]
+        Qwen[Qwen\nYandex Cloud AI Studio]
         MCP[MCP-сервер\nВкусВилл]
         DB[(PostgreSQL)]
         Redis[(Redis)]
@@ -26,7 +26,7 @@ flowchart TB
     end
 
     TG <-->|Long Poll / Webhook| BotCore
-    BotCore --> GigaChat
+    BotCore --> Qwen
     BotCore --> MCP
     BotCore <--> DB
     BotCore <--> Redis
@@ -64,13 +64,15 @@ flowchart TB
         end
 
         subgraph Core["Ядро"]
-            GCS[GigaChatService]
-            TE[ToolExecutor]
+            SA[ShoppingAgent]
+            MG[McpToolGateway]
+            PR[PromptRegistry]
         end
 
         subgraph Processors["Процессоры"]
             SP[SearchProcessor]
             CP[CartProcessor]
+            MP[MealPlanExecutor]
         end
 
         subgraph Stores["Хранилища"]
@@ -87,7 +89,7 @@ flowchart TB
     end
 
     subgraph External["Внешние API"]
-        GigaChat[GigaChat API]
+        Qwen[Qwen API\nOpenAI-compatible]
         MCP[MCP-сервер ВкусВилл]
         OpenFF[Open Food Facts]
     end
@@ -106,21 +108,25 @@ flowchart TB
     TM --> Text
     TM --> Admin
     
-    Text --> GCS
-    Cmd --> GCS
+    Text --> SA
+    Cmd --> SA
     
-    GCS --> GigaChat
-    GCS --> TE
-    GCS --> DialogMgr
-    GCS --> Prefs
+    SA --> Qwen
+    SA --> MG
+    SA --> DialogMgr
+    SA --> Prefs
+    SA --> PR
+    SA --> MP
     
-    TE --> MCP
-    TE --> SP
-    TE --> CP
-    TE --> Prefs
-    TE --> CartSnap
-    TE --> OpenFF
-    TE --> UserStore
+    MG --> MCP
+    MG --> SP
+    MG --> CP
+    MG --> Prefs
+    MG --> CartSnap
+    MG --> OpenFF
+    MG --> UserStore
+    MP --> MCP
+    MP --> CP
     
     SP --> PriceCache
     CP --> PriceCache
@@ -153,15 +159,17 @@ flowchart LR
         end
 
         subgraph ServiceLayer["Service Layer"]
-            GCS[GigaChatService]
-            TE[ToolExecutor]
+            SA[ShoppingAgent]
+            MG[McpToolGateway]
             LS[LangfuseService]
+            PR[PromptRegistry]
         end
 
         subgraph Processors["Processors"]
             SP[SearchProcessor]
             CP[CartProcessor]
             NS[NutritionService]
+            MP[MealPlanExecutor]
         end
 
         subgraph Stores["Stores"]
@@ -184,13 +192,13 @@ flowchart LR
         end
 
         subgraph Background["Background"]
-            SA[StatsAggregator]
+            StatsAgg[StatsAggregator]
             MR[MigrationRunner]
         end
     end
 
     subgraph External["Внешние"]
-        GigaChat[GigaChat]
+        Qwen[Qwen\nOpenAI-compatible]
         MCP[MCP Server]
         OpenFF[Open Food Facts]
         PG[(PostgreSQL)]
@@ -200,20 +208,24 @@ flowchart LR
 
     TG --> H
     H --> M
-    M --> GCS
-    GCS --> TE
-    GCS --> DM
-    GCS --> Prefs
-    GCS --> LS
-    GCS --> GigaChat
+    M --> SA
+    SA --> MG
+    SA --> DM
+    SA --> Prefs
+    SA --> LS
+    SA --> PR
+    SA --> Qwen
+    SA --> MP
     
-    TE --> MCPClient
-    TE --> SP
-    TE --> CP
-    TE --> Prefs
-    TE --> CartSnapStore
-    TE --> NS
-    TE --> UserStore
+    MG --> MCPClient
+    MG --> SP
+    MG --> CP
+    MG --> Prefs
+    MG --> CartSnapStore
+    MG --> NS
+    MG --> UserStore
+    MP --> MCPClient
+    MP --> CP
     
     MCPClient --> MCP
     NS --> OpenFF
@@ -228,57 +240,97 @@ flowchart LR
     UserStore --> PG
     Prefs --> SQLite1
     RecipeStore --> SQLite1
-    SA --> PG
+    StatsAgg --> PG
 ```
 
 ---
 
-## Цикл обработки сообщения (Function Calling)
+## Цикл обработки сообщения (ShoppingAgent + Function Calling)
 
 ```mermaid
 sequenceDiagram
     participant User
     participant TG as Telegram
     participant H as Handlers
-    participant GCS as GigaChatService
+    participant SA as ShoppingAgent
     participant DM as DialogManager
-    participant GC as GigaChat API
-    participant TE as ToolExecutor
+    participant LLM as Qwen API
+    participant MG as McpToolGateway
     participant MCP as MCP Server
     participant Local as Local Tools
 
     User->>TG: Текстовое сообщение
     TG->>H: handle_text()
-    H->>GCS: process_message(user_id, text)
+    H->>SA: process_message(user_id, text)
     
-    GCS->>DM: get_history(user_id)
-    DM-->>GCS: history
+    SA->>DM: get_history(user_id)
+    DM-->>SA: history
+    SA->>LLM: classify_user_intent() / prompt profile
+    LLM-->>SA: cart / recipe / meal_plan / general
     
     loop Function Calling (до max_tool_calls)
-        GCS->>GC: chat(messages, functions)
-        GC-->>GCS: tool_calls[]
+        SA->>LLM: chat(messages, tools)
+        LLM-->>SA: tool_calls[]
         
         alt MCP tool (search, cart_link, etc.)
-            GCS->>TE: execute(tool_name, args)
-            TE->>MCP: JSON-RPC call
-            MCP-->>TE: result
+            SA->>MG: call_tool(tool_name, args)
+            MG->>MCP: JSON-RPC call
+            MCP-->>MG: result
         else Local tool (preferences, recipe, nutrition)
-            GCS->>TE: execute(tool_name, args)
-            TE->>Local: internal call
-            Local-->>TE: result
+            SA->>MG: call_tool(tool_name, args)
+            MG->>Local: internal call
+            Local-->>MG: result
         end
         
-        TE-->>GCS: tool_result
-        GCS->>DM: append_assistant + tool_result
+        MG-->>SA: tool_result
+        SA->>DM: append_assistant + tool_result
     end
     
-    GCS->>GC: chat(messages) // финальный ответ
-    GC-->>GCS: text response
-    GCS->>DM: append_final_response()
-    GCS-->>H: response text
+    SA->>LLM: chat(messages) // финальный ответ
+    LLM-->>SA: text response
+    SA->>DM: append_final_response()
+    SA-->>H: response text
     H->>TG: answer(response)
     TG->>User: Ответ бота
 ```
+
+---
+
+## Поток планирования питания (meal-plan executor)
+
+Meal-plan запросы не идут через общий tool-loop полностью. `ShoppingAgent` сначала строит `TurnState`, определяет `prompt_profile`, проверяет rollout gate и, если пользователь попал в rollout, передаёт turn в `run_meal_plan_turn()`.
+
+```mermaid
+flowchart TB
+    U[Запрос пользователя\n"план питания на 3 дня"] --> TS[build_turn_state]
+    TS --> Gate{profile=meal_plan\nexecutor enabled\nrollout gate passed}
+    Gate -->|нет| Loop[Стандартный ShoppingAgent tool-loop]
+    Gate -->|да| Parse[LLM-first parse\nmeal-plan-request-extraction]
+    Parse --> Req[MealPlanRequest\npeople/days/groups/meal slots]
+    Req --> Gen[generate_meal_plan\nschema_version=1]
+    Gen --> Validate[Валидация схемы\nдни, слоты, группы, аллергены]
+    Validate --> Ingredients[collect_ingredients_for_dishes]
+    Ingredients --> Safety[phase2 safety policy\nhard constraints + retry]
+    Safety --> Search[search_products_day_by_day]
+    Search --> Cart[create_grouped_carts]
+    Cart --> Render[deterministic render_response]
+    Render --> Trace[Langfuse trace + diagnostics]
+```
+
+Ключевые ограничения, подтверждённые кодом:
+
+- `LLM_PROVIDER` поддерживается только как `qwen_openai`; legacy GigaChat runtime удалён.
+- Парсинг запроса LLM-first, но при невалидном JSON или исключении используется deterministic fallback из `meal_plan_types.py`.
+- Длительность плана ограничена 1..14 днями, количество людей — 1..20.
+- Явно запрошенные приёмы пищи (`breakfast`, `lunch`, `dinner`, `snack`) для одной группы дают точное число слотов: `days * len(requested_meal_types)`.
+- Генерация принимает только `schema_version=1`, уникальные блюда, валидные `day`, `meal_type`, `servings_total` и `audience_groups`.
+- Для планов от 5 дней включаются extended deadlines: 240 секунд на turn и 210 секунд на phase2.
+
+Операционные сигналы:
+
+- Langfuse spans: `meal-plan.parse-request`, `meal-plan.collect-ingredients`, `meal-plan.phase2-safety`, `meal-plan.search-products`, `meal-plan.create-cart`.
+- `get_last_turn_diagnostics()` содержит статистику `meal_plan_ingredient_collection`, `meal_plan_recipe_search`, `meal_plan_cart_create`, а также причину executor gate.
+- Если executor не может безопасно завершить flow, он возвращается в стандартную обработку с префиксом `Перехожу к стандартной обработке запроса`.
 
 ---
 
@@ -348,11 +400,11 @@ flowchart LR
 
 ---
 
-## Инструменты (Tools) ToolExecutor
+## Инструменты (Tools) McpToolGateway
 
 ```mermaid
 flowchart TB
-    TE[ToolExecutor]
+    MG[McpToolGateway]
     
     subgraph MCP["MCP Tools (удалённые)"]
         VS[vkusvill_products_search]
@@ -369,8 +421,8 @@ flowchart TB
         NL[nutrition_lookup]
     end
 
-    TE --> MCP
-    TE --> Local
+    MG --> MCP
+    MG --> Local
     
     UPG --> PrefsStore
     UPS --> PrefsStore
@@ -389,10 +441,11 @@ flowchart TB
 
 | Компонент | Назначение |
 |-----------|------------|
-| **GigaChatService** | Оркестрация LLM, function calling, история диалогов |
-| **ToolExecutor** | Маршрутизация MCP vs local tools, обработка ошибок |
+| **ShoppingAgent** | Оркестрация Qwen, prompt routing, function calling, история диалогов |
+| **McpToolGateway** | Маршрутизация MCP vs local tools, таймауты, retry и нормализация вызовов |
 | **SearchProcessor** | Поиск товаров, кеш цен, постпроцессинг результатов |
 | **CartProcessor** | Сборка корзины, верификация, расчёт стоимости |
+| **MealPlanExecutor** | Выделенный pipeline планов питания: парсинг запроса, генерация меню, поиск ингредиентов, корзина |
 | **DialogManager** | Хранение истории диалога (in-memory или Redis) |
 | **PreferencesStore** | Предпочтения пользователя (SQLite) |
 | **UserStore** | Пользователи, админы, блокировки, рефералы (PostgreSQL) |

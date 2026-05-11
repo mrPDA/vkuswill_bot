@@ -4,7 +4,7 @@
 
 | Уровень | Что тестируем | Инструмент | Требует |
 |---------|--------------|------------|---------|
-| 1. Service | `GigaChatService.process_message()` | asyncio-скрипт | Доступ к GigaChat API, MCP |
+| 1. Service | `ShoppingAgent.process_message()` | asyncio-скрипт | Доступ к Qwen API, MCP |
 | 2. Webhook | Полный цикл через HTTP | Locust | Бот в webhook-режиме |
 | 3. Telegram | Реальные сообщения | Telethon | Тестовые Telegram-аккаунты |
 
@@ -19,7 +19,7 @@ uv add --optional loadtest locust telethon
 ### Уровень 1: Нагрузка на сервисный слой
 
 Самый полезный тест — стреляем напрямую в `process_message()`, минуя Telegram.
-Находит узкие места: GigaChat API, MCP, Redis, корзина.
+Находит узкие места: Qwen API, MCP, Redis, корзина.
 
 ```bash
 # 50 виртуальных пользователей, 100 сообщений, 10 RPS
@@ -79,7 +79,7 @@ uv run python loadtests/telegram_load_test.py \
 | p99 latency | 99-й перцентиль | < 30 сек |
 | Error rate | Процент ошибок | < 1% |
 | Throughput | Обработанных сообщений/сек | >= 5 RPS |
-| GigaChat concurrency | Параллельные запросы к GigaChat | <= 15 |
+| LLM concurrency | Параллельные запросы к Qwen API | <= 15 |
 | Memory usage | Потребление RAM | < 512 Mi |
 
 ## Сценарии нагрузки
@@ -106,8 +106,8 @@ uv run python loadtests/telegram_load_test.py \
 
 | Симптом | Вероятная причина | Решение |
 |---------|------------------|---------|
-| Высокая латентность, низкий error rate | GigaChat API медленный | Увеличить `gigachat_max_concurrent`, кэширование |
-| 429 ошибки от GigaChat | Превышен лимит RPS | Token bucket, очередь, увеличить квоту |
+| Высокая латентность, низкий error rate | Qwen API медленный | Увеличить `LLM_MAX_CONCURRENT`, кэширование |
+| 429 ошибки от Qwen API | Превышен лимит RPS | Token bucket, очередь, увеличить квоту |
 | Таймауты MCP | MCP-сервер не справляется | Кэширование результатов поиска, retry |
 | OOM (Out of Memory) | Утечка памяти в диалогах/кэше | Проверить лимиты PriceCache, MAX_CONVERSATIONS |
 | Rate limit от бота | ThrottlingMiddleware | Увеличить `rate_limit` или `period` |
