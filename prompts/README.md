@@ -4,7 +4,7 @@
 
 ## Файлы
 
-- `system_prompt.txt` — системный промпт для GigaChat (роль, правила, безопасность)
+- `system_prompt.txt` — системный промпт для Qwen/OpenAI-compatible runtime (роль, правила, безопасность)
 - `recipe_extraction_prompt.txt` — промпт извлечения ингредиентов рецепта
 
 ## Приоритет загрузки
