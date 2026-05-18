@@ -70,7 +70,7 @@ graph TD
 |-----------|-----------|
 | Telegram-фреймворк | [aiogram 3](https://docs.aiogram.dev/) |
 | ИИ-модель | Qwen (OpenAI-compatible) через [Yandex Cloud AI Studio](https://yandex.cloud/ru/services/ai-studio) |
-|| Голосовой канал | Алиса (Яндекс Диалоги + Cloud Functions) |
+| Голосовой канал | Алиса (Яндекс Диалоги + Cloud Functions) |
 | Интеграция с ВкусВилл | [MCP](https://modelcontextprotocol.io/) (Model Context Protocol) |
 | БД (пользователи) | PostgreSQL + asyncpg |
 | БД (кеши) | SQLite (aiosqlite) |
@@ -111,7 +111,7 @@ LLM_API_KEY=your_api_key
 LLM_MODEL=gpt://<folder_id>/qwen3-235b-a22b-fp8/latest
 ```
 
-Подробнее: [ADR-004](docs/ADR-004-llm-provider-migration.md), переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`.
+Подробнее: [архитектура runtime](docs/ARCHITECTURE.md), переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`. Другие `LLM_PROVIDER` сейчас не поддерживаются.
 
 PostgreSQL и Redis **не обязательны** для локальной разработки — бот автоматически использует in-memory хранилище и SQLite.
 
@@ -177,6 +177,12 @@ make lint              # Линтер (ruff)
 
 Проект включает 2200+ тестов: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak), валидация входных данных и тесты навыка Алисы.
 
+Security job в CI дополнительно запускает `gitleaks detect` по полной истории
+репозитория с конфигом `.gitleaks.toml`, затем Bandit, pip-audit и
+security-тесты. Для пользовательских контрактов ответа есть отдельный набор
+`TC-*`: stage pytest и локальный live runner описаны в
+[docs/stage-response-contracts.md](docs/stage-response-contracts.md).
+
 ---
 
 ## Команды бота
@@ -201,8 +207,8 @@ make lint              # Линтер (ruff)
 | # | Статья | Тема |
 |---|--------|------|
 | 1 | *Скоро* | Демо и обзор — как бот собирает корзину по одному сообщению |
-| 2 | *Скоро* | MCP + GigaChat — как подключить LLM к API ВкусВилл |
-| 3 | *Скоро* | 11 граблей function calling на GigaChat |
+| 2 | *Скоро* | MCP + Qwen — как подключить LLM к API ВкусВилл |
+| 3 | *Скоро* | 11 граблей function calling в LLM-покупках |
 | 4 | *Скоро* | Тестирование ИИ-бота: SAST, AI Safety, 98% покрытие |
 | 5 | *Скоро* | Юнит-экономика Telegram-бота с ИИ |
 

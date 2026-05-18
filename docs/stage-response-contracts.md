@@ -7,10 +7,16 @@
 - `src/vkuswill_bot/bot/telegram_delivery.py`
   Общая логика доставки ответа в Telegram:
   HTML-санитизация, вынос ссылки корзины в inline-кнопку, разбивка длинного текста.
+- `src/vkuswill_bot/testing/response_contract_cases.py`
+  Канонический каталог исполняемых сценариев `TC-*` и контрактов ответа.
 - `tests/stage_response_contract_cases.py`
-  Исполняемые stage-кейсы `TC-*` с контрактами ответа.
+  Compatibility wrapper для старых импортов; новые кейсы добавляй в
+  `src/vkuswill_bot/testing/response_contract_cases.py`.
 - `tests/test_stage_response_contracts.py`
   Интеграционный pytest-раннер для stage/debug API + Langfuse-проверки.
+- `scripts/run_live_response_contracts.py`
+  Локальный live runner, который поднимает текущий `ShoppingAgent` runtime в
+  процессе и прогоняет те же `TC-*` без stage HTTP/debug API.
 
 ## Что проверяет контракт
 
@@ -23,8 +29,13 @@
 - обязательные и запрещённые фразы в ответе
 - обязательные и запрещённые товары в `cart_snapshot`
 - подтверждение, что trace реально относится к `stage`
+- отсутствие утечек служебного tool-call мусора:
+  `<tool_call>`, `{"name":`, `"arguments":`, `vkusvill_products_search`
 
-## Как запускать
+## Как запускать pytest против stage/debug API
+
+Используй этот режим, когда нужно проверить уже развернутый stage и связать
+ответы с Langfuse trace.
 
 Подготовь переменные окружения:
 
@@ -59,6 +70,38 @@ uv run pytest tests/test_stage_response_contracts.py -m stage -k "TC-NLP-02" -rs
 ```
 
 `stable`-кейсы должны проходить. Кейсы со статусом `known_issue` помечены как `xfail`: они нужны, чтобы известные проблемы не потерялись и автоматически стали заметны, когда неожиданно починятся.
+
+## Как запускать live runner локально
+
+`scripts/run_live_response_contracts.py` использует тот же каталог сценариев,
+но не обращается к stage/debug API. Он создает runtime через
+`create_chat_engine()`, подключает MCP-клиент, `PreferencesStore`, Langfuse
+service и prompt registry из текущего окружения. Если передан
+`--with-user-store` и задан `DATABASE_URL`, runner также подключает PostgreSQL
+`UserStore`.
+
+Примеры:
+
+```bash
+uv run python scripts/run_live_response_contracts.py --status stable --max-scenarios 3
+uv run python scripts/run_live_response_contracts.py --case TC-QTY-05 --verbose
+uv run python scripts/run_live_response_contracts.py --status all --report-json contract-results.json
+```
+
+Полезные флаги:
+
+- `--status stable|known_issue|all` — выбрать subset по статусу сценария.
+- `--case TC-*` — запустить один или несколько конкретных кейсов; флаг можно
+  повторять.
+- `--timeout-seconds` — per-turn timeout для `agent.process_message()`.
+- `--report-json` — сохранить машинно-читаемый отчет.
+- `--with-user-store` — подключить PostgreSQL UserStore, если нужен тот же путь
+  событий/rollout metadata, что в контейнере.
+
+Live runner подходит для smoke-проверки текущего кода и prompt registry перед
+деплоем. Для подтверждения поведения stage всё равно используй pytest-режим
+выше, потому что только он проверяет debug API, TLS-настройки и Langfuse trace
+у развернутого окружения.
 
 ## Как пользоваться notesforllm
 
@@ -123,12 +166,16 @@ notes_decision_save(
 
 ## Практика обновления кейсов
 
-Обновляй `tests/stage_response_contract_cases.py`, когда меняется одно из:
+Обновляй `src/vkuswill_bot/testing/response_contract_cases.py`, когда меняется одно из:
 
 - ожидаемый `profile`
 - допустимый объём ответа
 - обязательные фразы
 - список обязательных или запрещённых товаров
 - статус кейса: `stable` или `known_issue`
+- границы `items_count` или требование inline-кнопки корзины
+
+`tests/stage_response_contract_cases.py` оставлен только как wrapper для
+совместимости, поэтому изменения в нем не должны становиться источником правды.
 
 Если продукт изменил поведение намеренно, сначала обнови контракт, потом зафиксируй это decision/checkpoint в `notesforllm`.
