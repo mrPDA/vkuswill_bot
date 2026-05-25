@@ -111,7 +111,7 @@ LLM_API_KEY=your_api_key
 LLM_MODEL=gpt://<folder_id>/qwen3-235b-a22b-fp8/latest
 ```
 
-Подробнее: [ADR-004](docs/ADR-004-llm-provider-migration.md), переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`.
+Подробнее о текущем runtime: [Архитектура](docs/ARCHITECTURE.md); переменные `LLM_BASE_URL` (по умолчанию `https://llm.api.cloud.yandex.net/v1`) и `LLM_PROVIDER=qwen_openai` уже заданы в `.env.example`.
 
 PostgreSQL и Redis **не обязательны** для локальной разработки — бот автоматически использует in-memory хранилище и SQLite.
 
@@ -173,9 +173,12 @@ make test              # Все тесты
 make test-cov          # С покрытием
 make test-security     # SAST + AI Safety
 make lint              # Линтер (ruff)
+make secret-scan       # Gitleaks scan рабочего дерева
 ```
 
 Проект включает 2200+ тестов: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak), валидация входных данных и тесты навыка Алисы.
+
+Для user-visible регрессий корзины, рецептов и meal-plan см. [Stage Response Contracts](docs/stage-response-contracts.md): там описаны stage pytest, локальный live runner `scripts/run_live_response_contracts.py` и общий источник `TC-*` кейсов.
 
 ---
 
