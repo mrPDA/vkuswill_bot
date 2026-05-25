@@ -173,9 +173,12 @@ make test              # Все тесты
 make test-cov          # С покрытием
 make test-security     # SAST + AI Safety
 make lint              # Линтер (ruff)
+make secret-scan       # Gitleaks scan рабочего дерева
 ```
 
 Проект включает 2200+ тестов: юнит-тесты, SAST (секреты, опасные функции), AI Safety (prompt injection, jailbreak), валидация входных данных и тесты навыка Алисы.
+
+Для user-visible регрессий корзины, рецептов и meal-plan см. [Stage Response Contracts](docs/stage-response-contracts.md): там описаны stage pytest, локальный live runner `scripts/run_live_response_contracts.py` и общий источник `TC-*` кейсов.
 
 ---
 

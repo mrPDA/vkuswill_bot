@@ -206,6 +206,19 @@ uv run pytest --cov=src/vkuswill_bot --cov-report=html
 uv run pytest -v
 ```
 
+### Контракты ответов и секреты
+
+Перед PR, который меняет `ShoppingAgent`, prompt profiles, meal-plan/cart
+routing, debug API или примеры с токенами, дополнительно проверьте:
+
+```bash
+make secret-scan
+uv run pytest tests/test_stage_response_contracts.py -m stage -k "TC-PERSONA-01" -rs
+```
+
+Stage/live сценарии `TC-*`, локальный runner и правила allowlist для gitleaks
+описаны в [docs/stage-response-contracts.md](docs/stage-response-contracts.md).
+
 ## 📝 Pull Request
 
 ### Чеклист перед созданием PR
@@ -214,6 +227,7 @@ uv run pytest -v
 - [ ] Все тесты проходят
 - [ ] Добавлены новые тесты (если нужно)
 - [ ] Документация обновлена (если нужно)
+- [ ] `make secret-scan` выполнен, если менялись конфиги, docs с примерами ключей или CI/security
 - [ ] Нет конфликтов с main
 - [ ] Коммиты следуют Conventional Commits
 - [ ] PR имеет понятное описание
@@ -236,6 +250,7 @@ uv run pytest -v
 3. **Semantic Versioning** — версионирование через CHANGELOG.md
 4. **Ruff** — линтер и форматтер (`uv run ruff check`)
 5. **pytest** — обязательные тесты для новой логики
+6. **gitleaks** — проверка секретов через `make secret-scan` и CI job `Security checks`
 
 ## ❓ Вопросы
 
