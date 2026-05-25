@@ -4,18 +4,18 @@
 
 ## Основные файлы
 
-- `src/vkuswill_bot/bot/telegram_delivery.py`  
+- `src/vkuswill_bot/bot/telegram_delivery.py`:
   Общая логика доставки ответа в Telegram:
   HTML-санитизация, вынос ссылки корзины в inline-кнопку, разбивка длинного текста.
-- `src/vkuswill_bot/testing/response_contract_cases.py`  
+- `src/vkuswill_bot/testing/response_contract_cases.py`:
   Канонический источник исполняемых `TC-*` сценариев и контрактов. Его используют
   stage pytest и live runner.
-- `tests/stage_response_contract_cases.py`  
+- `tests/stage_response_contract_cases.py`:
   Compatibility wrapper для старых импортов; новые кейсы добавляй в
   `src/vkuswill_bot/testing/response_contract_cases.py`.
-- `tests/test_stage_response_contracts.py`  
+- `tests/test_stage_response_contracts.py`:
   Интеграционный pytest-раннер для stage/debug API + Langfuse-проверки.
-- `scripts/run_live_response_contracts.py`  
+- `scripts/run_live_response_contracts.py`:
   Локальный live runner: запускает те же `TC-*` через текущий `ShoppingAgent`
   runtime без stage debug API.
 
