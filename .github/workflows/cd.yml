@@ -35,7 +35,7 @@ jobs:
     if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_YANDEX_CD == 'true' }}
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - uses: astral-sh/setup-uv@v7
         with:
@@ -59,7 +59,7 @@ jobs:
       full_image: ${{ steps.meta.outputs.full_image }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Extract tag
         id: meta
@@ -101,7 +101,7 @@ jobs:
     environment: production
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
 
       - name: Setup SSH
         run: |
